@@ -2240,8 +2240,9 @@ async function fetchV3Routes() {
 }
 
 // Simple concurrency limiter
-// Throttling disabled per user request
-const MAX_CONCURRENT_V3_REQUESTS = 30;
+// Simple concurrency limiter
+// Re-enabling throttling to prevent 520/500 errors
+const MAX_CONCURRENT_V3_REQUESTS = 6;
 let activeV3Requests = 0;
 const v3RequestQueue = [];
 
@@ -2260,10 +2261,15 @@ function processV3Queue() {
 
     fn().then(resolve).catch(reject).finally(() => {
         activeV3Requests--;
-        // No delay - fire next immediately
-        processV3Queue();
+        // Add 100ms delay to be safe
+        setTimeout(processV3Queue, 100);
     });
 }
+
+const v3InFlight = {
+    patterns: new Map(),
+    schedules: new Map()
+};
 
 async function getV3Schedule(routeShortName, stopId) {
     // Wrap the entire logic in the queue
@@ -2286,32 +2292,67 @@ async function getV3Schedule(routeShortName, stopId) {
         try {
             // 1. Get Patterns
             let patterns = v3Cache.patterns.get(routeId);
+
+            // Try Local Storage for Patterns
             if (!patterns) {
-                // console.log(`[V3] Fetching patterns for ${routeId}`);
-                const suffixesRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}?locale=en`, {
-                    headers: { 'x-api-key': API_KEY },
-                    credentials: 'omit'
-                });
-                if (!suffixesRes.ok) throw new Error(`Routes details failed: ${suffixesRes.status}`);
-                const routeData = await suffixesRes.json();
-
-                if (routeData.patterns) {
-                    const suffixes = routeData.patterns.map(p => p.patternSuffix).join(',');
-
-                    const patRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}/stops-of-patterns?patternSuffixes=${suffixes}&locale=en`, {
-                        headers: { 'x-api-key': API_KEY },
-                        credentials: 'omit'
-                    });
-                    if (!patRes.ok) throw new Error(`Patterns fetch failed: ${patRes.status}`);
-
-                    const patText = await patRes.text();
-                    try {
-                        patterns = JSON.parse(patText);
-                    } catch (e) {
-                        console.error(`[V3] Failed to parse patterns JSON. Length: ${patText.length}`);
-                        throw new Error('Invalid JSON in patterns response');
+                const lsKey = `v3_patterns_${routeId}`;
+                try {
+                    const cached = localStorage.getItem(lsKey);
+                    if (cached) {
+                        const { timestamp, data } = JSON.parse(cached);
+                        // Cache patterns for 7 days (they change rarely)
+                        if (Date.now() - timestamp < 7 * 24 * 60 * 60 * 1000) {
+                            patterns = data;
+                            v3Cache.patterns.set(routeId, patterns);
+                        }
                     }
-                    v3Cache.patterns.set(routeId, patterns);
+                } catch (e) { /* ignore */ }
+            }
+
+            // Fetch if missing (with deduplication)
+            if (!patterns) {
+                if (v3InFlight.patterns.has(routeId)) {
+                    // Reuse in-flight promise
+                    patterns = await v3InFlight.patterns.get(routeId);
+                } else {
+                    const promise = (async () => {
+                        const suffixesRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}?locale=en`, {
+                            headers: { 'x-api-key': API_KEY },
+                            credentials: 'omit'
+                        });
+                        if (!suffixesRes.ok) throw new Error(`Routes details failed: ${suffixesRes.status}`);
+                        const routeData = await suffixesRes.json();
+
+                        if (routeData.patterns) {
+                            const suffixes = routeData.patterns.map(p => p.patternSuffix).join(',');
+                            const patRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}/stops-of-patterns?patternSuffixes=${suffixes}&locale=en`, {
+                                headers: { 'x-api-key': API_KEY },
+                                credentials: 'omit'
+                            });
+                            if (!patRes.ok) throw new Error(`Patterns fetch failed: ${patRes.status}`);
+                            const patText = await patRes.text();
+                            return JSON.parse(patText);
+                        }
+                        return null;
+                    })();
+
+                    v3InFlight.patterns.set(routeId, promise);
+                    try {
+                        patterns = await promise;
+                        if (patterns) {
+                            v3Cache.patterns.set(routeId, patterns);
+                            try {
+                                localStorage.setItem(`v3_patterns_${routeId}`, JSON.stringify({
+                                    timestamp: Date.now(),
+                                    data: patterns
+                                }));
+                            } catch (e) { console.warn('LS Write Failed (Patterns)', e); }
+                        }
+                    } catch (e) {
+                        console.error(`[V3] Pattern fetch error for ${routeId}`, e);
+                    } finally {
+                        v3InFlight.patterns.delete(routeId);
+                    }
                 }
             }
 
@@ -2347,22 +2388,57 @@ async function getV3Schedule(routeShortName, stopId) {
 
             // 3. Fetch Schedule
             const cacheKey = `${routeId}:${suffix}`;
+            // Try memory cache first
             let schedule = v3Cache.schedules.get(cacheKey);
 
+            // Try LocalStorage if memory miss
             if (!schedule) {
-                const schRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}/schedule?patternSuffix=${suffix}&locale=en`, {
-                    headers: { 'x-api-key': API_KEY },
-                    credentials: 'omit'
-                });
-                if (!schRes.ok) throw new Error(`Schedule fetch failed: ${schRes.status}`);
-
-                const schText = await schRes.text();
+                const lsKey = `v3_sched_${cacheKey}`;
                 try {
-                    schedule = JSON.parse(schText);
-                    v3Cache.schedules.set(cacheKey, schedule);
-                } catch (e) {
-                    console.error(`[V3] Failed to parse schedule JSON. Status ${schRes.status}`);
-                    return null;
+                    const cached = localStorage.getItem(lsKey);
+                    if (cached) {
+                        const { timestamp, data } = JSON.parse(cached);
+                        // Cache for 24h
+                        if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
+                            schedule = data;
+                            v3Cache.schedules.set(cacheKey, schedule); // Hydrate memory
+                        }
+                    }
+                } catch (e) { /* ignore */ }
+            }
+
+            // Fetch with deduplication
+            if (!schedule) {
+                if (v3InFlight.schedules.has(cacheKey)) {
+                    schedule = await v3InFlight.schedules.get(cacheKey);
+                } else {
+                    const promise = (async () => {
+                        const schRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}/schedule?patternSuffix=${suffix}&locale=en`, {
+                            headers: { 'x-api-key': API_KEY },
+                            credentials: 'omit'
+                        });
+                        if (!schRes.ok) throw new Error(`Schedule fetch failed: ${schRes.status}`);
+                        const schText = await schRes.text();
+                        return JSON.parse(schText);
+                    })();
+
+                    v3InFlight.schedules.set(cacheKey, promise);
+                    try {
+                        schedule = await promise;
+                        if (schedule) {
+                            v3Cache.schedules.set(cacheKey, schedule);
+                            try {
+                                localStorage.setItem(`v3_sched_${cacheKey}`, JSON.stringify({
+                                    timestamp: Date.now(),
+                                    data: schedule
+                                }));
+                            } catch (e) { console.warn('LS Write Failed (Schedule)', e); }
+                        }
+                    } catch (e) {
+                        console.error(`[V3] Schedule fetch error`, e);
+                    } finally {
+                        v3InFlight.schedules.delete(cacheKey);
+                    }
                 }
             }
 
