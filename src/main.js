@@ -1,5 +1,7 @@
 import './style.css';
 import mapboxgl from 'mapbox-gl';
+import stopBearings from './data/stop_bearings.json';
+
 
 // Configuration
 const MAPBOX_TOKEN = 'pk.eyJ1IjoidHRjYXpyeSIsImEiOiJjam5sZWU2NHgxNmVnM3F0ZGN2N2lwaGF2In0.00TvUGr9Qu4Q4fc_Jb9wjw';
@@ -47,28 +49,33 @@ geolocate.on('error', (e) => {
 document.getElementById('zoom-in').addEventListener('click', () => map.zoomIn());
 document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
 
-document.getElementById('locate-me').addEventListener('click', async () => {
-    // iOS 13+ requires explicit permission for DeviceOrientation (Compass)
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        try {
-            const permissionState = await DeviceOrientationEvent.requestPermission();
-            if (permissionState !== 'granted') {
-                console.warn('DeviceOrientation permission denied');
-                // Proceed anyway, just without compass
-            }
-        } catch (e) {
-            console.error('Error requesting orientation permission:', e);
-        }
-    }
-
+document.getElementById('locate-me').addEventListener('click', () => {
+    // 1. Immediately trigger Location (Primary Action)
     // Prevent toggling off if already active
-    // _watchState is internal mapbox-gl state: 'OFF', 'ACTIVE_LOCK', 'BACKGROUND', 'WAITING_ACTIVE'
-    // We only want to trigger if it's OFF or BACKGROUND (user moved map away)
     if (!geolocate._watchState || geolocate._watchState === 'OFF' || geolocate._watchState === 'BACKGROUND') {
         geolocate.trigger();
     }
-    // If ACTIVE_LOCK, do nothing (keep tracking), enabling compass naturally via mapbox interaction or just stay centered
+
+    // 2. Request Compass Permission (Secondary, iOS only)
+    // We do this *after* triggering location so the user sees the location prompt first (if needed).
+    // Note: "Motion and Orientation" IS the compass. If you deny this, the map won't rotate.
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        // Short timeout to let the click event propagate/Location logic start
+        setTimeout(async () => {
+            try {
+                const permissionState = await DeviceOrientationEvent.requestPermission();
+                if (permissionState !== 'granted') {
+                    console.warn('Compass (Motion) permission denied');
+                }
+            } catch (e) {
+                // Ignore errors (user might have already denied)
+                console.debug('Compass permission request failed', e);
+            }
+        }, 100);
+    }
 });
+
+
 
 // State
 let allStops = [];
@@ -149,6 +156,8 @@ map.on('load', async () => {
         console.log('DEBUG: First Route:', routes[0]);
         allStops = stops;
         allRoutes = routes;
+        window.allStops = allStops; // Debug: Expose to window
+
 
         // Index Routes by Stop ID (for "All Routes" list)
         allRoutes.forEach(route => {
@@ -214,13 +223,26 @@ map.on('load', async () => {
     // Stop Selection State Layer (more prominent)
     map.addLayer({
         id: 'stops-highlight',
-        type: 'circle',
+        type: 'symbol',
         source: 'selected-stop',
+        layout: {
+            'icon-image': 'stop-selected-icon',
+            'icon-size': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                13, 0.6,
+                14, 1.0,
+                16, 1.2
+            ],
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true, // Show even if it collides (it's the selected one!)
+            // Rotate selected stop always (if bearing exists)
+            'icon-rotate': ['get', 'bearing'],
+            'icon-rotation-alignment': 'map'
+        },
         paint: {
-            'circle-color': '#2563eb', // Solid primary color
-            'circle-radius': 12,
-            'circle-stroke-width': 3,
-            'circle-stroke-color': '#ffffff',
+            'icon-opacity': 1
         }
     });
 
@@ -335,6 +357,9 @@ function addStopsToMap(stops) {
     const seenMetroNames = new Set();
 
     stops.forEach(stop => {
+        // Inject Bearing
+        stop.bearing = stopBearings[stop.id] || 0;
+
         const isMetro = stop.vehicleMode === 'SUBWAY' || stop.name.includes('Metro Station') || (stop.id && stop.id.startsWith('M:'));
 
         if (isMetro) {
@@ -400,7 +425,8 @@ function addStopsToMap(stops) {
                     id: stop.id,
                     name: stop.name,
                     code: stop.code,
-                    mode: stop.vehicleMode || 'BUS'
+                    mode: stop.vehicleMode || 'BUS',
+                    bearing: stopBearings[stop.id] || 0 // Default to 0 if no bearing
                 }
             });
         }
@@ -469,54 +495,7 @@ function addStopsToMap(stops) {
     const redLineCoords = getLineCoordinates(RED_LINE_ORDER, metroFeatures);
     const greenLineCoords = getLineCoordinates(GREEN_LINE_ORDER, metroFeatures);
 
-    map.addSource('metro-lines-manual', {
-        type: 'geojson',
-        data: {
-            type: 'FeatureCollection',
-            features: [
-                {
-                    type: 'Feature',
-                    properties: { color: '#ef4444' },
-                    geometry: { type: 'LineString', coordinates: redLineCoords }
-                },
-                {
-                    type: 'Feature',
-                    properties: { color: '#22c55e' },
-                    geometry: { type: 'LineString', coordinates: greenLineCoords }
-                }
-            ]
-        }
-    });
 
-    map.addLayer({
-        id: 'metro-lines-layer',
-        type: 'line',
-        source: 'metro-lines-manual',
-        layout: {
-            'line-join': 'round',
-            'line-cap': 'round'
-        },
-        paint: {
-            'line-color': ['get', 'color'],
-            'line-width': 8,
-            'line-opacity': 0.5 // 50% opacity mostly
-        }
-    }, 'stops-layer'); // Put it BEHIND the stops (stops-layer is added after this block usually? No, before?)
-    // This block is INSIDE addStopsToMap.
-    // stops-layer is added at line ~260.
-    // If I add this layer HERE (before line 260), it will be covered by stops-layer? 
-    // Wait, addLayer takes 'beforeId'. If I pass 'stops-layer', I am asking to put it BEFORE (under) stops-layer.
-    // BUT stops-layer doesn't exist yet!
-    // I should add this source/layer AFTER adding stops-layer, but use 'beforeId' = 'stops-layer'? No that fails if it doesn't exist.
-    // I will add stops-layer FIRST, then add this layer asking to be BEFORE 'stops-layer'? No, that logic is backwards.
-    // "If 'beforeId' is specified, the layer will be inserted before the layer with that ID." -> Z-index: lower.
-
-    // So:
-    // 1. Add stops-layer (High Z)
-    // 2. Add metro-lines-layer (Low Z), beforeId='stops-layer'.
-
-    // I need to add stops-layer FIRST in the code flow.
-    // I will move this block down.
 
     // 1. Bus Source & Layer (Existing code follows...)
 
@@ -533,26 +512,37 @@ function addStopsToMap(stops) {
     if (!map.getLayer('stops-layer')) {
         map.addLayer({
             id: 'stops-layer',
-            type: 'circle',
+            type: 'symbol',
             source: 'stops',
+            layout: {
+                'icon-image': [
+                    'step',
+                    ['zoom'],
+                    'stop-far-away-icon', // Default (< 14)
+                    14, 'stop-icon',      // Mid zoom (14-16)
+                    16.5, 'stop-close-up-icon' // High zoom (> 16.5)
+                ],
+                'icon-size': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    13, 0.5,
+                    14, 0.8,
+                    16, 1
+                ],
+                // Rotation Logic: 0 until 16.5, then follow bearing.
+                'icon-rotate': [
+                    'step',
+                    ['zoom'],
+                    0,       // Default (zoom < 16.5)
+                    16.5, ['get', 'bearing'] // Zoom >= 16.5
+                ],
+                'icon-rotation-alignment': 'map', // Fixed to map (North relative)
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': false
+            },
             paint: {
-                'circle-color': '#11b4da',
-                'circle-radius': [
-                    'interpolate',
-                    ['linear'],
-                    ['zoom'],
-                    10, 1,   // Smaller at city level
-                    12, 2,   // Small at district level
-                    15, 6    // Normal at street level
-                ],
-                'circle-stroke-width': [
-                    'interpolate',
-                    ['linear'],
-                    ['zoom'],
-                    10, 0,
-                    14, 1
-                ],
-                'circle-stroke-color': '#fff'
+                'icon-opacity': 1
             }
         });
     }
@@ -777,113 +767,228 @@ function setupPanelDrag(panelId) {
         return matrix.m42;
     };
 
-    const handleTouchStart = (e) => {
-        // Only handle if dragging the handle or top area
-        // If content is scrolled down, don't drag
-        if (e.target.closest('.arrivals-list') && panel.scrollTop > 0) return;
+    // Unified Start Handler (Mouse & Touch)
+    const handleStart = (e) => {
+        const target = e.target;
+        // Check if header or body
+        const isHeader = target.closest('.panel-header') ||
+            target.closest('#header-extension') ||
+            target.closest('.drag-handle') ||
+            panel.classList.contains('metro-mode');
 
-        startY = e.touches[0].clientY;
+        // Normalize coordinates
+        const clientY = e.type.includes('mouse') ? e.clientY : e.touches[0].clientY;
+
+        startY = clientY;
         startTime = Date.now();
         startTransformY = getTranslateY();
-        isDragging = true;
 
-        // Disable transition for direct tracking
-        panel.style.transition = 'none';
-        panel.classList.add('is-dragging');
+        // If Header, start dragging immediately
+        if (isHeader) {
+            isDragging = true;
+            panel.style.transition = 'none';
+            panel.classList.add('is-dragging');
+            if (e.type.includes('mouse')) e.preventDefault(); // Prevent text selection
+        } else {
+            // If body, we MIGHT start dragging if they pull down at top
+            isDragging = false;
+        }
     };
 
-    const handleTouchMove = (e) => {
-        if (!isDragging) return;
-        const y = e.touches[0].clientY;
-        const delta = y - startY;
-        const newTransformY = startTransformY + delta;
+    // Unified Move Handler
+    const handleMove = (e) => {
+        const clientY = e.type.includes('mouse') ? e.clientY : e.touches[0].clientY;
+        const delta = clientY - startY;
 
-        // Constraint: Don't drag above 0 (top)
-        // Don't drag below hidden state (approx screen height or 100%)
-        // Let's rely on visuals for now, assume reasonable bounds
+        // If NOT yet dragging, check if we should switch to drag
+        if (!isDragging) {
+            // Only care about Pull Down (delta > 0)
+            if (delta > 0) {
+                const scrollable = panel.querySelector('.panel-body');
+                if (scrollable && scrollable.scrollTop <= 0) {
+                    // WE HIT TOP! Switch to drag.
+                    isDragging = true;
+                    startTransformY = getTranslateY(); // Reset start to current position
+                    startY = clientY; // Reset
 
-        // Apply transform directly
-        panel.style.transform = `translateY(${newTransformY}px)`;
+                    panel.style.transition = 'none';
+                    panel.classList.add('is-dragging');
+
+                    if (e.cancelable) e.preventDefault();
+                }
+            }
+        }
+
+        if (isDragging) {
+            if (e.cancelable) e.preventDefault();
+
+            const currentDelta = clientY - startY;
+            const newTransformY = startTransformY + currentDelta;
+            panel.style.transform = `translateY(${newTransformY}px)`;
+        }
     };
 
-    const handleTouchEnd = (e) => {
+    // Unified End Handler
+    const handleEnd = (e) => {
         if (!isDragging) return;
+
         isDragging = false;
         panel.classList.remove('is-dragging');
-        panel.style.transition = ''; // Restore transition from CSS class
+        panel.style.transition = '';
 
-        const endY = e.changedTouches[0].clientY;
+        // Get end Y
+        let endY;
+        if (e.type.includes('mouse')) {
+            endY = e.clientY;
+        } else {
+            endY = e.changedTouches[0].clientY;
+        }
+
         const delta = endY - startY;
         const time = Date.now() - startTime;
         const velocity = Math.abs(delta / time);
 
         // Snap Logic
-        // Calculate percentages to guess intent
-        // Bounds: 0 (Full), ~40vh (Half), ~100% or calc(100% - 80px) (Collapsed)
-        // Let's get actual current Y
+        snapSheet(delta, velocity);
+    };
+
+    // Helper: Snap Logic (Shared scope)
+    const snapSheet = (delta, velocity) => {
         const currentY = getTranslateY();
         const screenH = window.innerHeight;
 
-        // Tap Detection
-        if (time < 200 && Math.abs(delta) < 10) {
-            if (panel.classList.contains('sheet-collapsed')) {
-                setSheetState(panel, 'half');
-                return;
-            }
-        }
-
         // Thresholds
-        const fullThreshold = screenH * 0.2; // Top 20%
-        const halfThreshold = screenH * 0.6; // 40vh from bottom means Y is at 60% of screenH
-        const collapsedThreshold = screenH * 0.9;
+        const TRIGGER_VELOCITY = 0.3;
+        const HALF_SHEET_Y = screenH * 0.6; // Assuming 40vh height (1 - 0.4)
 
-        // Determine target state based on position + velocity direction
-        let targetState = 'half'; // Default fallback
+        let targetState = 'half';
 
-        // Heuristics
-        if (currentY < screenH * 0.3) {
-            targetState = 'full';
-        } else if (currentY > screenH * 0.8) {
-            targetState = 'hidden'; // actually 'collapsed' or 'hidden' depending on context?
-            // Review: "close completely" -> "collapse to small version"
-            // But existing logic had 'hidden'.
-            // User said: "collapse to a small version...". So target should be 'sheet-collapsed' usually.
-            // But if we use 'hidden' in setSheetState, it adds `.hidden`.
-            // We need to support 'collapsed' in setSheetState.
-        } else {
-            targetState = 'half';
-        }
-
-        // Velocity override
-        if (velocity > 0.5) {
-            if (delta > 0) { // Dragged Down
-                if (currentY > halfThreshold) targetState = 'sheet-collapsed'; // Go to collapsed
-                else targetState = 'half';
-            } else { // Dragged Up
-                if (currentY < halfThreshold) targetState = 'full';
-                else targetState = 'half';
+        // 1. Velocity Flick
+        if (velocity > TRIGGER_VELOCITY) {
+            if (delta > 0) {
+                // Flipped Down
+                targetState = currentY > HALF_SHEET_Y + 50 ? 'collapsed' : 'half';
+            } else {
+                // Flipped Up
+                targetState = 'full';
             }
+        } else {
+            // 2. Position Check
+            // Tune: easier to leave full (0.3 -> 0.15)
+            if (currentY < screenH * 0.15) targetState = 'full';
+            else if (currentY > screenH * 0.85) targetState = 'collapsed';
+            else targetState = 'half';
         }
 
-        // We need to update setSheetState to handle 'collapsed' properly if we use it
-        // Or just map our targetState to the args setSheetState expects.
-        // My setSheetState handles 'hidden', 'half', 'full'.
-        // New requirement: 'collapsed' (80px visible).
-        // Let's call it 'collapsed'.
-
-        if (targetState === 'sheet-collapsed') targetState = 'collapsed';
-
-        // If we are dragging route-info, we might want 'collapsed' to mean "hidden" ? 
-        // User said: "collapsed to a small version".
-
-        // Force style clear to let class take over
-        panel.style.transform = '';
         setSheetState(panel, targetState);
+        panel.style.transform = ''; // Clear inline transform
     };
 
-    panel.addEventListener('touchstart', handleTouchStart, { passive: true });
-    panel.addEventListener('touchmove', handleTouchMove, { passive: false });
-    panel.addEventListener('touchend', handleTouchEnd);
+    // Touch Listeners
+    panel.addEventListener('touchstart', handleStart, { passive: true });
+    panel.addEventListener('touchmove', handleMove, { passive: false });
+    panel.addEventListener('touchend', handleEnd);
+
+    // Mouse Listeners
+    panel.addEventListener('mousedown', handleStart);
+    window.addEventListener('mousemove', (e) => {
+        if (isDragging) handleMove(e);
+    });
+    window.addEventListener('mouseup', handleEnd);
+
+    // Wheel Logic (Desktop)
+    let wheelTimeout;
+    let isScrollingContent = false;
+    let scrollEndTimeout;
+
+    panel.addEventListener('wheel', (e) => {
+        const currentClass = panel.classList.contains('sheet-full') ? 'full' :
+            panel.classList.contains('sheet-half') ? 'half' :
+                panel.classList.contains('sheet-collapsed') ? 'collapsed' : 'half';
+
+        // Reset scroll end detection
+        clearTimeout(scrollEndTimeout);
+        scrollEndTimeout = setTimeout(() => {
+            isScrollingContent = false;
+        }, 60); // Faster reset (Trackpad friendly)
+
+        // Threshold to prevent accidental jitters for triggers
+        if (Math.abs(e.deltaY) < 5) return;
+
+        // ... (middle code logic remains same, skipping for brevity in replace tool if distinct)
+
+        // ACTUALLY, replace tool needs contiguous block. 
+        // I will target the SnapSheet function first, then the listener debounce if needed.
+        // Wait, the replace tool handles chunks.
+
+
+        if (currentClass === 'collapsed') {
+            if (e.deltaY > 0) { // Scroll Down (pull) -> Expand
+                e.preventDefault();
+                setSheetState(panel, 'half');
+            }
+        } else if (currentClass === 'half') {
+            if (e.deltaY > 0) { // Scroll Down -> Full
+                e.preventDefault();
+                setSheetState(panel, 'full');
+            } else if (e.deltaY < 0) { // Scroll Up -> Collapse
+                e.preventDefault();
+                setSheetState(panel, 'collapsed');
+            }
+        } else if (currentClass === 'full') {
+            const scrollable = panel.querySelector('.panel-body');
+
+            // Check usage
+            if (scrollable && scrollable.scrollTop > 0) {
+                isScrollingContent = true;
+                // Allow native scroll
+                return;
+            }
+
+            // If we are here, we are at TOP (or no scrollable).
+            // Logic: If we were JUST scrolling content, we must "stumble" (ignore this momentum).
+            // We only allow transition if this is a FREH gesture (isScrollingContent == false).
+
+            if (e.deltaY < 0 && (scrollable && scrollable.scrollTop <= 0)) {
+
+                if (isScrollingContent) {
+                    // STUMBLE: We came from content, hitting the top.
+                    // Absorb the momentum but do NOT transition.
+                    // Doing nothing lets the native "bounce" happen or just stops.
+                    // Usually we want to preventing the sheet drag.
+
+                    // Actually, if we don't preventDefault, mac might trigger page back swipe or bounce.
+                    // Let's preventDefault to show "Hard Stop".
+                    // But maybe user wants bounce?
+                    // Let's start with hard stop.
+                    // e.preventDefault();
+                    return;
+                    // Returning here allows "overscroll" events (bounce) naturally if we don't preventDefault.
+                    // But we MUST NOT run the drag logic below.
+                }
+
+                e.preventDefault();
+
+                // FLUID DRAG LOGIC
+                // 1. Disable transition
+                panel.style.transition = 'none';
+
+                // 2. Move panel
+                const currentY = getTranslateY();
+                const newY = currentY - e.deltaY;
+                panel.style.transform = `translateY(${newY}px)`;
+
+                // 3. Debounce Snap
+                clearTimeout(wheelTimeout);
+                wheelTimeout = setTimeout(() => {
+                    // Restore transition and snap
+                    panel.style.transition = '';
+                    snapSheet(0, 0); // Snap based on position only
+                }, 150);
+            }
+            // Else let native scroll happen
+        }
+    }, { passive: false });
 }
 
 // Zoom Logic for Reset Button
@@ -961,6 +1066,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
     setSheetState(document.getElementById('route-info'), 'hidden');
 
     nameEl.textContent = stop.name || 'Unknown Stop';
+    panel.classList.remove('metro-mode'); // Reset mode
     listEl.innerHTML = '<div class="loading">Loading arrivals...</div>';
 
     // Cleanup: Remove any existing Metro header if it exists (from previous selection)
@@ -969,12 +1075,15 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
 
     // Detect Metro Station
     // Detect Metro Station
+    // Clear header extension
+    const headerExtension = document.getElementById('header-extension');
+    if (headerExtension) headerExtension.innerHTML = '';
+
     // STRICT CHECK: Metro stations must have mode 'SUBWAY' (set in addStopsToMap) OR have a specific ID pattern.
-    // We do NOT want to match bus stops that just happen to have "Metro Station" in their name.
-    // Real metro stops in our app have property mode='SUBWAY' explicitly set in addStopsToMap.
     const isMetro = stop.mode === 'SUBWAY' || (stop.id && stop.id.startsWith('1:metro'));
 
     if (isMetro) {
+        panel.classList.add('metro-mode');
         // --- Metro Display Logic ---
         setSheetState(panel, 'half'); // Open panel immediately
         updateBackButtons();
@@ -1218,7 +1327,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
 
     setSheetState(panel, 'half'); // Default to half open
     updateBackButtons(); // Ensure back button state is correct
-    updateBackButtons(); // Ensure back button state is correct
+
 
     try {
         // Fetch both Routes (static) and Arrivals (live) in parallel
@@ -1227,81 +1336,62 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
             fetchArrivals(stop.id)
         ]);
 
-        // --- Build All Routes Section ---
+        // --- Build All Routes (Header Extension) ---
+        const headerExtension = document.getElementById('header-extension');
+        if (headerExtension) {
+            headerExtension.innerHTML = ''; // Clear previous
 
-        let routeList = Array.isArray(stopRoutes) ? [...stopRoutes] : [];
+            let routesForStop = Array.isArray(stopRoutes) ? [...stopRoutes] : [];
 
-        // Merge arrivals into routeList for fallback (if static fetch returned empty)
-        if (arrivals && arrivals.length > 0) {
-            const existingNumbers = new Set(routeList.map(r => r.shortName));
-            arrivals.forEach(arr => {
-                if (!existingNumbers.has(arr.shortName)) {
-                    existingNumbers.add(arr.shortName);
-                    // Try to find full route object from global list
-                    const fullRoute = allRoutes.find(r => r.shortName === arr.shortName);
-                    routeList.push(fullRoute || { shortName: arr.shortName, id: null });
-                }
-            });
-        }
-
-        // Sort numerically
-        routeList.sort((a, b) => (parseInt(a.shortName) || 0) - (parseInt(b.shortName) || 0));
-
-        // Remove old container if exists
-        const oldContainer = panel.querySelector('.all-routes-container');
-        if (oldContainer) oldContainer.remove();
-
-        // Create new container (no header, just tiles)
-        const allRoutesContainer = document.createElement('div');
-        allRoutesContainer.className = 'all-routes-container';
-
-        const tilesContainer = document.createElement('div');
-        tilesContainer.className = 'route-tiles-container';
-
-        if (routeList.length === 0) {
-            tilesContainer.innerHTML = '<div style="color: var(--text-light); font-size: 0.9rem;">No routes found.</div>';
-        } else {
-            routeList.forEach(route => {
-                const btn = document.createElement('button');
-                btn.className = 'route-tile';
-                btn.textContent = route.shortName;
-                // Apply route color as text (light bg, colored text - like route cards)
-                if (route.color) {
-                    btn.style.backgroundColor = `#${route.color}20`; // 20 = 12% opacity
-                    btn.style.color = `#${route.color}`;
-                }
-                btn.onclick = () => {
-                    if (route.id) {
-                        showRouteOnMap(route, true, {
-                            preserveBounds: true,
-                            fromStopId: stop.id
-                        });
-                    } else {
-                        const realRoute = allRoutes.find(r => r.shortName === route.shortName);
-                        if (realRoute) {
-                            showRouteOnMap(realRoute, true, {
-                                preserveBounds: true,
-                                fromStopId: stop.id
-                            });
-                        } else {
-                            alert('Route details not available.');
-                        }
+            // Merge with arrivals for robustness
+            if (arrivals && arrivals.length > 0) {
+                const existingNumbers = new Set(routesForStop.map(r => r.shortName));
+                arrivals.forEach(arr => {
+                    if (!existingNumbers.has(arr.shortName)) {
+                        existingNumbers.add(arr.shortName);
+                        const fullRoute = allRoutes.find(r => r.shortName === arr.shortName);
+                        routesForStop.push(fullRoute || { shortName: arr.shortName, id: null, color: '2563eb' });
                     }
-                };
-                tilesContainer.appendChild(btn);
-            });
-        }
-        allRoutesContainer.appendChild(tilesContainer);
+                });
+            }
 
-        // Insert after stop name header
-        // Insert after the panel-header (title row), before arrivals list
-        const panelHeader = panel.querySelector('.panel-header');
-        if (panelHeader) {
-            panelHeader.insertAdjacentElement('afterend', allRoutesContainer);
-        } else {
-            // Fallback to before arrivals list
-            listEl.parentNode.insertBefore(allRoutesContainer, listEl);
+            if (routesForStop.length > 0) {
+                routesForStop.sort((a, b) => (parseInt(a.shortName) || 0) - (parseInt(b.shortName) || 0));
+
+                const container = document.createElement('div');
+                container.className = 'all-routes-container';
+                // Remove padding from container itself if managed by CSS, but style.css has it.
+
+                const tilesContainer = document.createElement('div');
+                tilesContainer.className = 'route-tiles-container';
+
+                routesForStop.forEach(route => {
+                    const tile = document.createElement('button');
+                    tile.className = 'route-tile';
+                    tile.textContent = route.shortName;
+                    const color = route.color || '2563eb';
+                    // Style: Light BG, Dark Text
+                    tile.style.backgroundColor = `#${color}20`; // 12% opacity
+                    tile.style.color = `#${color}`;
+                    tile.style.fontWeight = '700';
+
+                    tile.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (route.id) {
+                            showRouteOnMap(route);
+                        } else {
+                            const real = allRoutes.find(r => r.shortName === route.shortName);
+                            if (real) showRouteOnMap(real);
+                        }
+                    });
+                    tilesContainer.appendChild(tile);
+                });
+                container.appendChild(tilesContainer);
+                headerExtension.appendChild(container);
+            }
         }
+
+
 
         // --- Render Arrivals ---
         renderArrivals(arrivals);
@@ -1818,14 +1908,78 @@ function setSheetState(panel, state) {
     }
 
     // For desktop compatibility
-    if (window.innerWidth >= 769) {
-        // Just show/hide
-        if (state === 'hidden') {
-            panel.classList.add('hidden');
-        } else {
-            panel.classList.remove('hidden');
-        }
-    }
+    // We WANT these states to persist now, so we can support the half/full/collapsed logic on desktop too.
+    // The CSS media queries should handle the sizing (width), but the height/y-transform is controlled by these classes/JS.
+
+    // Previous logic forced it to just removed 'hidden' on desktop. 
+    // We'll keep the classes. The CSS for desktop needs to respect them if we want this behavior.
+
+    // However, we might want to ensure 'half' on desktop doesn't mean "bottom 40% of screen" if the design is a sidebar...
+    // Wait, the design IS a sidebar on desktop? 
+    // The user said "Desktop (narrow window)". 
+    // If it's a Sidebar, vertical sliding makes no sense.
+    // BUT the user asked for: "on desktop (narrow window) i expect this behaviour: the card opens halfway..."
+
+    // If window is narrow (<768px), it's mobile layout anyway.
+    // If window is >768px but "narrow"? 
+    // Usually >768 is treated as tablet/desktop in my CSS.
+
+    // If the user wants this behavior on "Desktop (narrow window)", they likely mean when they resize the browser to be mobile-like.
+    // OR they mean the sidebar itself should have states?
+    // "the card opens halfway... scrolling collapses the card". This implies vertical movement.
+    // Vertical movement implies Bottom Sheet.
+    // Sidebars typically don't "collapse down".
+
+    // If the app switches to Sidebar on Desktop, this whole "Slide Up/Down" logic logic is moot unless we are in Mobile Mode.
+    // My CSS media queries toggle between Bottom Sheet and Sidebar at 768px.
+
+    // Checks:
+    // If width > 768px: Panel is usually top-left or sidebar.
+    // If width < 768px: Panel is bottom sheet.
+
+    // If user says "Desktop (narrow window)", they might mean < 768px responsiveness.
+    // IN THAT CASE, the `window.innerWidth >= 769` check below is valid for "Real Desktop".
+    // AND it overrides the states.
+
+    // IF the user wants this behavior when the window is NARROW, then we are ALREADY in the <768px block effectively?
+    // Unless the breakpoint is different.
+
+    // Let's assume "Desktop (narrow window)" means "Simulating mobile on desktop". 
+    // In that case, `window.innerWidth` would be small, so this `if` block wouldn't run.
+
+    // BUT if the user has a window of say 800px, and they want this behavior? 
+    // Then my CSS still renders a Sidebar.
+    // A Sidebar snapping to "Half Height" is weird.
+
+    // User said: "on desktop (narrow window)". 
+    // Hypotesis: They are testing responsively. 
+    // If they are seeing "unable to scroll from collapsed", it implies they ARE in a mode where 'collapsed' exists (Mobile Mode).
+    // So this function is NOT the blocker for <768px.
+
+    // HOWEVER, if they are testing on a "Desktop" width (e.g. 1000px) but expecting mobile behavior?
+    // That would require a massive CSS refactor.
+    // I will assume they mean <768px (Mobile View).
+
+    // Re-reading: "on desktop (narrow window)". 
+    // If I am in Mobile View (<768), `setSheetState` DOES apply classes. 
+
+    // So why "unable to scroll from collapsed"?
+    // Because my `wheel` listener logic: 
+    // `const currentClass = ...`
+    // If I am in `collapsed` (bottom 80px), and I use the mouse wheel over the map? 
+    // The listener is on the PANEL.
+    // If the panel is collapsed, it is only 80px tall. 
+    // The user has to mouse over that specific 80px strip to trigger the wheel event.
+
+    // If they mouse over that strip and scroll...
+    // My logic: `if (currentClass === 'collapsed')` -> MISSING!
+    // I missed handling 'collapsed' in the wheel event listener! I only did 'half' and 'full'.
+
+    // Fixing setSheetState just in case it's interfering with clean state transitions, 
+    // but the real bug is in `wheel` listener.
+
+    // Unified logic: Desktop now uses the same bottom sheet classes as mobile.
+    // The CSS handles the centering and width constraints for desktop.
 }
 
 async function fetchRouteDetailsV3(routeId) {
@@ -1943,8 +2097,56 @@ document.getElementById('close-route-info').addEventListener('click', () => {
 });
 
 
+// Helper to Load SVG as a Raster Image for Mapbox
+function loadSvgImage(map, id, url, width = 32, height = 32) {
+    const img = new Image(width, height);
+    img.crossOrigin = "Anonymous";
+    img.onload = () => {
+        // Create an intermediate canvas to ensure dimensions
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const imageData = ctx.getImageData(0, 0, width, height);
+        if (!map.hasImage(id)) {
+            map.addImage(id, imageData, { pixelRatio: 2 }); // Higher pixel ratio for crispness
+            console.log(`Debug: Successfully added icon ${id}`);
+        }
+    };
+    img.onerror = (e) => {
+        console.error(`Error loading SVG icon ${id}:`, e);
+    };
+    img.src = url;
+}
+
 // Load Custom Icons
 function loadImages(map) {
+    // Determine base URL for assets
+    const baseUrl = import.meta.env.BASE_URL || '/';
+
+    // Load SVG Icons (Rasterized)
+    loadSvgImage(map, 'stop-icon', `${baseUrl}stop.svg`, 64, 64);
+    // STOPS FAR AWAY: Simple Circle (Programmatic)
+    const farSize = 24; // Small canvas
+    const farCanvas = document.createElement('canvas');
+    farCanvas.width = farSize;
+    farCanvas.height = farSize;
+    const farCtx = farCanvas.getContext('2d');
+
+    farCtx.fillStyle = 'rgba(60, 60, 60, 0.7)'; // Less intense black (Dark Grey, slight opacity)
+    farCtx.beginPath();
+    farCtx.arc(farSize / 2, farSize / 2, 6, 0, Math.PI * 2); // Radius 6 = 12px circle
+    farCtx.fill();
+
+    map.addImage('stop-far-away-icon', farCtx.getImageData(0, 0, farSize, farSize), { pixelRatio: 2 });
+
+    // Use correct aspect ratio for these (Original: 43x66 -> 2x: 86x132)
+    loadSvgImage(map, 'stop-close-up-icon', `${baseUrl}stop-close-up.svg`, 86, 132);
+    // (Original: 53x76 -> 2x: 106x152)
+    loadSvgImage(map, 'stop-selected-icon', `${baseUrl}stop-selected.svg`, 106, 152);
+
     // Create an SDF Arrow Icon programmatically
     const width = 48;
     const height = 48;

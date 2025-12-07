@@ -20,11 +20,22 @@ body {
   font-family: 'Inter', sans-serif;
   color: var(--text);
   overflow: hidden;
+  overscroll-behavior: none;
+  /* Disables Pull-to-Refresh */
+  touch-action: manipulation;
+  /* Disables Double-Tap Zoom globally, but allows pan/scroll */
+  height: 100vh;
+  /* Fallback */
   height: 100dvh;
-  /* Dynamic Full Height for Safari */
+  /* Dynamic Height */
   width: 100vw;
   margin: 0;
   padding: 0;
+  /* Ensure map goes behind safe areas */
+  padding-top: env(safe-area-inset-top, 0);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  padding: 0;
+  /* Reset again to ensure full map */
 }
 
 #app {
@@ -36,12 +47,14 @@ body {
 #map {
   width: 100%;
   height: 100%;
+  touch-action: none;
+  /* Allow Mapbox to handle all touches (pinch/zoom) */
 }
 
 /* --- Map Controls --- */
 #map-controls {
   position: absolute;
-  bottom: 100px;
+  bottom: max(100px, 100px + env(safe-area-inset-bottom));
   right: 16px;
   display: flex;
   flex-direction: column;
@@ -105,7 +118,8 @@ body {
 /* --- Search Bar --- */
 .search-wrapper {
   position: absolute;
-  top: 16px;
+  top: max(16px, env(safe-area-inset-top) + 16px);
+  /* Respect Notch */
   left: 16px;
   right: 16px;
   z-index: 10;
@@ -220,10 +234,10 @@ body {
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   flex-direction: column;
-  touch-action: none;
+  /* touch-action: none;  <-- REMOVED to allow scrolling on children */
   /* Important for dragging */
-  transform: translateX(-100%);
-  /* Start hidden off-screen (Desktop) */
+  transform: translateY(100%);
+  /* Start hidden at bottom (Unified for both Desktop & Mobile now) */
 }
 
 .panel.hidden {
@@ -245,24 +259,14 @@ body {
     left: 0;
     width: 100%;
     border-radius: var(--bottom-sheet-radius);
-    padding: 20px;
-    padding-top: 12px;
-    overflow-y: auto;
-  }
-
-  .panel.sheet-collapsed {
-    transform: translateY(calc(100% - 80px));
-    /* Show 80px */
-  }
-
-  .panel.sheet-half {
-    transform: translateY(calc(100% - 40vh));
-    /* Show 40vh */
-  }
-
-  .panel.sheet-full {
-    transform: translateY(0);
-    /* Full up (10% from top as height is 90vh) */
+    border-radius: var(--bottom-sheet-radius);
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    /* Main panel doesn't scroll, body does */
+    height: 92dvh;
+    /* Dynamic viewport height */
   }
 
   /* When dragging, remove transition for instant follow */
@@ -271,37 +275,107 @@ body {
   }
 }
 
+/* Global Sheet States (Unified Mobile & Desktop) */
+.panel.sheet-collapsed {
+  transform: translateY(calc(100% - 80px - env(safe-area-inset-bottom)));
+}
+
+.panel.sheet-half {
+  transform: translateY(calc(100% - 40vh));
+}
+
+.panel.sheet-full {
+  transform: translateY(0);
+}
+
+.panel.hidden {
+  transform: translateY(100%) !important;
+  /* Override base display: none from line 243? */
+  /* If we want it to animate out, we need display: flex. */
+  /* But generally, we rely on the state classes (sheet-collapsed) to show it. */
+  /* If .hidden is applied, it implies "Closed Completely". */
+  /* Let's keep it simple: Hidden = Gone. */
+  /* But we need to kill the translateX(-120%) rule that is causing the side-scroll artifact. */
+}
+
 /* Desktop Styles (Sidebar) */
 @media (min-width: 769px) {
   .search-wrapper {
-    justify-content: flex-start;
-    /* Align left on desktop */
-    width: 400px;
+    left: 50%;
+    margin-left: -225px;
+    width: 450px;
+    right: auto;
+    top: max(16px, env(safe-area-inset-top) + 16px);
+    transform: none;
   }
 
   .panel {
-    top: 80px;
-    /* Below search */
-    left: 16px;
-    width: 400px;
-    max-height: calc(100vh - 100px);
-    border-radius: 16px;
-    padding: 20px;
-    max-height: calc(100vh - 100px);
-    border-radius: 16px;
-    padding: 20px;
-    overflow-y: auto;
-    transform: translateX(0);
-    /* Reset base transform to show on screen */
-  }
+    /* Unify with mobile: Centered Bottom Sheet */
+    /* Robust Centering with !important to ensure no overrides */
+    left: 50% !important;
+    margin-left: -225px !important;
+    width: 450px !important;
+    right: auto !important;
 
-  .panel.hidden {
-    transform: translateX(-120%);
-  }
+    bottom: 0 !important;
+    top: auto !important;
 
-  .drag-handle {
-    display: none;
+    border-radius: 20px 20px 0 0;
+
+    /* Ensure transitions and transforms work like mobile */
+    transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    will-change: transform;
+    height: 92dvh;
+    max-height: none;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 0;
   }
+}
+
+
+
+.drag-handle {
+  display: block;
+  /* Visible on mobile */
+  width: 36px;
+  height: 5px;
+  background-color: #d1d5db;
+  /* Darker grey (grey-300) for visibility */
+  border-radius: 4px;
+  margin: 12px auto 8px auto;
+  /* More top margin */
+  flex-shrink: 0;
+  cursor: grab;
+}
+
+/* Fix Scrollable Body in Half State 
+   When panel is half (40vh), body must be constrained to fit within that 40vh 
+   minus header/handle height (approx 80-100px). 
+*/
+/* Fix Scrollable Body in Half State 
+   When panel is half (40vh), body must be constrained to fit within that 40vh 
+   minus header/handle height (approx 80-100px). 
+   This applies GLOBALLY now for the unified layout.
+*/
+.panel.sheet-half .panel-body {
+  /* Use dvh to account for dynamic address bar */
+  max-height: calc(45dvh - 100px);
+  overflow-y: auto;
+}
+
+/* Reset for full state */
+.panel.sheet-full .panel-body {
+  max-height: none;
+  /* Ensure we have plenty of bottom padding in full view so final items aren't hidden */
+  padding-bottom: calc(env(safe-area-inset-bottom) + 120px);
+}
+
+/* Enforce no-scroll on drag handle and header to prevent browser native scroll */
+.drag-handle,
+.panel-header {
+  touch-action: none;
 }
 
 /* Mobile Styles (Bottom Sheet) */
@@ -309,9 +383,11 @@ body {
 
 /* Route Tiles (All Routes) */
 .all-routes-container {
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #f3f4f6;
+  margin-bottom: 12px;
+  padding: 0 20px 16px 20px;
+  /* Header padding */
+  border-bottom: none;
+  background: white;
 }
 
 .route-tiles-container {
@@ -351,7 +427,12 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  /* Header specific padding */
+  padding: 16px 20px 0 20px;
+  /* Increased top padding significantly */
   margin-bottom: 12px;
+  flex-shrink: 0;
+  background: white;
 }
 
 .panel-header h2 {
@@ -445,6 +526,22 @@ body {
   font-size: 1.25rem;
   margin: 0;
   padding: 0;
+}
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  background: #f2f2f2;
+  padding: 20px;
+  /* Ensure padding at bottom for safe area scrolling + extra for address bar clearance */
+  padding-bottom: calc(env(safe-area-inset-bottom) + 120px);
+}
+
+/* Metro Mode Overrides */
+.panel.metro-mode .panel-body {
+  background: white;
+  overflow-y: hidden;
+  /* Optional: if we want to enforce drag over scroll */
 }
 
 .arrivals-list {
@@ -681,6 +778,10 @@ body {
 .route-actions {
   display: flex;
   gap: 8px;
+  padding: 0 20px 12px 20px;
+  /* Match header padding */
+  background: white;
+  flex-shrink: 0;
 }
 
 .switch-btn {

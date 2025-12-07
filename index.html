@@ -3,7 +3,8 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Tbilisi Transit</title>
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -66,7 +67,8 @@
           </button>
         </div>
       </div>
-      <div id="arrivals-list" class="arrivals-list">
+      <div id="header-extension"></div> <!-- Container for All Routes, Metro badge etc. -->
+      <div id="arrivals-list" class="arrivals-list panel-body">
         <!-- Arrivals will be injected here -->
       </div>
     </div>
@@ -100,6 +102,7 @@
           Switch Direction
         </button>
       </div>
+      <div id="route-info-body" class="panel-body"></div>
     </div>
 
     <button id="reset-view" class="reset-view-btn hidden">
