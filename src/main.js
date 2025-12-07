@@ -48,13 +48,25 @@ map.addControl(geolocate);
 // Handle Geolocate Errors (e.g., iOS HTTP restriction)
 geolocate.on('error', (e) => {
     console.error('Geolocate error:', e);
-    // Show precise error for debugging
-    alert(`Location Error ${e.code}: ${e.message}`);
+    // Debug: serialization to see what 'e' actually is on the wrapped event
+    let msg = 'Unknown Error';
+    try {
+        // Try standard PositionError
+        if (e.code) msg = `Error ${e.code}: ${e.message}`;
+        // Try valid mapbox event wrapper
+        else if (e.error && e.error.code) msg = `Error ${e.error.code}: ${e.error.message}`;
+        // Fallback: Dump keys
+        else msg = JSON.stringify(e);
+    } catch (err) {
+        msg = 'Serialization Failed';
+    }
 
-    if (e.code === 1) { // PERMISSION_DENIED
-        alert('Location permission denied. Please enable it in Settings.');
+    alert(`DEBUG: ${msg}`);
+
+    if (e.code === 1 || (e.error && e.error.code === 1)) { // PERMISSION_DENIED
+        alert('Location permission denied via Settings.');
     } else if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-        alert('Location requires HTTPS on mobile devices.');
+        alert('Location requires HTTPS.');
     }
 });
 
@@ -1632,11 +1644,9 @@ function setupSearch() {
 
     input.addEventListener('input', (e) => {
         const query = e.target.value.toLowerCase();
-        console.log('[Search] Input:', query);
 
         clearTimeout(debounceTimeout);
         debounceTimeout = setTimeout(async () => {
-            console.log('[Search] Debounce fired for:', query);
 
             if (query.length < 2) {
                 if (query.length === 0) {
@@ -1650,8 +1660,6 @@ function setupSearch() {
                 return;
             }
 
-            console.log('[Search] Data counts - Stops:', allStops.length, 'Routes:', allRoutes.length);
-
             // 1. Local Search (Stops & Routes) - Render IMMEDIATELY
             const matchedStops = allStops.filter(stop =>
                 (stop.name && stop.name.toLowerCase().includes(query)) ||
@@ -1663,8 +1671,6 @@ function setupSearch() {
                 (route.longName && route.longName.toLowerCase().includes(query))
             ).slice(0, 5);
 
-            console.log('[Search] Local matches:', matchedStops.length, matchedRoutes.length);
-
             // Render local first to be responsive
             renderSuggestions(matchedStops, matchedRoutes, []);
 
@@ -1672,15 +1678,12 @@ function setupSearch() {
             let matchedPlaces = [];
             try {
                 const geocodingUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${mapboxgl.accessToken}&country=ge&types=place,address,poi&limit=5`;
-                console.log('[Search] Fetching:', geocodingUrl);
                 const res = await fetch(geocodingUrl);
                 if (res.ok) {
                     const data = await res.json();
                     matchedPlaces = data.features || [];
-                    console.log('[Search] Remote matches:', matchedPlaces.length);
 
-                    // Re-render with ALL results (Merge them to avoid jarring jump? Or append?)
-                    // Standard behavior: Routes, Stops, Places.
+                    // Re-render with ALL results
                     renderSuggestions(matchedStops, matchedRoutes, matchedPlaces);
                 } else {
                     console.warn('[Search] Geocoding error:', res.status, res.statusText);
