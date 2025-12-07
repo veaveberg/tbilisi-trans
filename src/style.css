@@ -963,3 +963,25 @@ body.panel-open .controls {
   font-family: 'Inter', sans-serif;
   box-shadow: var(--shadow);
 }
+
+/* --- Scheduled Time Styles --- */
+.time-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.time.scheduled-time {
+  background: #f3f4f6;
+  /* Lighter grey background */
+  color: #6b7280;
+  /* Grey text */
+  font-weight: 500;
+}
+
+.scheduled-disclaimer {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  font-style: italic;
+}

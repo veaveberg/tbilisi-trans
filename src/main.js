@@ -181,7 +181,8 @@ const filterState = {
     active: false,
     picking: false,
     originId: null,
-    targetId: null,
+    targetIds: new Set(), // Multi-select support
+    reachableStopIds: new Set(),
     filteredRoutes: [] // Array of route IDs
 };
 
@@ -207,15 +208,48 @@ async function toggleFilterMode() {
     const btn = document.getElementById('filter-routes');
     if (btn) {
         btn.classList.add('active');
-        btn.querySelector('img').src = '/line.3.horizontal.decrease.circle.fill.svg';
+        btn.querySelector('img').src = 'line.3.horizontal.decrease.circle.fill.svg';
     }
 
     // Show Prompt
-    document.getElementById('stop-name').textContent = "Select destination...";
+    document.getElementById('stop-name').textContent = "Select destination stop...";
+
+    // Camera Logic: Zoom out & Pan
+    if (window.currentStopId) {
+        const stop = allStops.find(s => s.id === window.currentStopId);
+        if (stop) {
+            const currentZoom = map.getZoom();
+            const targetZoom = currentZoom > 14 ? 14 : currentZoom;
+
+            // Calculate Pan Offset (300m in bearing direction)
+            // Default bearing 0 if missing
+            const bearing = (stop.bearing || 0) * (Math.PI / 180); // radians
+            const distance = 300; // meters
+            const R = 6371e3; // Earth radius in meters
+            const lat1 = stop.lat * (Math.PI / 180);
+            const lon1 = stop.lon * (Math.PI / 180);
+
+            const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distance / R) +
+                Math.cos(lat1) * Math.sin(distance / R) * Math.cos(bearing));
+            const lon2 = lon1 + Math.atan2(Math.sin(bearing) * Math.sin(distance / R) * Math.cos(lat1),
+                Math.cos(distance / R) - Math.sin(lat1) * Math.sin(lat2));
+
+            const targetLat = lat2 * (180 / Math.PI);
+            const targetLon = lon2 * (180 / Math.PI);
+
+            map.flyTo({
+                center: [targetLon, targetLat],
+                zoom: targetZoom,
+                duration: 1500,
+                essential: true
+            });
+        }
+    }
 
     // Calculate Reachable Stops
     // 1. Get all routes passing through currentStopId
     const routes = stopToRoutesMap.get(window.currentStopId) || [];
+    const reachableStopIds = new Set(); // Initialize Scope Here
 
     // FETCH MISSING DETAILS
     // If routes exist but don't have 'stops', we must fetch them.
@@ -312,18 +346,8 @@ async function toggleFilterMode() {
         }
     }
 
-    // For routes that didn't need fetching (processed in previous loop or just existing)
-    // We didn't iterate them for reachability in main loop if they weren't in routesNeedingFetch.
-    // Wait, the previous code block iterated ALL routes at the very end to build the set.
-    // I need to preserve that structure but ADD normalization.
-
-    const reachableStopIds = new Set(); // Reset or Accumulate? 
-    // Wait, inside the fetch block I was adding to `reachableStopIds`.
-    // But then I overwrite `reachableStopIds` with new Set() after the block! (Lines 275 in previous version)
-    // That was a bug/issue in previous step (but maybe unintended).
-    // Let's fix it properly here. `reachableStopIds` should be one set.
-
     // Iterate over ALL routes (whether fetched or not) and calculate reachability
+    // This ensures consistency and covers routes that were already cached.
     routes.forEach(r => {
         if (r._details && r._details.patterns) {
             r._details.patterns.forEach(p => {
@@ -346,15 +370,14 @@ async function toggleFilterMode() {
         }
     });
 
+    // Store Reachable Stops in State
+    filterState.reachableStopIds = reachableStopIds; // Save Set
+
     console.log(`[Debug] Filter Mode. Origin: ${window.currentStopId}. Routes: ${routes.length}. Reachable Stops: ${reachableStopIds.size}`);
 
     // Debug Data Availability
     if (routes.length === 0) {
         console.warn('[Debug] stopToRoutesMap is empty. Checking fetchStopRoutes cache?');
-        // If empty, maybe we depend on showStopInfo already having fetched it?
-        // stopToRoutesMap is ONLY populated at load time from allRoutes (which has no stops).
-        // We need to populate it dynamically from fetchStopRoutes?
-        // fetchStopRoutes returns routes for a stop. We should update stopToRoutesMap with that!
     }
 
     if (reachableStopIds.size === 0) {
@@ -363,121 +386,174 @@ async function toggleFilterMode() {
         return;
     }
 
-    // DIM MAP except reachable
-    // We can use setMapFocus(true) style logic but customized
-    // Or we just rely on opacity.
-    // Let's manually set layer opacities.
-    // Actually, `setMapFocus` dims to 0.4. We want 0.2 vs 1.0.
-    // Let's use a specialized filter/paint property if possible, or just dim everything and maybe add a "Highlight" layer for reachable?
-    // User said: "only the stops to which you can go... are at full opacity and the rest is dimmed"
+    updateMapFilterState();
+}
 
-    // Efficient way: Update 'stops-layer' opacity using a match expression?
-    // Mapbox paint properties are fast.
-    const matchExpression = ['match', ['get', 'id'], Array.from(reachableStopIds), 1.0, 0.1];
-    console.log('[Debug] Match Expression Length:', matchExpression[2].length); // Check array size inside expression
+// Update Map Visuals for Filter Mode (Opacity & Z-Index)
+function updateMapFilterState() {
+    if (!filterState.picking && !filterState.active) {
+        // Reset
+        if (map.getLayer('stops-layer')) {
+            map.setPaintProperty('stops-layer', 'icon-opacity', 1);
+            map.setLayoutProperty('stops-layer', 'symbol-sort-key', 0);
+        }
+        if (map.getLayer('metro-layer-circle')) {
+            map.setPaintProperty('metro-layer-circle', 'circle-opacity', 1);
+            map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', 1);
+        }
+        return;
+    }
+
+    const reachableArray = Array.from(filterState.reachableStopIds || []);
+    const selectedArray = Array.from(filterState.targetIds || []);
+    const originId = filterState.originId;
+
+    // Merge important IDs for High Opacity
+    // Reachable + Selected + Origin
+    const highOpacityIds = new Set(reachableArray);
+    selectedArray.forEach(id => highOpacityIds.add(id));
+    if (originId) highOpacityIds.add(originId);
+
+    // 1. Opacity Expression: Reachable/Selected = 1.0, Others = 0.1
+    const opacityExpression = ['match', ['get', 'id'], Array.from(highOpacityIds), 1.0, 0.1];
+
+    // 2. Sort Key Expression: Selected > Reachable > Others
+    // This allows clicking "Highlighted" stops easily even if clustered
+    // Mapbox symbol-sort-key: Higher sorts first? No, sort order ASCENDING? 
+    // Docs: "Features with a higher sort key are drawn over features with a lower sort key." -> Yes, Higher = Top.
+    // Selected = 1000
+    // Reachable = 100
+    // Origin = 500
+    // Others = 0
+
+    const sortExpression = [
+        'match', ['get', 'id'],
+        selectedArray, 1000, // Selected are Top Priority
+        // Nested match? Or just flat list? Match takes one list.
+        // We can't easily nest matches for different priorities unless we use 'case'.
+        // Let's use 'case' for granular priorities.
+        // ['case', condition, output, condition, output, fallback]
+    ];
+
+    // Using 'case' with 'in' operator check is cleaner logic than nested matches
+    const caseExpression = [
+        'case',
+        ['in', ['get', 'id'], ['literal', selectedArray]], 1000,
+        ['==', ['get', 'id'], originId], 900,
+        ['in', ['get', 'id'], ['literal', reachableArray]], 100,
+        0 // Fallback
+    ];
 
     if (map.getLayer('stops-layer')) {
-        map.setPaintProperty('stops-layer', 'icon-opacity', matchExpression);
+        map.setPaintProperty('stops-layer', 'icon-opacity', opacityExpression);
+        map.setLayoutProperty('stops-layer', 'symbol-sort-key', caseExpression);
     }
-    // Also handling Metro circles?
+
     if (map.getLayer('metro-layer-circle')) {
-        // Metro IDs are strings too?
-        map.setPaintProperty('metro-layer-circle', 'circle-opacity', matchExpression);
-        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', matchExpression);
+        map.setPaintProperty('metro-layer-circle', 'circle-opacity', opacityExpression);
+        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', opacityExpression);
     }
 }
 
 function applyFilter(targetId) {
-    filterState.picking = false;
-    filterState.active = true;
-    filterState.targetId = targetId;
+    if (!filterState.picking || !filterState.originId) return;
 
-    // Restore Header Text (will be overwritten by showStopInfo anyway, but good practice)
-    // Actually, we stay on the Origin Stop, we just filter its content.
-    // OR do we show the Target stop?
-    // User: "then only the routes that go through both stops will be kept in arrivals"
-    // This implies we stick to the ORIGIN view, but filter it.
+    // Normalize Target ID
+    const normTargetId = redirectMap.get(targetId) || targetId;
 
-    // Find common routes
+    // Toggle Selection
+    if (filterState.targetIds.has(normTargetId)) {
+        filterState.targetIds.delete(normTargetId);
+    } else {
+        filterState.targetIds.add(normTargetId);
+    }
+
+    console.log(`[Debug] Apply Filter. Origin: ${filterState.originId}, Targets: ${Array.from(filterState.targetIds).join(', ')}`);
+
+    // Logic: Find routes connecting Origin to ANY of the TargetIds using Strict Check
     const originRoutes = stopToRoutesMap.get(filterState.originId) || [];
 
-    console.log(`[Debug] Apply Filter. Origin: ${filterState.originId}, Target: ${targetId}`);
-    console.log(`[Debug] Origin Routes to check: ${originRoutes.length}`);
+    // We want routes that pass check for AT LEAST ONE target
+    const commonRoutes = originRoutes.filter(r => {
+        // Check against ALL targets. If matches ANY, keep it.
+        for (const tid of filterState.targetIds) {
+            let matches = false;
 
-    // Filter Logic: Route must go from Origin -> Target
-    const common = originRoutes.filter(r => {
-        // 1. Check _details.patterns (V3 precise)
-        if (r._details && r._details.patterns) {
-            return r._details.patterns.some(p => {
-                if (!p.stops) return false;
-                // Note: p.stops are objects {id, ...}
-                // Normalize both API stop ID and check against current ID
-                const idxO = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === filterState.originId);
-                const idxT = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === targetId);
-                // valid if both exist and Origin is before Target
-                if (idxO !== -1 && idxT !== -1 && idxO < idxT) return true;
-                return false;
-            });
-        }
+            if (r._details && r._details.patterns) {
+                matches = r._details.patterns.some(p => {
+                    if (!p.stops) return false;
+                    const idxO = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === filterState.originId);
+                    const idxT = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === tid);
+                    return idxO !== -1 && idxT !== -1 && idxO < idxT;
+                });
+            } else if (r.stops) {
+                // Fallback Strict
+                const stops = r.stops;
+                const idxO = stops.findIndex(sid => (redirectMap.get(sid) || sid) === filterState.originId);
+                const idxT = stops.findIndex(sid => (redirectMap.get(sid) || sid) === tid);
+                matches = (idxO !== -1 && idxT !== -1 && idxO < idxT);
+            }
 
-        // 2. Check r.stops (V2/Fallback simple list)
-        // If we only have a list of stops (no direction), we just check if both exist.
-        // But since we are in "Filtering" mode which implies direction, this is less ideal.
-        // However, if we don't have patterns, simple inclusion is better than nothing.
-        if (r.stops) {
-            // Check normalized inclusion
-            const hasOrigin = r.stops.some(sid => (redirectMap.get(sid) || sid) === filterState.originId);
-            const hasTarget = r.stops.some(sid => (redirectMap.get(sid) || sid) === targetId);
-            // If simple list, we can't strict order check unless list is ordered.
-            // Assumption: r.stops might be unordered set from toggleFilterMode logic.
-            return hasOrigin && hasTarget;
+            if (matches) return true; // Keep route
         }
 
         return false;
     });
 
-    filterState.filteredRoutes = common.map(r => r.id);
+    console.log(`[Debug] Common Routes for Union: ${commonRoutes.length}`, commonRoutes.map(r => r.shortName));
 
-    console.log(`[Debug] Common Routes: ${common.length}`, common.map(r => r.shortName));
+    filterState.filteredRoutes = commonRoutes.map(r => r.id);
+    filterState.active = true; // Still active/picking
 
-    // Restore Map Opacity
-    setMapFocus(false); // will reset to 1.0 or 0.4 depending on active... wait setMapFocus takes boolean.
-    // We need to manually reset the Paint Property expressions we stuck in toggleFilterMode
-    if (map.getLayer('stops-layer')) map.setPaintProperty('stops-layer', 'icon-opacity', 1);
-    if (map.getLayer('metro-layer-circle')) {
-        map.setPaintProperty('metro-layer-circle', 'circle-opacity', 1);
-        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', 1);
+    // Update UI
+    updateMapFilterState();
+
+    // Refresh Panel List if we are still viewing the origin stop
+    if (window.currentStopId === filterState.originId) {
+        console.log('[Debug] ApplyFilter: Attempting to refresh arrivals list...');
+        // Re-fetch arrivals / refresh UI
+        if (window.lastArrivals) {
+            console.log(`[Debug] Using cached lastArrivals: ${window.lastArrivals.length}`);
+            renderArrivals(window.lastArrivals, filterState.originId);
+
+            // Also refresh All Routes Header
+            if (window.lastRoutes) {
+                renderAllRoutes(window.lastRoutes, window.lastArrivals);
+            }
+        } else {
+            console.warn('[Debug] No window.lastArrivals found. Triggering full fetch.');
+            // Fallback: trigger showStopInfo refresh logic (without network if possible, but safe to just refresh)
+            const stop = allStops.find(s => s.id === filterState.originId);
+            if (stop) showStopInfo(stop, false, false);
+        }
     }
 
-    // Trigger UI Refresh
-    // We need to re-render the panel for the ORIGIN stop.
-    // But we are probably still viewing it.
-    // Just re-call showStopInfo?
-    // But showStopInfo fetches data. We have it.
-    // Let's just modify the DOM?
-    // Re-calling showStopInfo(allStops.find(s=>s.id == originId)) is safest to trigger all render logic.
-    const originStop = allStops.find(s => s.id === filterState.originId); // Note: allStops might not have metro?
-    // We can use the cached data?
-    // Actually, showStopInfo handles fetching.
-    showStopInfo(originStop, false, false); // No history add, no fly
-
-    // Highlight Target on Map?
-    // Maybe show the target in the list?
-    // User didn't specify map change after selection other than normal.
+    // Highlight Targets on Map & Draw Lines
+    updateConnectionLine(filterState.originId, filterState.targetIds, false);
 }
 
 function clearFilter() {
     filterState.active = false;
     filterState.picking = false;
     filterState.originId = null;
-    filterState.targetId = null;
+    filterState.targetIds = new Set(); // Reset Set
     filterState.filteredRoutes = [];
+
+    // Clear Connection Line
+    if (map.getSource('filter-connection')) {
+        map.getSource('filter-connection').setData({ type: 'FeatureCollection', features: [] });
+    }
 
     // Reset UI
     const btn = document.getElementById('filter-routes');
     if (btn) {
         btn.classList.remove('active');
-        btn.querySelector('img').src = '/line.3.horizontal.decrease.circle.svg';
+        // Use relative path (Vite/Base path safe) or imported asset
+        // If file is in public, relative to root without leading slash works if base is set, 
+        // OR use leading slash if we assume base is handled. 
+        // Actually, for GH pages with base '/repo/', '/file.svg' goes to host root. 
+        // 'file.svg' or './file.svg' is safer.
+        btn.querySelector('img').src = 'line.3.horizontal.decrease.circle.svg';
     }
 
     // Reset Map
@@ -678,7 +754,11 @@ async function fetchWithCache(url, options = {}) {
     }
 
     console.log(`[Cache] Miss: ${url}`);
-    const response = await fetch(url, options);
+
+    // Merge options with credentials: 'omit' to avoid sending problematic cookies
+    const fetchOptions = { ...options, credentials: 'omit' };
+
+    const response = await fetch(url, fetchOptions);
     if (!response.ok) throw new Error('Network response was not ok');
     const data = await response.json();
 
@@ -940,6 +1020,7 @@ function addStopsToMap(stops) {
                     'interpolate',
                     ['linear'],
                     ['zoom'],
+                    10, 0.4,   // Visible at zoom 10
                     13, 0.5,
                     14, 0.8,
                     16, 1
@@ -960,6 +1041,55 @@ function addStopsToMap(stops) {
             }
         });
     }
+
+    // Filter Connection Line Layer (Below stops, above routes?)
+    if (!map.getSource('filter-connection')) {
+        map.addSource('filter-connection', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+    }
+    if (!map.getLayer('filter-connection-line')) {
+        map.addLayer({
+            id: 'filter-connection-line',
+            type: 'line',
+            source: 'filter-connection',
+            layout: {
+                'line-join': 'round',
+                'line-cap': 'round'
+            },
+            paint: {
+                'line-color': '#2563eb', // Default blue, updated dynamically
+                'line-width': 4,
+                'line-opacity': 0.8
+            }
+        });
+        // Move below stops
+        if (map.getLayer('stops-layer')) {
+            map.moveLayer('filter-connection-line', 'stops-layer');
+        }
+    }
+
+    // Hover Effect for Connection Line
+    map.on('mousemove', 'stops-layer', (e) => {
+        if (filterState.picking) {
+            const hoveredStop = e.features[0].properties;
+            const normId = redirectMap.get(hoveredStop.id) || hoveredStop.id;
+
+            if (normId !== filterState.originId) {
+                // Pass Current Selection + Hover ID
+                updateConnectionLine(filterState.originId, filterState.targetIds, true, normId);
+            }
+        }
+    });
+
+    map.on('mouseleave', 'stops-layer', () => {
+        if (filterState.picking) {
+            // Revert to just the selected lines (remove hover line)
+            // Pass false for isHover
+            updateConnectionLine(filterState.originId, filterState.targetIds, false);
+        }
+    });
 
     // --- Insert Metro Lines HERE ---
     // Now that stops-layer exists, we can put metro-lines UNDER it.
@@ -1857,90 +1987,106 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
         console.log(`[Debug] Updated stopToRoutesMap for ${stop.id} with ${allFetchedRoutes.length} routes.`);
 
         // --- Build All Routes (Header Extension) ---
-        const headerExtension = document.getElementById('header-extension');
-        if (headerExtension) {
-            headerExtension.innerHTML = ''; // Clear previous
-
-            // Deduplicate Routes (Prioritize Parent aka first fetched)
-            // Map: shortName -> routeObj
-            const uniqueRoutesMap = new Map();
-
-            allFetchedRoutes.forEach(r => {
-                if (!uniqueRoutesMap.has(r.shortName)) {
-                    uniqueRoutesMap.set(r.shortName, r);
-                }
-            });
-
-            // Convert back to array
-            let routesForStop = Array.from(uniqueRoutesMap.values());
-
-            // Merge with arrivals for robustness (in case static schedule missed something live)
-            if (arrivals && arrivals.length > 0) {
-                arrivals.forEach(arr => {
-                    if (!uniqueRoutesMap.has(arr.shortName)) {
-                        // Create phantom route entry for live-only bus
-                        const fullRoute = allRoutes.find(r => r.shortName === arr.shortName);
-                        const newRoute = fullRoute || { shortName: arr.shortName, id: null, color: '2563eb' };
-
-                        uniqueRoutesMap.set(arr.shortName, newRoute);
-                        routesForStop.push(newRoute);
-                    }
-                });
-            }
-
-            if (routesForStop.length > 0) {
-                routesForStop.sort((a, b) => (parseInt(a.shortName) || 0) - (parseInt(b.shortName) || 0));
-
-                const container = document.createElement('div');
-                container.className = 'all-routes-container';
-                // Remove padding from container itself if managed by CSS, but style.css has it.
-
-                const tilesContainer = document.createElement('div');
-                tilesContainer.className = 'route-tiles-container';
-
-                routesForStop.forEach(route => {
-                    const tile = document.createElement('button');
-                    tile.className = 'route-tile';
-                    tile.textContent = route.shortName;
-                    const color = route.color || '2563eb';
-                    // Style: Light BG, Dark Text
-                    tile.style.backgroundColor = `#${color}20`; // 12% opacity
-                    tile.style.color = `#${color}`;
-                    tile.style.fontWeight = '700';
-
-                    // Apply Filter Dimming
-                    if (filterState.active) {
-                        // If route is NOT in the filtered list, dim it
-                        // Note: Phantom routes (no ID) will be dimmed as they aren't in the list
-                        if (!route.id || !filterState.filteredRoutes.includes(route.id)) {
-                            tile.classList.add('dimmed');
-                        }
-                    }
-
-                    tile.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        if (route.id) {
-                            showRouteOnMap(route);
-                        } else {
-                            const real = allRoutes.find(r => r.shortName === route.shortName);
-                            if (real) showRouteOnMap(real);
-                        }
-                    });
-                    tilesContainer.appendChild(tile);
-                });
-                container.appendChild(tilesContainer);
-                headerExtension.appendChild(container);
-            }
-        }
-
-
+        window.lastRoutes = allFetchedRoutes;
+        renderAllRoutes(allFetchedRoutes, arrivals);
 
         // --- Render Arrivals ---
-        renderArrivals(arrivals);
+        window.lastArrivals = arrivals; // Store for filtering
+        renderArrivals(arrivals, stop.id);
 
     } catch (error) {
         listEl.innerHTML = '<div class="error">Failed to load arrivals</div>';
         console.error(error);
+    }
+}
+
+function renderAllRoutes(routesInput, arrivals) {
+    const headerExtension = document.getElementById('header-extension');
+    if (!headerExtension) return;
+
+    headerExtension.innerHTML = ''; // Clear previous
+
+    // Deduplicate Routes (Prioritize Parent aka first fetched)
+    const uniqueRoutesMap = new Map();
+
+    routesInput.forEach(r => {
+        if (!uniqueRoutesMap.has(r.shortName)) {
+            uniqueRoutesMap.set(r.shortName, r);
+        }
+    });
+
+    // Merge with arrivals for robustness
+    if (arrivals && arrivals.length > 0) {
+        arrivals.forEach(arr => {
+            if (!uniqueRoutesMap.has(arr.shortName)) {
+                const fullRoute = allRoutes.find(r => r.shortName === arr.shortName);
+                const newRoute = fullRoute || { shortName: arr.shortName, id: null, color: '2563eb' };
+                uniqueRoutesMap.set(arr.shortName, newRoute);
+            }
+        });
+    }
+
+    // Convert back to array
+    let routesForStop = Array.from(uniqueRoutesMap.values());
+
+    if (routesForStop.length > 0) {
+        // Advanced Sorting:
+        // 1. If Filter Active: Matches First
+        // 2. Numeric ShortName
+
+        routesForStop.sort((a, b) => {
+            if (filterState.active) {
+                const idA = a.id || (allRoutes.find(r => r.shortName === a.shortName) || {}).id;
+                const idB = b.id || (allRoutes.find(r => r.shortName === b.shortName) || {}).id;
+
+                const matchA = idA && filterState.filteredRoutes.includes(idA);
+                const matchB = idB && filterState.filteredRoutes.includes(idB);
+
+                if (matchA && !matchB) return -1; // A comes first
+                if (!matchA && matchB) return 1;  // B comes first
+            }
+
+            // Numeric Sort
+            return (parseInt(a.shortName) || 0) - (parseInt(b.shortName) || 0);
+        });
+
+        const container = document.createElement('div');
+        container.className = 'all-routes-container';
+
+        const tilesContainer = document.createElement('div');
+        tilesContainer.className = 'route-tiles-container';
+
+        routesForStop.forEach(route => {
+            const tile = document.createElement('button');
+            tile.className = 'route-tile';
+            tile.textContent = route.shortName;
+            const color = route.color || '2563eb';
+            tile.style.backgroundColor = `#${color}20`; // 12% opacity
+            tile.style.color = `#${color}`;
+            tile.style.fontWeight = '700';
+
+            // Apply Dimming (don't hide)
+            if (filterState.active) {
+                const realId = route.id || (allRoutes.find(r => r.shortName === route.shortName) || {}).id;
+                if (!realId || !filterState.filteredRoutes.includes(realId)) {
+                    tile.classList.add('dimmed');
+                }
+            }
+
+            tile.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (route.id) {
+                    showRouteOnMap(route, true, { fromStopId: window.currentStopId });
+                } else {
+                    const real = allRoutes.find(r => r.shortName === route.shortName);
+                    if (real) showRouteOnMap(real);
+                }
+            });
+            tilesContainer.appendChild(tile);
+        });
+
+        container.appendChild(tilesContainer);
+        headerExtension.appendChild(container);
     }
 }
 
@@ -1963,19 +2109,46 @@ async function fetchArrivals(stopId) {
     );
 
     const results = await Promise.all(promises);
-    const combined = results.flat();
+    let combined = results.flat();
 
-    // Dedup by simple key (route + time + headsign)?
-    // Or just let them pile up? 
-    // Usually duplicates happen if data is identical.
-    // Let's rely on simple dedup by JSON string if identical?
-    // Or deduplicate by vehicleId if available?
-    // Let's dedup by (shortName + arrivalTime).
+    // --- Per-Route Filtering Logic (Live > Scheduled) ---
+    // 1. Group by Route (shortName)
+    const arrivalsByRoute = new Map();
+    combined.forEach(a => {
+        const routeKey = a.shortName;
+        if (!arrivalsByRoute.has(routeKey)) {
+            arrivalsByRoute.set(routeKey, []);
+        }
+        arrivalsByRoute.get(routeKey).push(a);
+    });
 
+    const filtered = [];
+
+    // 2. For each route, check if ANY live data exists
+    arrivalsByRoute.forEach((arrivals, routeKey) => {
+        const hasLive = arrivals.some(a => a.realtime);
+
+        if (hasLive) {
+            // If live exists, ONLY keep live
+            const liveOnly = arrivals.filter(a => a.realtime);
+            filtered.push(...liveOnly);
+        } else {
+            // If NO live exists, keep ALL (which are presumably scheduled)
+            // But we might want to limit how many scheduled we show? For now, keep all.
+            filtered.push(...arrivals);
+        }
+    });
+
+    combined = filtered;
+
+    // Dedup by simple key (route + time + headsign)
+    // Now that we filtered, we can dedup safely.
     const unique = [];
     const seen = new Set();
     combined.forEach(a => {
-        const key = `${a.shortName}_${a.realtimeArrivalMinutes}_${a.headsign}`;
+        // Use scheduled time if live is missing for key uniqueness
+        const time = a.realtimeArrivalMinutes !== undefined ? a.realtimeArrivalMinutes : a.scheduledArrivalMinutes;
+        const key = `${a.shortName}_${time}_${a.headsign}`;
         if (!seen.has(key)) {
             seen.add(key);
             unique.push(a);
@@ -1983,33 +2156,380 @@ async function fetchArrivals(stopId) {
     });
 
     // Sort by time
-    unique.sort((a, b) => a.realtimeArrivalMinutes - b.realtimeArrivalMinutes);
+    unique.sort((a, b) => {
+        const timeA = a.realtimeArrivalMinutes !== undefined ? a.realtimeArrivalMinutes : a.scheduledArrivalMinutes;
+        const timeB = b.realtimeArrivalMinutes !== undefined ? b.realtimeArrivalMinutes : b.scheduledArrivalMinutes;
+        return timeA - timeB;
+    });
 
     return unique;
 }
 
-function renderArrivals(arrivals) {
+// --- V3 API Integration ---
+let v3RoutesMap = null; // Maps shortName ("306") -> V3 ID ("1:R98190")
+const v3Cache = {
+    patterns: new Map(), // routeId -> patterns
+    schedules: new Map() // routeId:suffix:date -> schedule
+};
+
+// Use the proxy's base URL and append /v3 manually to avoid proxy path issues
+// API_BASE_URL is .../api/v2 usually.
+// If we change it to .../api/v3, the proxy might not match if it's set to /pis-gateway
+// Reviewing vite.config.js: proxy is '/pis-gateway'. So /pis-gateway/api/v3 SHOULD work.
+// But let's try constructing it relative to the proxy root if possible.
+// Actually, let's just stick to what effectively works.
+// API_BASE_URL usually ends in /api/v2.
+const API_V3_BASE_URL = API_BASE_URL.replace('/v2', '/v3');
+
+// Promise singleton to prevent parallel route fetches
+let v3RoutesPromise = null;
+const V3_ROUTES_CACHE_KEY = 'v3_routes_map_cache';
+const V3_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+
+async function fetchV3Routes() {
+    if (v3RoutesMap) return;
+    if (v3RoutesPromise) return v3RoutesPromise;
+
+    // 1. Try Local Storage Cache first
+    try {
+        const cached = localStorage.getItem(V3_ROUTES_CACHE_KEY);
+        if (cached) {
+            const { timestamp, data } = JSON.parse(cached);
+            if (Date.now() - timestamp < V3_CACHE_DURATION) {
+                console.log('[V3] Loaded routes map from local cache');
+                v3RoutesMap = new Map(data); // Rehydrate Map from array
+                return;
+            }
+        }
+    } catch (e) {
+        console.warn('[V3] Error reading local routes cache', e);
+    }
+
+    // 2. Fetch from API if no cache
+    v3RoutesPromise = (async () => {
+        try {
+            console.log('[V3] Fetching global routes list from API...');
+            const res = await fetch(`${API_V3_BASE_URL}/routes?locale=en`, {
+                headers: { 'x-api-key': API_KEY },
+                credentials: 'omit'
+            });
+            if (!res.ok) throw new Error(`Failed to fetch V3 routes: ${res.status}`);
+
+            const routes = await res.json();
+            v3RoutesMap = new Map();
+            routes.forEach(r => {
+                v3RoutesMap.set(String(r.shortName), r.id);
+            });
+            console.log(`[V3] Mapped ${v3RoutesMap.size} routes`);
+
+            // Save to cache (Map -> Array for JSON)
+            localStorage.setItem(V3_ROUTES_CACHE_KEY, JSON.stringify({
+                timestamp: Date.now(),
+                data: Array.from(v3RoutesMap.entries())
+            }));
+
+        } catch (err) {
+            console.warn('[V3] Error fetching routes map:', err);
+            v3RoutesMap = null;
+        } finally {
+            v3RoutesPromise = null;
+        }
+    })();
+
+    return v3RoutesPromise;
+}
+
+// Simple concurrency limiter
+// Throttling disabled per user request
+const MAX_CONCURRENT_V3_REQUESTS = 30;
+let activeV3Requests = 0;
+const v3RequestQueue = [];
+
+async function enqueueV3Request(fn) {
+    return new Promise((resolve, reject) => {
+        v3RequestQueue.push({ fn, resolve, reject });
+        processV3Queue();
+    });
+}
+
+function processV3Queue() {
+    if (activeV3Requests >= MAX_CONCURRENT_V3_REQUESTS || v3RequestQueue.length === 0) return;
+
+    const { fn, resolve, reject } = v3RequestQueue.shift();
+    activeV3Requests++;
+
+    fn().then(resolve).catch(reject).finally(() => {
+        activeV3Requests--;
+        // No delay - fire next immediately
+        processV3Queue();
+    });
+}
+
+async function getV3Schedule(routeShortName, stopId) {
+    // Wrap the entire logic in the queue
+    return enqueueV3Request(async () => {
+        // console.log(`[V3] getV3Schedule called for ${routeShortName} at ${stopId}`);
+        await fetchV3Routes();
+
+        // Safety check: if fetch failed, map is still null
+        if (!v3RoutesMap) {
+            console.warn('[V3] v3RoutesMap is null');
+            return null;
+        }
+
+        const routeId = v3RoutesMap.get(String(routeShortName));
+        if (!routeId) {
+            console.warn(`[V3] No Route ID found for ${routeShortName}`);
+            return null;
+        }
+
+        try {
+            // 1. Get Patterns
+            let patterns = v3Cache.patterns.get(routeId);
+            if (!patterns) {
+                // console.log(`[V3] Fetching patterns for ${routeId}`);
+                const suffixesRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}?locale=en`, {
+                    headers: { 'x-api-key': API_KEY },
+                    credentials: 'omit'
+                });
+                if (!suffixesRes.ok) throw new Error(`Routes details failed: ${suffixesRes.status}`);
+                const routeData = await suffixesRes.json();
+
+                if (routeData.patterns) {
+                    const suffixes = routeData.patterns.map(p => p.patternSuffix).join(',');
+
+                    const patRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}/stops-of-patterns?patternSuffixes=${suffixes}&locale=en`, {
+                        headers: { 'x-api-key': API_KEY },
+                        credentials: 'omit'
+                    });
+                    if (!patRes.ok) throw new Error(`Patterns fetch failed: ${patRes.status}`);
+
+                    const patText = await patRes.text();
+                    try {
+                        patterns = JSON.parse(patText);
+                    } catch (e) {
+                        console.error(`[V3] Failed to parse patterns JSON. Length: ${patText.length}`);
+                        throw new Error('Invalid JSON in patterns response');
+                    }
+                    v3Cache.patterns.set(routeId, patterns);
+                }
+            }
+
+            if (!patterns) {
+                console.warn(`[V3] No patterns loaded for ${routeId}`);
+                return null;
+            }
+
+            // 2. Find Pattern containing Stop
+            let potentialIds = [String(stopId)];
+            if (typeof mergeSourcesMap !== 'undefined' && mergeSourcesMap.has(stopId)) {
+                const subIds = mergeSourcesMap.get(stopId) || [];
+                potentialIds.push(...subIds.map(String));
+            }
+
+            const stopEntry = patterns.find(p => {
+                const pId = String(p.stop.id);
+                const pCode = String(p.stop.code);
+                return potentialIds.some(targetId => {
+                    const targetStr = String(targetId);
+                    if (targetStr === pId) return true;
+                    if (targetStr.split(':')[1] === pCode) return true;
+                    return false;
+                });
+            });
+
+            if (!stopEntry || !stopEntry.patternSuffixes.length) {
+                console.warn(`[V3] Stop ${stopId} not found in patterns for route ${routeId}`);
+                return null;
+            }
+
+            const suffix = stopEntry.patternSuffixes[0];
+
+            // 3. Fetch Schedule
+            const cacheKey = `${routeId}:${suffix}`;
+            let schedule = v3Cache.schedules.get(cacheKey);
+
+            if (!schedule) {
+                const schRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}/schedule?patternSuffix=${suffix}&locale=en`, {
+                    headers: { 'x-api-key': API_KEY },
+                    credentials: 'omit'
+                });
+                if (!schRes.ok) throw new Error(`Schedule fetch failed: ${schRes.status}`);
+
+                const schText = await schRes.text();
+                try {
+                    schedule = JSON.parse(schText);
+                    v3Cache.schedules.set(cacheKey, schedule);
+                } catch (e) {
+                    console.error(`[V3] Failed to parse schedule JSON. Status ${schRes.status}`);
+                    return null;
+                }
+            }
+
+            // 4. Parse Schedule
+            // Fix: Force Tbilisi Timezone (GMT+4)
+            const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' }); // YYYY-MM-DD
+            const todayStr = tbilisiNow;
+
+            let daySchedule = schedule.find(s => s.serviceDates.includes(todayStr));
+
+            // Helper to find next time in a specific day's schedule
+            const findNextTime = (sched, minTimeMinutes) => {
+                if (!sched) return null;
+                const stop = sched.stops.find(s => s.id === stopEntry.stop.id);
+                if (!stop) return null;
+
+                const times = stop.arrivalTimes.split(',');
+                for (const t of times) {
+                    const [h, m] = t.split(':').map(Number);
+                    const stopMinutes = h * 60 + m; // Absolute minutes in the day
+                    if (stopMinutes > minTimeMinutes) {
+                        return t;
+                    }
+                }
+                return null;
+            };
+
+            // Get Current Minutes in Tbilisi
+            const now = new Date();
+            const tbilisiParts = new Intl.DateTimeFormat('en-US', {
+                timeZone: "Asia/Tbilisi",
+                hour: 'numeric',
+                minute: 'numeric',
+                hour12: false
+            }).formatToParts(now);
+            const h = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
+            const m = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
+            const curMinutes = h * 60 + m;
+
+            let nextTime = findNextTime(daySchedule, curMinutes);
+
+            // Fallback: Check tomorrow if no time found today
+            if (!nextTime) {
+                // Calculate tomorrow string safe for timezone
+                // Parsing YYYY-MM-DD as UTC is safest for date math
+                const tDate = new Date(todayStr);
+                tDate.setDate(tDate.getDate() + 1);
+                const tomorrowStr = tDate.toISOString().split('T')[0];
+
+                const tmrSchedule = schedule.find(s => s.serviceDates.includes(tomorrowStr));
+                nextTime = findNextTime(tmrSchedule, -1);
+            }
+
+            if (nextTime) {
+                return nextTime;
+            }
+
+        } catch (err) {
+            console.warn(`[V3] Logic Error for ${routeShortName}:`, err);
+        }
+        return null;
+    });
+}
+
+// Helper to format minutes from now to HH:mm (Tbilisi Time)
+function formatScheduledTime(minutesFromNow) {
+    const now = new Date();
+    const target = new Date(now.getTime() + minutesFromNow * 60000);
+
+    // Force Tbilisi Timezone display
+    return new Intl.DateTimeFormat('en-GB', {
+        timeZone: "Asia/Tbilisi",
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    }).format(target);
+}
+
+// Let's implement the DOM sorting helper
+function getMinutesFromNow(timeStr) {
+    if (!timeStr || timeStr === '--:--' || timeStr === '...') return 9999;
+
+    // Parse timeStr (HH:mm) strings
+    const [h, m] = timeStr.split(':').map(Number);
+    if (isNaN(h) || isNaN(m)) return 9999;
+
+    const now = new Date();
+    // Use Tbilisi time components for "current"
+    const tbilisiParts = new Intl.DateTimeFormat('en-US', {
+        timeZone: "Asia/Tbilisi",
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: false
+    }).formatToParts(now);
+
+    const currH = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
+    const currM = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
+
+    let diff = (h * 60 + m) - (currH * 60 + currM);
+    if (diff < -60) { // Likely tomorrow (e.g. now 23:00, bus 01:00)
+        diff += 24 * 60;
+    }
+    return diff;
+}
+
+function sortArrivalsList() {
+    const listEl = document.getElementById('arrivals-list');
+    if (!listEl) return;
+
+    const items = Array.from(listEl.children);
+
+    // Sort logic
+    items.sort((a, b) => {
+        const minA = parseInt(a.getAttribute('data-minutes') || '9999');
+        const minB = parseInt(b.getAttribute('data-minutes') || '9999');
+        return minA - minB;
+    });
+
+    // Re-append in order
+    items.forEach(item => listEl.appendChild(item));
+}
+
+function renderArrivals(arrivals, currentStopId = null) {
     const listEl = document.getElementById('arrivals-list');
     listEl.innerHTML = '';
 
-    if (arrivals.length === 0) {
-        listEl.innerHTML = '<div class="empty">No upcoming arrivals</div>';
+    // Safety check for currentStopId
+    const stopId = currentStopId || window.currentStopId;
+
+    // 1. Identify "Missing" Routes (Routes serving this stop but not in arrivals)
+    let extraRoutes = [];
+    if (stopId && stopToRoutesMap.has(stopId)) {
+        const servingRoutes = stopToRoutesMap.get(stopId) || [];
+        const arrivalRouteShortNames = new Set(arrivals.map(a => String(a.shortName))); // String normalize
+
+        extraRoutes = servingRoutes.filter(r => !arrivalRouteShortNames.has(String(r.shortName)));
+    }
+
+    // 2. Filter Logic (Applies to both Arrivals and Extras)
+    if (filterState.active) {
+        console.log(`[Debug] RenderArrivals Filtering. Active: true. Allowed IDs: ${filterState.filteredRoutes.length}`);
+
+        // Filter Arrivals
+        const initialCount = arrivals.length;
+        arrivals = arrivals.filter(a => {
+            const r = allRoutes.find(route => String(route.shortName) === String(a.shortName));
+            const include = r && filterState.filteredRoutes.includes(r.id);
+            return include;
+        });
+
+        // Filter Extras
+        extraRoutes = extraRoutes.filter(r => filterState.filteredRoutes.includes(r.id));
+
+        console.log(`[Debug] Filtered: Arrivals ${initialCount}->${arrivals.length}, Extras ${extraRoutes.length}`);
+    }
+
+    if (arrivals.length === 0 && extraRoutes.length === 0) {
+        // Only show empty if TRULY empty
+        if (filterState.active) {
+            listEl.innerHTML = '<div class="empty">No arrivals for selected destination</div>';
+        } else {
+            listEl.innerHTML = '<div class="empty">No upcoming arrivals</div>';
+        }
         return;
     }
 
-    // Apply Filter
-    if (filterState.active) {
-        arrivals = arrivals.filter(a => {
-            const r = allRoutes.find(route => route.shortName === a.shortName);
-            return r && filterState.filteredRoutes.includes(r.id);
-        });
-
-        if (arrivals.length === 0) {
-            listEl.innerHTML = '<div class="empty">No arrivals for selected destination</div>';
-            return;
-        }
-    }
-
+    // 3. Render Live/API Arrivals
     arrivals.forEach(arrival => {
         const item = document.createElement('div');
         item.className = 'arrival-item';
@@ -2018,28 +2538,109 @@ function renderArrivals(arrivals) {
         const color = arrival.color ? `#${arrival.color}` : 'var(--primary)';
         item.style.borderLeftColor = color;
 
+        // Time Display Logic
+        const isScheduled = !arrival.realtime;
+        // Calculate Minutes for Sorting
+        let minutesVal = 9999;
+        let timeDisplay;
+
+        if (isScheduled) {
+            minutesVal = arrival.scheduledArrivalMinutes ?? 999;
+            if (minutesVal < 60 && minutesVal >= 0) {
+                timeDisplay = `${minutesVal} min`;
+            } else {
+                timeDisplay = formatScheduledTime(arrival.scheduledArrivalMinutes);
+            }
+        } else {
+            minutesVal = arrival.realtimeArrivalMinutes ?? 999;
+            timeDisplay = arrival.realtimeArrivalMinutes + ' min';
+        }
+
+        item.setAttribute('data-minutes', minutesVal);
+
+        const scheduledClass = isScheduled ? 'scheduled-time' : '';
+        const disclaimer = isScheduled ? '<div class="scheduled-disclaimer">Scheduled</div>' : '';
+
         item.innerHTML = `
       <div class="route-number" style="color: ${color}">${arrival.shortName}</div>
       <div class="destination" title="${arrival.headsign}">${arrival.headsign}</div>
-      <div class="time">${arrival.realtimeArrivalMinutes} min</div>
+      <div class="time-container">
+          <div class="time ${scheduledClass}">${timeDisplay}</div>
+          ${disclaimer}
+      </div>
     `;
 
-        // Find route object to attach click handler
+        // Click Handler
         const routeObj = allRoutes.find(r => r.shortName === arrival.shortName);
-
         if (routeObj) {
-            // When clicking from a stop, we want to initiate a specific direction if possible
-            // But for now, just showing the route with context
             item.addEventListener('click', () => {
                 showRouteOnMap(routeObj, true, {
                     preserveBounds: true,
-                    fromStopId: window.currentStopId
+                    fromStopId: currentStopId || window.currentStopId,
+                    targetHeadsign: arrival.headsign
                 });
             });
         }
-
         listEl.appendChild(item);
     });
+
+    // 4. Render Missing/Scheduled-Only Routes (Async Update)
+    extraRoutes.forEach(route => {
+        const item = document.createElement('div');
+        item.className = 'arrival-item extra-route';
+
+        const color = route.color ? `#${route.color}` : 'var(--primary)';
+        item.style.borderLeftColor = color;
+
+        // Unique ID for updating time later
+        const timeElId = `time-${route.shortName}-${stopId}`;
+
+        // Initial HIGH minutes so it sinks to bottom
+        item.setAttribute('data-minutes', '99999');
+
+        item.innerHTML = `
+      <div class="route-number" style="color: ${color}">${route.shortName}</div>
+      <div class="destination" title="${route.longName}">${route.longName}</div>
+      <div class="time-container">
+          <div id="${timeElId}" class="time scheduled-time">...</div>
+          <div class="scheduled-disclaimer">Scheduled</div>
+      </div>
+    `;
+
+        item.addEventListener('click', () => {
+            // Just show route geometry?
+            showRouteOnMap(route, true, {
+                preserveBounds: true,
+                fromStopId: stopId
+            });
+        });
+
+        listEl.appendChild(item);
+
+        // Trigger Async Fetch
+        getV3Schedule(route.shortName, stopId).then(timeStr => {
+            const el = document.getElementById(timeElId);
+            if (el) {
+                // Update sorting key
+                const minutes = getMinutesFromNow(timeStr);
+                item.setAttribute('data-minutes', minutes);
+
+                // Format display: < 60 mins -> "X min", else HH:mm
+                let displayStr = timeStr;
+                if (minutes < 60 && minutes >= 0) {
+                    displayStr = `${minutes} min`;
+                }
+
+                el.innerText = displayStr || '--:--';
+
+                // Trigger Live Sort
+                sortArrivalsList();
+            }
+        });
+    });
+
+    // Initial sort
+    sortArrivalsList();
 }
 
 // Search Logic
@@ -2306,8 +2907,23 @@ async function updateRouteView(route, options = {}) {
         if (requestId !== lastRouteUpdateId) return; // Stale check
         const patterns = routeDetails.patterns;
 
-        // Auto-Direction Logic: Find pattern that contains the fromStopId
-        if (options.fromStopId && patterns.length > 0) {
+        // Auto-Direction Logic:
+        // 1. Try to match by Headsign (most accurate for specific arrival clicks)
+        let directionFound = false;
+        if (options.targetHeadsign && patterns.length > 0) {
+            const normalizedTarget = options.targetHeadsign.toLowerCase().trim();
+            const matchedIndex = patterns.findIndex(p =>
+                p.headsign && p.headsign.toLowerCase().trim() === normalizedTarget
+            );
+            if (matchedIndex !== -1) {
+                currentPatternIndex = matchedIndex;
+                directionFound = true;
+                console.log(`[Debug] Matched pattern by headsign: ${options.targetHeadsign}`);
+            }
+        }
+
+        // 2. Fallback: Find pattern that contains the fromStopId (if no headsign match or not provided)
+        if (!directionFound && options.fromStopId && patterns.length > 0) {
             try {
                 const stopsPromises = patterns.map(p => fetchRouteStopsV3(route.id, p.patternSuffix).then(stops => ({
                     suffix: p.patternSuffix,
@@ -2854,4 +3470,284 @@ function loadImages(map) {
     // Add to map as SDF
     const imageData = ctx.getImageData(0, 0, width, height);
     map.addImage('bus-arrow', imageData, { sdf: true });
+}
+
+// Updated Multi-Target Connection Line Logic
+function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId = null) {
+    if (!originId) return;
+
+    // Normalize Inputs
+    let targets = new Set();
+    if (targetIdsInput instanceof Set) {
+        targets = new Set(targetIdsInput);
+    } else if (targetIdsInput) {
+        targets.add(targetIdsInput);
+    }
+
+    if (isHover && hoverId) {
+        targets.add(hoverId); // Add the hover target to the set to be drawn
+    }
+
+    const originStop = allStops.find(s => s.id === originId);
+    if (!originStop) return;
+
+    const features = [];
+
+    // Process EACH target independently
+    targets.forEach(targetId => {
+        const targetStop = allStops.find(s => s.id === targetId);
+        if (!targetStop) return;
+
+        // Find connecting routes
+        const originRoutes = stopToRoutesMap.get(originId) || [];
+
+        const common = originRoutes.filter(r => {
+            // Strict Check Logic (Duplicates applyFilter logic but per target)
+            if (r._details && r._details.patterns) {
+                return r._details.patterns.some(p => {
+                    if (!p.stops) return false;
+                    const idxO = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === originId);
+                    const idxT = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === targetId);
+                    return idxO !== -1 && idxT !== -1 && idxO < idxT;
+                });
+            }
+            if (r.stops) {
+                const stops = r.stops;
+                const idxO = stops.findIndex(sid => (redirectMap.get(sid) || sid) === originId);
+                const idxT = stops.findIndex(sid => (redirectMap.get(sid) || sid) === targetId);
+                return idxO !== -1 && idxT !== -1 && idxO < idxT;
+            }
+            return false;
+        });
+
+        if (common.length === 0) return; // Skip unconnected
+
+        // Color Logic
+        const greenRoute = common.find(r => r.color && r.color.toUpperCase() === '00B38B');
+        const bestRoute = greenRoute || common[0];
+        const color = (bestRoute && bestRoute.color && bestRoute.color.toUpperCase() === '00B38B') ? '#00B38B' : '#2563eb';
+
+        // Geometry Logic
+        let selectedPatternStops = [];
+        let bestPattern = null;
+
+        if (bestRoute && bestRoute._details && bestRoute._details.patterns) {
+            bestRoute._details.patterns.some(p => {
+                if (!p.stops) return false;
+                const idxO = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === originId);
+                const idxT = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === targetId);
+                if (idxO !== -1 && idxT !== -1 && idxO < idxT) {
+                    selectedPatternStops = p.stops.slice(idxO, idxT + 1).map(s => [s.lon, s.lat]);
+                    bestPattern = p;
+                    return true;
+                }
+                return false;
+            });
+        }
+
+        // Fallback Geometry
+        if (selectedPatternStops.length < 2) {
+            selectedPatternStops = [
+                [originStop.lon, originStop.lat],
+                [targetStop.lon, targetStop.lat]
+            ];
+        }
+
+        let finalCoordinates = null;
+
+        // "Actual Route" Logic for Selection (Persistent Targets)
+        // Fix: Don't downgrade selected lines when hovering. Check if THIS target is selected.
+        const isPersistent = filterState.targetIds && filterState.targetIds.has(targetId);
+
+        if (isPersistent && bestPattern && bestRoute) {
+            // Ensure we have a suffix
+            if (!bestPattern.suffix && bestPattern.patternSuffix) {
+                bestPattern.suffix = bestPattern.patternSuffix;
+            }
+
+            if (!bestPattern.suffix) {
+                console.warn('[Debug] Pattern missing suffix:', bestPattern);
+            } else {
+                if (bestPattern._decodedPolyline) {
+                    // Try Slicing
+                    const sliced = slicePolyline(bestPattern._decodedPolyline, originStop, targetStop);
+                    if (sliced) {
+                        finalCoordinates = sliced;
+                    }
+                } else {
+                    // Trigger Fetch
+                    fetchAndCacheGeometry(bestRoute, bestPattern);
+                }
+            }
+        }
+
+        // Default / Fallback Smoothing
+        if (!finalCoordinates) {
+            if (selectedPatternStops.length >= 2) {
+                finalCoordinates = getCatmullRomSpline(selectedPatternStops);
+            } else {
+                finalCoordinates = selectedPatternStops;
+            }
+        }
+
+        features.push({
+            type: 'Feature',
+            geometry: {
+                type: 'LineString',
+                coordinates: finalCoordinates
+            },
+            properties: {
+                color: color
+            }
+        });
+    });
+
+    // Update Source
+    const source = map.getSource('filter-connection');
+    if (source) {
+        source.setData({ type: 'FeatureCollection', features: features });
+    }
+
+    // Switch to Data-Driven Styling if needed
+    if (map.getLayer('filter-connection-line')) {
+        map.setPaintProperty('filter-connection-line', 'line-color', ['get', 'color']);
+        map.setPaintProperty('filter-connection-line', 'line-opacity', 0.8);
+    }
+}
+
+// Catmull-Rom Spline Interpolation for smooth curves (Global Version)
+function getCatmullRomSpline(points, tension = 0.25, numOfSegments = 16) {
+    if (points.length < 2) return points;
+
+    let res = [];
+    const _points = points.slice();
+    // duplicate first and last points to close the curve segment
+    _points.unshift(points[0]);
+    _points.push(points[points.length - 1]);
+
+    for (let i = 1; i < _points.length - 2; i++) {
+        const p0 = _points[i - 1];
+        const p1 = _points[i];
+        const p2 = _points[i + 1];
+        const p3 = _points[i + 2];
+
+        // If distance between p1 and p2 is tiny, skip? 
+        // No, keep logic simple.
+
+        for (let t = 0; t <= numOfSegments; t++) {
+            const t1 = t / numOfSegments;
+            const t2 = t1 * t1;
+            const t3 = t2 * t1;
+
+            // Catmull-Rom factors
+            const f1 = -0.5 * t3 + t2 - 0.5 * t1;
+            const f2 = 1.5 * t3 - 2.5 * t2 + 1.0;
+            const f3 = -1.5 * t3 + 2.0 * t2 + 0.5 * t1;
+            const f4 = 0.5 * t3 - 0.5 * t2;
+
+            const x = p0[0] * f1 + p1[0] * f2 + p2[0] * f3 + p3[0] * f4;
+            const y = p0[1] * f1 + p1[1] * f2 + p2[1] * f3 + p3[1] * f4;
+
+            res.push([x, y]);
+        }
+    }
+    return res;
+}
+
+// --- Polyline Slicing & Fetching Helpers ---
+
+function slicePolyline(points, originStop, targetStop) {
+    if (!points || points.length < 2) return null;
+
+    // Helper: Find nearest index
+    const getNearestIndex = (pt) => {
+        let minDist = Infinity;
+        let index = -1;
+        for (let i = 0; i < points.length; i++) {
+            // points are [lng, lat] (from decodePolyline)
+            const lng = points[i][0];
+            const lat = points[i][1];
+
+            const d = (lng - pt.lon) ** 2 + (lat - pt.lat) ** 2;
+            if (d < minDist) {
+                minDist = d;
+                index = i;
+            }
+        }
+        return index;
+    };
+
+    const idxOriginal = getNearestIndex(originStop);
+    const idxTarget = getNearestIndex(targetStop);
+
+    if (idxOriginal === -1 || idxTarget === -1) return null;
+
+    // Ensure directionality (Origin -> Target)
+    let segment = [];
+
+    if (idxOriginal <= idxTarget) {
+        segment = points.slice(idxOriginal, idxTarget + 1);
+    } else {
+        // Fallback to Spline
+        return null;
+    }
+
+    // Return segments directly (already [lng, lat])
+    return segment;
+}
+
+async function fetchAndCacheGeometry(route, pattern) {
+    if (pattern._fetchingPolyline || pattern._polyfailed) return;
+    pattern._fetchingPolyline = true;
+
+    try {
+        const data = await fetchRoutePolylineV3(route.id, pattern.suffix);
+        // console.log(`[Debug] Polyline API Response for ${route.shortName} (${pattern.suffix}):`, JSON.stringify(data));
+        // Data format usually: { [suffix]: "encoded_string" } OR { [suffix]: { encodedValue: "..." } }
+        let entry = data[pattern.suffix];
+        let encoded = null;
+
+        if (typeof entry === 'string') {
+            encoded = entry;
+        } else if (entry && typeof entry === 'object') {
+            encoded = entry.encodedValue || entry.points || entry.geometry;
+        }
+
+        // Robust Fallback Fallbacks
+        if (!encoded) {
+            // 1. Try finding in array if data is array
+            if (Array.isArray(data)) {
+                const match = data.find(p => p.suffix === pattern.suffix || p.patternSuffix === pattern.suffix);
+                if (match) encoded = match.encodedValue || match.points || match.geometry;
+            }
+            // 2. Try 'polylines' property
+            else if (data.polylines && Array.isArray(data.polylines)) {
+                const match = data.polylines.find(p => p.suffix === pattern.suffix || p.patternSuffix === pattern.suffix);
+                if (match) encoded = match.encodedValue || match.points || match.geometry;
+            }
+            // 3. Try direct 'points' property (if single result)
+            else if (data.points) {
+                encoded = data.points;
+            }
+        }
+
+        if (typeof encoded === 'string') {
+            pattern._decodedPolyline = decodePolyline(encoded);
+            console.log(`[Debug] Polyline fetched & decoded for ${route.shortName} (${pattern.suffix}), points: ${pattern._decodedPolyline.length}`);
+
+            // Re-Draw if still selected
+            if (filterState.active && filterState.targetIds.size > 0) {
+                updateConnectionLine(filterState.originId, filterState.targetIds, false);
+            }
+        } else {
+            console.warn(`[Debug] No polyline string for ${route.shortName} suffix ${pattern.suffix}`);
+            pattern._polyfailed = true;
+        }
+
+    } catch (e) {
+        console.error('Failed to fetch polyline', e);
+        pattern._polyfailed = true;
+    } finally {
+        pattern._fetchingPolyline = false;
+    }
 }
