@@ -217,6 +217,11 @@ body {
   color: #16a34a;
 }
 
+.suggestion-icon.place {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
 .suggestion-text {
   flex: 1;
 }

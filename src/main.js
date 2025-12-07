@@ -59,17 +59,21 @@ document.getElementById('zoom-in').addEventListener('click', () => map.zoomIn())
 document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
 
 document.getElementById('locate-me').addEventListener('click', () => {
+    // Debug output for iOS
+    alert('Locate button clicked. Triggering geolocate...');
+
     // 1. Immediately trigger Location (Primary Action)
     // Prevent toggling off if already active
     if (!geolocate._watchState || geolocate._watchState === 'OFF' || geolocate._watchState === 'BACKGROUND') {
         geolocate.trigger();
+    } else {
+        alert('Geolocate is already active/watching.');
     }
 
     // 2. Request Compass Permission (Secondary, iOS only)
-    // We do this *after* triggering location so the user sees the location prompt first (if needed).
-    // Note: "Motion and Orientation" IS the compass. If you deny this, the map won't rotate.
+    // DISABLED FOR DEBUGGING to isolate Location request
+    /*
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        // Short timeout to let the click event propagate/Location logic start
         setTimeout(async () => {
             try {
                 const permissionState = await DeviceOrientationEvent.requestPermission();
@@ -77,11 +81,11 @@ document.getElementById('locate-me').addEventListener('click', () => {
                     console.warn('Compass (Motion) permission denied');
                 }
             } catch (e) {
-                // Ignore errors (user might have already denied)
                 console.debug('Compass permission request failed', e);
             }
         }, 100);
     }
+    */
 });
 
 
@@ -1627,9 +1631,12 @@ function setupSearch() {
 
     input.addEventListener('input', (e) => {
         const query = e.target.value.toLowerCase();
+        console.log('[Search] Input:', query);
 
         clearTimeout(debounceTimeout);
         debounceTimeout = setTimeout(async () => {
+            console.log('[Search] Debounce fired for:', query);
+
             if (query.length < 2) {
                 if (query.length === 0) {
                     const history = getSearchHistory();
@@ -1642,7 +1649,9 @@ function setupSearch() {
                 return;
             }
 
-            // 1. Local Search (Stops & Routes)
+            console.log('[Search] Data counts - Stops:', allStops.length, 'Routes:', allRoutes.length);
+
+            // 1. Local Search (Stops & Routes) - Render IMMEDIATELY
             const matchedStops = allStops.filter(stop =>
                 (stop.name && stop.name.toLowerCase().includes(query)) ||
                 (stop.code && stop.code.includes(query))
@@ -1653,20 +1662,31 @@ function setupSearch() {
                 (route.longName && route.longName.toLowerCase().includes(query))
             ).slice(0, 5);
 
+            console.log('[Search] Local matches:', matchedStops.length, matchedRoutes.length);
+
+            // Render local first to be responsive
+            renderSuggestions(matchedStops, matchedRoutes, []);
+
             // 2. Remote Search (Mapbox Geocoding) - Addresses in Georgia
             let matchedPlaces = [];
             try {
                 const geocodingUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${mapboxgl.accessToken}&country=ge&types=place,address,poi&limit=5`;
+                console.log('[Search] Fetching:', geocodingUrl);
                 const res = await fetch(geocodingUrl);
                 if (res.ok) {
                     const data = await res.json();
                     matchedPlaces = data.features || [];
+                    console.log('[Search] Remote matches:', matchedPlaces.length);
+
+                    // Re-render with ALL results (Merge them to avoid jarring jump? Or append?)
+                    // Standard behavior: Routes, Stops, Places.
+                    renderSuggestions(matchedStops, matchedRoutes, matchedPlaces);
+                } else {
+                    console.warn('[Search] Geocoding error:', res.status, res.statusText);
                 }
             } catch (err) {
-                console.warn('Geocoding failed', err);
+                console.warn('[Search] Geocoding exception', err);
             }
-
-            renderSuggestions(matchedStops, matchedRoutes, matchedPlaces);
         }, 300); // 300ms debounce
     });
 
@@ -1770,7 +1790,7 @@ function renderSuggestions(stops, routes, places = []) {
         const div = document.createElement('div');
         div.className = 'suggestion-item';
         div.innerHTML = `
-      <div class="suggestion-icon place" style="background: #eef2ff; color: #4f46e5;">📍</div>
+      <div class="suggestion-icon place">📍</div>
       <div class="suggestion-text">
         <div>${place.text}</div>
         <div class="suggestion-subtext">${place.place_name}</div>
