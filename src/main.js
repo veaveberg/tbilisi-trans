@@ -1609,9 +1609,11 @@ function renderArrivals(arrivals) {
 }
 
 // Search Logic
+// Search Logic
 function setupSearch() {
     const input = document.getElementById('search-input');
     const suggestions = document.getElementById('search-suggestions');
+    let debounceTimeout;
 
     // Show history on focus if empty
     input.addEventListener('focus', () => {
@@ -1625,31 +1627,47 @@ function setupSearch() {
 
     input.addEventListener('input', (e) => {
         const query = e.target.value.toLowerCase();
-        if (query.length < 2) {
-            if (query.length === 0) {
-                const history = getSearchHistory();
-                if (history.length > 0) {
-                    renderHistorySuggestions(history);
-                    return;
+
+        clearTimeout(debounceTimeout);
+        debounceTimeout = setTimeout(async () => {
+            if (query.length < 2) {
+                if (query.length === 0) {
+                    const history = getSearchHistory();
+                    if (history.length > 0) {
+                        renderHistorySuggestions(history);
+                        return;
+                    }
                 }
+                suggestions.classList.add('hidden');
+                return;
             }
-            suggestions.classList.add('hidden');
-            return;
-        }
 
-        // Filter stops
-        const matchedStops = allStops.filter(stop =>
-            (stop.name && stop.name.toLowerCase().includes(query)) ||
-            (stop.code && stop.code.includes(query))
-        ).slice(0, 5);
+            // 1. Local Search (Stops & Routes)
+            const matchedStops = allStops.filter(stop =>
+                (stop.name && stop.name.toLowerCase().includes(query)) ||
+                (stop.code && stop.code.includes(query))
+            ).slice(0, 5);
 
-        // Filter routes
-        const matchedRoutes = allRoutes.filter(route =>
-            (route.shortName && route.shortName.toLowerCase().includes(query)) ||
-            (route.longName && route.longName.toLowerCase().includes(query))
-        ).slice(0, 5);
+            const matchedRoutes = allRoutes.filter(route =>
+                (route.shortName && route.shortName.toLowerCase().includes(query)) ||
+                (route.longName && route.longName.toLowerCase().includes(query))
+            ).slice(0, 5);
 
-        renderSuggestions(matchedStops, matchedRoutes);
+            // 2. Remote Search (Mapbox Geocoding) - Addresses in Georgia
+            let matchedPlaces = [];
+            try {
+                const geocodingUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${mapboxgl.accessToken}&country=ge&types=place,address,poi&limit=5`;
+                const res = await fetch(geocodingUrl);
+                if (res.ok) {
+                    const data = await res.json();
+                    matchedPlaces = data.features || [];
+                }
+            } catch (err) {
+                console.warn('Geocoding failed', err);
+            }
+
+            renderSuggestions(matchedStops, matchedRoutes, matchedPlaces);
+        }, 300); // 300ms debounce
     });
 
     // Hide suggestions on click outside
@@ -1701,11 +1719,11 @@ function renderHistorySuggestions(historyItems) {
     container.classList.remove('hidden');
 }
 
-function renderSuggestions(stops, routes) {
+function renderSuggestions(stops, routes, places = []) {
     const container = document.getElementById('search-suggestions');
     container.innerHTML = '';
 
-    if (stops.length === 0 && routes.length === 0) {
+    if (stops.length === 0 && routes.length === 0 && places.length === 0) {
         container.classList.add('hidden');
         return;
     }
@@ -1742,6 +1760,31 @@ function renderSuggestions(stops, routes) {
         div.addEventListener('click', () => {
             map.flyTo({ center: [stop.lon, stop.lat], zoom: 16 });
             showStopInfo(stop);
+            container.classList.add('hidden');
+        });
+        container.appendChild(div);
+    });
+
+    // Render Places
+    places.forEach(place => {
+        const div = document.createElement('div');
+        div.className = 'suggestion-item';
+        div.innerHTML = `
+      <div class="suggestion-icon place" style="background: #eef2ff; color: #4f46e5;">📍</div>
+      <div class="suggestion-text">
+        <div>${place.text}</div>
+        <div class="suggestion-subtext">${place.place_name}</div>
+      </div>
+    `;
+        div.addEventListener('click', () => {
+            const [lon, lat] = place.center;
+            map.flyTo({ center: [lon, lat], zoom: 16 });
+
+            // Optional: Add a temporary marker
+            new mapboxgl.Marker({ color: '#4f46e5' })
+                .setLngLat([lon, lat])
+                .addTo(map);
+
             container.classList.add('hidden');
         });
         container.appendChild(div);
