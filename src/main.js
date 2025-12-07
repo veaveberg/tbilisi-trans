@@ -33,6 +33,19 @@ const resizeObserver = new ResizeObserver(() => {
 });
 resizeObserver.observe(document.getElementById('map'));
 
+// Force Mapbox resize on load to handle iOS safe area settling
+map.on('load', () => {
+    setTimeout(() => {
+        map.resize();
+        console.log('[Mapbox] Force resized for iOS safe area');
+    }, 500); // Delay to allow browser bars to settle
+});
+
+// Extra safety for mobile orientation/bar changes
+window.addEventListener('resize', () => {
+    setTimeout(() => map.resize(), 100);
+});
+
 // Add Geolocate Control (Hidden, driven by custom button)
 const geolocate = new mapboxgl.GeolocateControl({
     positionOptions: {

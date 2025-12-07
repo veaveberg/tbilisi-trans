@@ -16,29 +16,40 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-html,
-body {
+html {
   width: 100%;
   height: 100%;
+  overflow: hidden;
+  /* Prevent bounce */
   margin: 0;
   padding: 0;
+  background-color: var(--bg);
 }
 
 body {
+  position: fixed;
+  /* Lock body to viewport */
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg);
   font-family: 'Inter', sans-serif;
   color: var(--text);
-  overflow: hidden;
   overscroll-behavior: none;
   touch-action: manipulation;
-  /* Map goes behind safe areas - padding handled by children */
 }
 
 #app {
   position: absolute;
+  /* Relative to fixed body */
   top: 0;
   left: 0;
-  right: 0;
-  bottom: 0;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -48,6 +59,12 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
+}
+
+/* Force Mapbox canvas to fill container (fixes iOS calculation issues) */
+.mapboxgl-canvas {
+  width: 100% !important;
+  height: 100% !important;
 }
 
 /* --- Map Controls --- */
