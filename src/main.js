@@ -35,7 +35,10 @@ resizeObserver.observe(document.getElementById('map'));
 
 // Add Geolocate Control (Hidden, driven by custom button)
 const geolocate = new mapboxgl.GeolocateControl({
-    positionOptions: { enableHighAccuracy: true },
+    positionOptions: {
+        enableHighAccuracy: true,
+        timeout: 10000 // 10 seconds timeout
+    },
     trackUserLocation: true,
     showUserHeading: true,
     showAccuracyCircle: true
@@ -45,12 +48,13 @@ map.addControl(geolocate);
 // Handle Geolocate Errors (e.g., iOS HTTP restriction)
 geolocate.on('error', (e) => {
     console.error('Geolocate error:', e);
+    // Show precise error for debugging
+    alert(`Location Error ${e.code}: ${e.message}`);
+
     if (e.code === 1) { // PERMISSION_DENIED
         alert('Location permission denied. Please enable it in Settings.');
     } else if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-        alert('Location requires HTTPS on mobile devices. If testing locally on your phone, this may fail without a secure connection.');
-    } else {
-        alert('Could not retrieve location.');
+        alert('Location requires HTTPS on mobile devices.');
     }
 });
 
@@ -59,9 +63,6 @@ document.getElementById('zoom-in').addEventListener('click', () => map.zoomIn())
 document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
 
 document.getElementById('locate-me').addEventListener('click', () => {
-    // Debug output for iOS
-    alert('Locate button clicked. Triggering geolocate...');
-
     // 1. Immediately trigger Location (Primary Action)
     // Prevent toggling off if already active
     if (!geolocate._watchState || geolocate._watchState === 'OFF' || geolocate._watchState === 'BACKGROUND') {
