@@ -26,7 +26,7 @@ const map = new mapboxgl.Map({
 const geolocate = new mapboxgl.GeolocateControl({
     positionOptions: { enableHighAccuracy: true },
     trackUserLocation: true,
-    showUserHeading: false
+    showUserHeading: true
 });
 map.addControl(geolocate);
 
@@ -47,8 +47,13 @@ document.getElementById('zoom-in').addEventListener('click', () => map.zoomIn())
 document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
 
 document.getElementById('locate-me').addEventListener('click', () => {
-    // Robust API Trigger
-    geolocate.trigger();
+    // Prevent toggling off if already active
+    // _watchState is internal mapbox-gl state: 'OFF', 'ACTIVE_LOCK', 'BACKGROUND', 'WAITING_ACTIVE'
+    // We only want to trigger if it's OFF or BACKGROUND (user moved map away)
+    if (!geolocate._watchState || geolocate._watchState === 'OFF' || geolocate._watchState === 'BACKGROUND') {
+        geolocate.trigger();
+    }
+    // If ACTIVE_LOCK, do nothing (keep tracking), enabling compass naturally via mapbox interaction or just stay centered
 });
 
 // State

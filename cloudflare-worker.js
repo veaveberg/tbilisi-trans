@@ -1,10 +1,20 @@
 
 export default {
     async fetch(request, env) {
+        // Handle CORS Preflight requests directly
+        if (request.method === 'OPTIONS') {
+            return new Response(null, {
+                headers: {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type, x-api-key',
+                    'Access-Control-Max-Age': '86400',
+                },
+            });
+        }
+
         const url = new URL(request.url);
         // Forward the path exactly as is.
-        // Example: request to worker.dev/pis-gateway/api/v2/stops 
-        // -> https://transit.ttc.com.ge/pis-gateway/api/v2/stops
         const targetUrl = 'https://transit.ttc.com.ge' + url.pathname + url.search;
 
         const newRequest = new Request(targetUrl, {
