@@ -26,7 +26,8 @@ const map = new mapboxgl.Map({
 const geolocate = new mapboxgl.GeolocateControl({
     positionOptions: { enableHighAccuracy: true },
     trackUserLocation: true,
-    showUserHeading: true
+    showUserHeading: true,
+    showAccuracyCircle: true
 });
 map.addControl(geolocate);
 
@@ -46,7 +47,20 @@ geolocate.on('error', (e) => {
 document.getElementById('zoom-in').addEventListener('click', () => map.zoomIn());
 document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
 
-document.getElementById('locate-me').addEventListener('click', () => {
+document.getElementById('locate-me').addEventListener('click', async () => {
+    // iOS 13+ requires explicit permission for DeviceOrientation (Compass)
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+            const permissionState = await DeviceOrientationEvent.requestPermission();
+            if (permissionState !== 'granted') {
+                console.warn('DeviceOrientation permission denied');
+                // Proceed anyway, just without compass
+            }
+        } catch (e) {
+            console.error('Error requesting orientation permission:', e);
+        }
+    }
+
     // Prevent toggling off if already active
     // _watchState is internal mapbox-gl state: 'OFF', 'ACTIVE_LOCK', 'BACKGROUND', 'WAITING_ACTIVE'
     // We only want to trigger if it's OFF or BACKGROUND (user moved map away)
