@@ -236,10 +236,15 @@ async function toggleFilterMode() {
                         routeDetails.patterns.forEach(p => {
                             if (p.stops && p.stops.length > 0) {
                                 foundStopsInPatterns = true;
-                                // Directional Logic: Only add stops AFTER currentStopId
-                                const idx = p.stops.findIndex(s => s.id === window.currentStopId);
+                                // Directional Logic: Only add stops AFTER currentStopId (Normalized)
+                                // Find index of current stop (checking redirects)
+                                const idx = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === window.currentStopId);
+
                                 if (idx !== -1 && idx < p.stops.length - 1) {
-                                    p.stops.slice(idx + 1).forEach(s => reachableStopIds.add(s.id));
+                                    p.stops.slice(idx + 1).forEach(s => {
+                                        const normId = redirectMap.get(s.id) || s.id;
+                                        reachableStopIds.add(normId);
+                                    });
                                 }
                             }
                         });
@@ -260,10 +265,13 @@ async function toggleFilterMode() {
                                     // Store for applyFilter (mocking pattern structure)
                                     p.stops = stopsList;
 
-                                    // Directional Logic
-                                    const idx = stopsList.findIndex(s => s.id === window.currentStopId);
+                                    // Directional Logic (Normalized)
+                                    const idx = stopsList.findIndex(s => (redirectMap.get(s.id) || s.id) === window.currentStopId);
                                     if (idx !== -1 && idx < stopsList.length - 1) {
-                                        stopsList.slice(idx + 1).forEach(s => reachableStopIds.add(s.id));
+                                        stopsList.slice(idx + 1).forEach(s => {
+                                            const normId = redirectMap.get(s.id) || s.id;
+                                            reachableStopIds.add(normId);
+                                        });
                                     }
                                 } catch (err) {
                                     console.warn(`[Debug] Failed to fetch stops for suffix ${p.patternSuffix}`, err);
@@ -275,7 +283,8 @@ async function toggleFilterMode() {
                         // Just add all except current?
                         r._details.stops = routeDetails.stops; // normalize
                         routeDetails.stops.forEach(s => {
-                            if (s.id !== window.currentStopId) reachableStopIds.add(s.id);
+                            const normId = redirectMap.get(s.id) || s.id;
+                            if (normId !== window.currentStopId) reachableStopIds.add(normId);
                         });
                     }
                 } catch (e) {
@@ -290,32 +299,36 @@ async function toggleFilterMode() {
         }
     }
 
-    // For routes that didn't need fetching (already had details?), assume we need to process them too?
-    // Current logic only iterates `routesNeedingFetch`.
-    // What if we already fetched them in a previous filter session?
-    // We should iterate ALL routes to build `reachableStopIds`.
-    // The previous block only fetched MISSING data.
-    // Now we need to process ALL routes for the map highlight.
+    // For routes that didn't need fetching (processed in previous loop or just existing)
+    // We didn't iterate them for reachability in main loop if they weren't in routesNeedingFetch.
+    // Wait, the previous code block iterated ALL routes at the very end to build the set.
+    // I need to preserve that structure but ADD normalization.
 
-    const reachableStopIds = new Set(); // Moved here to be populated by both fetch and existing data
+    const reachableStopIds = new Set(); // Reset or Accumulate? 
+    // Wait, inside the fetch block I was adding to `reachableStopIds`.
+    // But then I overwrite `reachableStopIds` with new Set() after the block! (Lines 275 in previous version)
+    // That was a bug/issue in previous step (but maybe unintended).
+    // Let's fix it properly here. `reachableStopIds` should be one set.
+
+    // Iterate over ALL routes (whether fetched or not) and calculate reachability
     routes.forEach(r => {
-        // If we just fetched, it's processed. If we didn't, we need to process `r._details` or `r.stops`.
-        // Wait, `routesNeedingFetch` processing block added directly to `reachableStopIds`.
-        // We should move the reachability calculation OUT of the fetch block to be uniform.
-        // But `routesNeedingFetch` modified `r` objects.
-
         if (r._details && r._details.patterns) {
             r._details.patterns.forEach(p => {
                 if (p.stops) {
-                    const idx = p.stops.findIndex(s => s.id === window.currentStopId);
+                    // Normalized Find
+                    const idx = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === window.currentStopId);
                     if (idx !== -1 && idx < p.stops.length - 1) {
-                        p.stops.slice(idx + 1).forEach(s => reachableStopIds.add(s.id));
+                        p.stops.slice(idx + 1).forEach(s => {
+                            const normId = redirectMap.get(s.id) || s.id;
+                            reachableStopIds.add(normId);
+                        });
                     }
                 }
             });
         } else if (r._details && r._details.stops) { // Fallback for V2-like structure
             r._details.stops.forEach(s => {
-                if (s.id !== window.currentStopId) reachableStopIds.add(s.id);
+                const normId = redirectMap.get(s.id) || s.id;
+                if (normId !== window.currentStopId) reachableStopIds.add(normId);
             });
         }
     });
@@ -385,8 +398,9 @@ function applyFilter(targetId) {
             return r._details.patterns.some(p => {
                 if (!p.stops) return false;
                 // Note: p.stops are objects {id, ...}
-                const idxO = p.stops.findIndex(s => s.id === filterState.originId);
-                const idxT = p.stops.findIndex(s => s.id === targetId);
+                // Normalize both API stop ID and check against current ID
+                const idxO = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === filterState.originId);
+                const idxT = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === targetId);
                 // valid if both exist and Origin is before Target
                 if (idxO !== -1 && idxT !== -1 && idxO < idxT) return true;
                 return false;
@@ -398,8 +412,9 @@ function applyFilter(targetId) {
         // But since we are in "Filtering" mode which implies direction, this is less ideal.
         // However, if we don't have patterns, simple inclusion is better than nothing.
         if (r.stops) {
-            const hasOrigin = r.stops.includes(filterState.originId);
-            const hasTarget = r.stops.includes(targetId);
+            // Check normalized inclusion
+            const hasOrigin = r.stops.some(sid => (redirectMap.get(sid) || sid) === filterState.originId);
+            const hasTarget = r.stops.some(sid => (redirectMap.get(sid) || sid) === targetId);
             // If simple list, we can't strict order check unless list is ordered.
             // Assumption: r.stops might be unordered set from toggleFilterMode logic.
             return hasOrigin && hasTarget;

@@ -30,17 +30,15 @@ body {
   overflow: hidden;
   overscroll-behavior: none;
   touch-action: manipulation;
-  /* Ensure map goes behind safe areas */
-  padding-top: env(safe-area-inset-top, 0);
-  padding-bottom: env(safe-area-inset-bottom, 0);
+  /* Map goes behind safe areas - padding handled by children */
 }
 
 #app {
   position: absolute;
   top: 0;
   left: 0;
-  width: 100vw;
-  height: 100vh;
+  right: 0;
+  bottom: 0;
   overflow: hidden;
 }
 
@@ -531,11 +529,7 @@ body {
   /* We can fix opacity though */
 }
 
-.icon-btn.active img {
-  /* If we want to tint it via CSS filter if it was black? 
-       But we are swapping the source to a filled version.
-       Just ensure opacity is high. */
-}
+/* .icon-btn.active img was empty */
 
 .icon-btn img {
   display: block;
@@ -909,7 +903,7 @@ body.panel-open .controls {
 /* Reset View Button */
 .reset-view-btn {
   position: absolute;
-  top: 80px;
+  top: calc(80px + env(safe-area-inset-top));
   /* Below search bar on mobile */
   left: 50%;
   transform: translateX(-50%);
