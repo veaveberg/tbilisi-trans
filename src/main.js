@@ -82,25 +82,12 @@ document.getElementById('locate-me').addEventListener('click', () => {
     if (!geolocate._watchState || geolocate._watchState === 'OFF' || geolocate._watchState === 'BACKGROUND') {
         geolocate.trigger();
     } else {
-        alert('Geolocate is already active/watching.');
+        // Optional: Alert or just let it toggle off (default behavior if we didn't check)
+        // For now, let's just trigger it to follow standard toggle behavior if active
+        // Or keep the "Prevent toggling off" logic if preferred. User didn't complain about this.
+        // Let's stick to the previous "Force On" logic which serves "Locate Me" best.
+        geolocate.trigger();
     }
-
-    // 2. Request Compass Permission (Secondary, iOS only)
-    // DISABLED FOR DEBUGGING to isolate Location request
-    /*
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        setTimeout(async () => {
-            try {
-                const permissionState = await DeviceOrientationEvent.requestPermission();
-                if (permissionState !== 'granted') {
-                    console.warn('Compass (Motion) permission denied');
-                }
-            } catch (e) {
-                console.debug('Compass permission request failed', e);
-            }
-        }, 100);
-    }
-    */
 });
 
 
@@ -161,6 +148,321 @@ function handleBack() {
         } else if (previous.type === 'route') {
             showRouteOnMap(previous.data, false, { preserveBounds: true });
         }
+    } else {
+        // If going back to nothing (empty stack), clear everything
+        closeAllPanels();
+        // Reset Map Focus
+        setMapFocus(false);
+        // Clear Route
+        clearRoute();
+        // Clear Highlight
+        if (map.getSource('selected-stop')) {
+            map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
+        }
+        window.currentStopId = null;
+    }
+}
+
+// --- Filter State ---
+const filterState = {
+    active: false,
+    picking: false,
+    originId: null,
+    targetId: null,
+    filteredRoutes: [] // Array of route IDs
+};
+
+async function toggleFilterMode() {
+    console.log('[Debug] toggleFilterMode called. Active:', filterState.active, 'Picking:', filterState.picking, 'CurrentStop:', window.currentStopId);
+
+    // If already active/picking, cancel it
+    if (filterState.active || filterState.picking) {
+        clearFilter();
+        return;
+    }
+
+    if (!window.currentStopId) {
+        console.warn('[Debug] No currentStopId, cannot filter');
+        return;
+    }
+
+    // Start Picking Mode
+    filterState.picking = true;
+    filterState.originId = window.currentStopId;
+
+    // Filter Button UI Update
+    const btn = document.getElementById('filter-routes');
+    if (btn) {
+        btn.classList.add('active');
+        btn.querySelector('img').src = '/line.3.horizontal.decrease.circle.fill.svg';
+    }
+
+    // Show Prompt
+    document.getElementById('stop-name').textContent = "Select destination...";
+
+    // Calculate Reachable Stops
+    // 1. Get all routes passing through currentStopId
+    const routes = stopToRoutesMap.get(window.currentStopId) || [];
+
+    // FETCH MISSING DETAILS
+    // If routes exist but don't have 'stops', we must fetch them.
+    const routesNeedingFetch = routes.filter(r => !r._details || !r._details.patterns); // Check for _details and patterns
+
+    if (routesNeedingFetch.length > 0) {
+        console.log(`[Debug] Need to fetch details for ${routesNeedingFetch.length} routes...`);
+        document.body.style.cursor = 'wait';
+
+        // Show loading state on button?
+        const btn = document.getElementById('filter-routes');
+        if (btn) btn.style.opacity = '0.5';
+
+        try {
+            await Promise.all(routesNeedingFetch.map(async (r) => {
+                try {
+                    // Fetch full route object via V3 API which has patterns and stops
+                    const routeDetails = await fetchRouteDetailsV3(r.id);
+                    r._details = routeDetails; // Store for applyFilter
+
+                    // DEBUG: Custom Logger
+                    if (routesNeedingFetch.indexOf(r) === 0) {
+                        console.log(`[Debug] V3 Route Details (${r.id}):`, routeDetails);
+                        if (routeDetails?.patterns) console.log(`[Debug] Patterns:`, routeDetails.patterns.length);
+                    }
+
+                    if (routeDetails && routeDetails.patterns) {
+                        // Strategy A: Stops are inside patterns
+                        let foundStopsInPatterns = false;
+
+                        routeDetails.patterns.forEach(p => {
+                            if (p.stops && p.stops.length > 0) {
+                                foundStopsInPatterns = true;
+                                // Directional Logic: Only add stops AFTER currentStopId
+                                const idx = p.stops.findIndex(s => s.id === window.currentStopId);
+                                if (idx !== -1 && idx < p.stops.length - 1) {
+                                    p.stops.slice(idx + 1).forEach(s => reachableStopIds.add(s.id));
+                                }
+                            }
+                        });
+
+                        // Strategy B: Fetch Stops by Suffix if A failed
+                        if (!foundStopsInPatterns) {
+                            console.log(`[Debug] No stops in patterns for ${r.id}, fetching by suffix...`);
+                            await Promise.all(routeDetails.patterns.map(async (p) => {
+                                try {
+                                    const stopsData = await fetchRouteStopsV3(r.id, p.patternSuffix);
+                                    let stopsList = [];
+                                    if (stopsData && Array.isArray(stopsData)) {
+                                        stopsList = stopsData;
+                                    } else if (stopsData && stopsData.stops) {
+                                        stopsList = stopsData.stops;
+                                    }
+
+                                    // Store for applyFilter (mocking pattern structure)
+                                    p.stops = stopsList;
+
+                                    // Directional Logic
+                                    const idx = stopsList.findIndex(s => s.id === window.currentStopId);
+                                    if (idx !== -1 && idx < stopsList.length - 1) {
+                                        stopsList.slice(idx + 1).forEach(s => reachableStopIds.add(s.id));
+                                    }
+                                } catch (err) {
+                                    console.warn(`[Debug] Failed to fetch stops for suffix ${p.patternSuffix}`, err);
+                                }
+                            }));
+                        }
+                    } else if (routeDetails && routeDetails.stops) {
+                        // Fallback V2 style (unlikely for V3 but safety) - No directionality possible easily
+                        // Just add all except current?
+                        r._details.stops = routeDetails.stops; // normalize
+                        routeDetails.stops.forEach(s => {
+                            if (s.id !== window.currentStopId) reachableStopIds.add(s.id);
+                        });
+                    }
+                } catch (e) {
+                    console.warn(`[Debug] Failed to fetch details for route ${r.id}`, e);
+                }
+            }));
+        } catch (err) {
+            console.error('[Debug] Error fetching route details', err);
+        } finally {
+            document.body.style.cursor = 'default';
+            if (btn) btn.style.opacity = '1';
+        }
+    }
+
+    // For routes that didn't need fetching (already had details?), assume we need to process them too?
+    // Current logic only iterates `routesNeedingFetch`.
+    // What if we already fetched them in a previous filter session?
+    // We should iterate ALL routes to build `reachableStopIds`.
+    // The previous block only fetched MISSING data.
+    // Now we need to process ALL routes for the map highlight.
+
+    const reachableStopIds = new Set(); // Moved here to be populated by both fetch and existing data
+    routes.forEach(r => {
+        // If we just fetched, it's processed. If we didn't, we need to process `r._details` or `r.stops`.
+        // Wait, `routesNeedingFetch` processing block added directly to `reachableStopIds`.
+        // We should move the reachability calculation OUT of the fetch block to be uniform.
+        // But `routesNeedingFetch` modified `r` objects.
+
+        if (r._details && r._details.patterns) {
+            r._details.patterns.forEach(p => {
+                if (p.stops) {
+                    const idx = p.stops.findIndex(s => s.id === window.currentStopId);
+                    if (idx !== -1 && idx < p.stops.length - 1) {
+                        p.stops.slice(idx + 1).forEach(s => reachableStopIds.add(s.id));
+                    }
+                }
+            });
+        } else if (r._details && r._details.stops) { // Fallback for V2-like structure
+            r._details.stops.forEach(s => {
+                if (s.id !== window.currentStopId) reachableStopIds.add(s.id);
+            });
+        }
+    });
+
+    console.log(`[Debug] Filter Mode. Origin: ${window.currentStopId}. Routes: ${routes.length}. Reachable Stops: ${reachableStopIds.size}`);
+
+    // Debug Data Availability
+    if (routes.length === 0) {
+        console.warn('[Debug] stopToRoutesMap is empty. Checking fetchStopRoutes cache?');
+        // If empty, maybe we depend on showStopInfo already having fetched it?
+        // stopToRoutesMap is ONLY populated at load time from allRoutes (which has no stops).
+        // We need to populate it dynamically from fetchStopRoutes?
+        // fetchStopRoutes returns routes for a stop. We should update stopToRoutesMap with that!
+    }
+
+    if (reachableStopIds.size === 0) {
+        alert("No route data available for filtering (Stops list empty).");
+        clearFilter();
+        return;
+    }
+
+    // DIM MAP except reachable
+    // We can use setMapFocus(true) style logic but customized
+    // Or we just rely on opacity.
+    // Let's manually set layer opacities.
+    // Actually, `setMapFocus` dims to 0.4. We want 0.2 vs 1.0.
+    // Let's use a specialized filter/paint property if possible, or just dim everything and maybe add a "Highlight" layer for reachable?
+    // User said: "only the stops to which you can go... are at full opacity and the rest is dimmed"
+
+    // Efficient way: Update 'stops-layer' opacity using a match expression?
+    // Mapbox paint properties are fast.
+    const matchExpression = ['match', ['get', 'id'], Array.from(reachableStopIds), 1.0, 0.1];
+    console.log('[Debug] Match Expression Length:', matchExpression[2].length); // Check array size inside expression
+
+    if (map.getLayer('stops-layer')) {
+        map.setPaintProperty('stops-layer', 'icon-opacity', matchExpression);
+    }
+    // Also handling Metro circles?
+    if (map.getLayer('metro-layer-circle')) {
+        // Metro IDs are strings too?
+        map.setPaintProperty('metro-layer-circle', 'circle-opacity', matchExpression);
+        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', matchExpression);
+    }
+}
+
+function applyFilter(targetId) {
+    filterState.picking = false;
+    filterState.active = true;
+    filterState.targetId = targetId;
+
+    // Restore Header Text (will be overwritten by showStopInfo anyway, but good practice)
+    // Actually, we stay on the Origin Stop, we just filter its content.
+    // OR do we show the Target stop?
+    // User: "then only the routes that go through both stops will be kept in arrivals"
+    // This implies we stick to the ORIGIN view, but filter it.
+
+    // Find common routes
+    const originRoutes = stopToRoutesMap.get(filterState.originId) || [];
+
+    console.log(`[Debug] Apply Filter. Origin: ${filterState.originId}, Target: ${targetId}`);
+    console.log(`[Debug] Origin Routes to check: ${originRoutes.length}`);
+
+    // Filter Logic: Route must go from Origin -> Target
+    const common = originRoutes.filter(r => {
+        // 1. Check _details.patterns (V3 precise)
+        if (r._details && r._details.patterns) {
+            return r._details.patterns.some(p => {
+                if (!p.stops) return false;
+                // Note: p.stops are objects {id, ...}
+                const idxO = p.stops.findIndex(s => s.id === filterState.originId);
+                const idxT = p.stops.findIndex(s => s.id === targetId);
+                // valid if both exist and Origin is before Target
+                if (idxO !== -1 && idxT !== -1 && idxO < idxT) return true;
+                return false;
+            });
+        }
+
+        // 2. Check r.stops (V2/Fallback simple list)
+        // If we only have a list of stops (no direction), we just check if both exist.
+        // But since we are in "Filtering" mode which implies direction, this is less ideal.
+        // However, if we don't have patterns, simple inclusion is better than nothing.
+        if (r.stops) {
+            const hasOrigin = r.stops.includes(filterState.originId);
+            const hasTarget = r.stops.includes(targetId);
+            // If simple list, we can't strict order check unless list is ordered.
+            // Assumption: r.stops might be unordered set from toggleFilterMode logic.
+            return hasOrigin && hasTarget;
+        }
+
+        return false;
+    });
+
+    filterState.filteredRoutes = common.map(r => r.id);
+
+    console.log(`[Debug] Common Routes: ${common.length}`, common.map(r => r.shortName));
+
+    // Restore Map Opacity
+    setMapFocus(false); // will reset to 1.0 or 0.4 depending on active... wait setMapFocus takes boolean.
+    // We need to manually reset the Paint Property expressions we stuck in toggleFilterMode
+    if (map.getLayer('stops-layer')) map.setPaintProperty('stops-layer', 'icon-opacity', 1);
+    if (map.getLayer('metro-layer-circle')) {
+        map.setPaintProperty('metro-layer-circle', 'circle-opacity', 1);
+        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', 1);
+    }
+
+    // Trigger UI Refresh
+    // We need to re-render the panel for the ORIGIN stop.
+    // But we are probably still viewing it.
+    // Just re-call showStopInfo?
+    // But showStopInfo fetches data. We have it.
+    // Let's just modify the DOM?
+    // Re-calling showStopInfo(allStops.find(s=>s.id == originId)) is safest to trigger all render logic.
+    const originStop = allStops.find(s => s.id === filterState.originId); // Note: allStops might not have metro?
+    // We can use the cached data?
+    // Actually, showStopInfo handles fetching.
+    showStopInfo(originStop, false, false); // No history add, no fly
+
+    // Highlight Target on Map?
+    // Maybe show the target in the list?
+    // User didn't specify map change after selection other than normal.
+}
+
+function clearFilter() {
+    filterState.active = false;
+    filterState.picking = false;
+    filterState.originId = null;
+    filterState.targetId = null;
+    filterState.filteredRoutes = [];
+
+    // Reset UI
+    const btn = document.getElementById('filter-routes');
+    if (btn) {
+        btn.classList.remove('active');
+        btn.querySelector('img').src = '/line.3.horizontal.decrease.circle.svg';
+    }
+
+    // Reset Map
+    if (map.getLayer('stops-layer')) map.setPaintProperty('stops-layer', 'icon-opacity', 1);
+    if (map.getLayer('metro-layer-circle')) {
+        map.setPaintProperty('metro-layer-circle', 'circle-opacity', 1);
+        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', 1);
+    }
+
+    // Refresh view
+    if (window.currentStopId) {
+        const stop = allStops.find(s => s.id === window.currentStopId);
+        if (stop) showStopInfo(stop, false, false);
     }
 }
 
@@ -303,29 +605,27 @@ map.on('load', async () => {
         id: 'stops-highlight',
         type: 'symbol',
         source: 'selected-stop',
-        filter: ['!=', 'mode', 'SUBWAY'], // Don't hide Metro icons with generic pin
+        // filter: ['!=', 'mode', 'SUBWAY'], // Removed to ensure ALL stops highlight
         layout: {
-            'icon-image': 'stop-selected-icon',
+            'icon-image': [
+                'case',
+                ['>', ['get', 'bearing'], 0], 'stop-selected-icon', // Arrow
+                'stop-icon' // Circle fallback
+            ],
             'icon-size': [
-                'interpolate',
-                ['linear'],
-                ['zoom'],
-                13, 0.6,
-                14, 1.0,
-                16, 1.2
+                'case',
+                ['>', ['get', 'bearing'], 0], 1.2, // Arrow fixed scale
+                1.5 // Circle fixed scale (Big)
             ],
             'icon-allow-overlap': true,
-            'icon-ignore-placement': true, // Show even if it collides (it's the selected one!)
-            // Rotate selected stop always (if bearing exists)
-            'icon-rotate': ['get', 'bearing'],
+            'icon-ignore-placement': true,
+            'icon-rotate': ['coalesce', ['get', 'bearing'], 0],
             'icon-rotation-alignment': 'map'
         },
         paint: {
             'icon-opacity': 1
         }
     });
-
-
 });
 
 async function fetchWithCache(url, options = {}) {
@@ -599,9 +899,14 @@ function addStopsToMap(stops) {
                 'icon-image': [
                     'step',
                     ['zoom'],
-                    'stop-far-away-icon', // Default (< 14)
-                    14, 'stop-icon',      // Mid zoom (14-16)
-                    16.5, 'stop-close-up-icon' // High zoom (> 16.5)
+                    'stop-far-away-icon', // < 14
+                    14, 'stop-icon',      // 14-16.5
+                    16.5, [               // >= 16.5
+                        'case',
+                        ['==', ['get', 'bearing'], 0],
+                        'stop-icon',      // Bearing 0 -> Circle
+                        'stop-close-up-icon' // Bearing !0 -> Directional
+                    ]
                 ],
                 'icon-size': [
                     'interpolate',
@@ -760,8 +1065,15 @@ function addStopsToMap(stops) {
 
 // Handle clicks
 map.on('click', 'stops-layer', async (e) => {
-    const coordinates = e.features[0].geometry.coordinates.slice();
     const props = e.features[0].properties;
+
+    // FILTER PICKING MODE
+    if (filterState.picking) {
+        applyFilter(props.id);
+        return;
+    }
+
+    const coordinates = e.features[0].geometry.coordinates.slice();
 
     // Keep global track of selected stop ID
     window.currentStopId = props.id;
@@ -797,8 +1109,15 @@ map.on('click', 'stops-layer', async (e) => {
 const metroLayers = ['metro-layer-circle', 'metro-layer-label', 'metro-transfer-layer'];
 metroLayers.forEach(layerId => {
     map.on('click', layerId, async (e) => {
-        const coordinates = e.features[0].geometry.coordinates.slice();
         const props = e.features[0].properties;
+
+        // FILTER PICKING MODE
+        if (filterState.picking) {
+            applyFilter(props.id);
+            return;
+        }
+
+        const coordinates = e.features[0].geometry.coordinates.slice();
 
         // Keep global track of selected stop ID
         window.currentStopId = props.id;
@@ -1104,7 +1423,38 @@ map.on('moveend', () => {
 });
 
 
+// Helper: Dim background layers when focusing on a stop/route
+function setMapFocus(active) {
+    const opacity = active ? 0.4 : 1.0;
+
+    // Bus Stops
+    if (map.getLayer('stops-layer')) {
+        map.setPaintProperty('stops-layer', 'icon-opacity', opacity);
+    }
+
+    // Metro Layers
+    if (map.getLayer('metro-layer-circle')) {
+        map.setPaintProperty('metro-layer-circle', 'circle-opacity', opacity);
+        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', opacity);
+    }
+    if (map.getLayer('metro-layer-label')) {
+        map.setPaintProperty('metro-layer-label', 'text-opacity', opacity);
+    }
+    if (map.getLayer('metro-transfer-layer')) {
+        map.setPaintProperty('metro-transfer-layer', 'icon-opacity', opacity);
+        map.setPaintProperty('metro-transfer-layer', 'text-opacity', opacity);
+    }
+
+    // Selected Stop Highlight - ALWAYS KEEP OPAQUE
+    if (map.getLayer('stops-highlight')) {
+        map.setPaintProperty('stops-highlight', 'icon-opacity', 1.0);
+    }
+}
+
 async function showStopInfo(stop, addToStack = true, flyToStop = false) {
+    // Enable Focus Mode (Dim others)
+    setMapFocus(true);
+
     if (addToStack) addToHistory('stop', stop);
 
     // Explicitly clean up any route layers when showing a stop
@@ -1152,8 +1502,10 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
 
         // Update highlight source
         // We might not have the full feature if coming from history/cache depending on structure
-        // Construct a feature
+        console.log('[Debug] showStopInfo called for:', stop);
+
         if (stop.lon && stop.lat) {
+            console.log('[Debug] Updating selected-stop source with:', stop.lon, stop.lat);
             const feature = {
                 type: 'Feature',
                 geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
@@ -1164,7 +1516,15 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
                     type: 'FeatureCollection',
                     features: [feature]
                 });
+
+                // Force highlight layers to top
+                if (map.getLayer('debug-selected-circle')) map.moveLayer('debug-selected-circle');
+                if (map.getLayer('stops-highlight')) map.moveLayer('stops-highlight');
+            } else {
+                console.error('[Debug] Source selected-stop NOT found!');
             }
+        } else {
+            console.error('[Debug] Stop missing coords:', stop);
         }
     }
 
@@ -1463,6 +1823,11 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
         // Flatten attributes from all stops
         const allFetchedRoutes = results.flat();
 
+        // UPDATE CACHE for Filtering
+        // We have fresh routes for this stop. Update the map so filtering works!
+        stopToRoutesMap.set(stop.id, allFetchedRoutes);
+        console.log(`[Debug] Updated stopToRoutesMap for ${stop.id} with ${allFetchedRoutes.length} routes.`);
+
         // --- Build All Routes (Header Extension) ---
         const headerExtension = document.getElementById('header-extension');
         if (headerExtension) {
@@ -1514,6 +1879,15 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
                     tile.style.backgroundColor = `#${color}20`; // 12% opacity
                     tile.style.color = `#${color}`;
                     tile.style.fontWeight = '700';
+
+                    // Apply Filter Dimming
+                    if (filterState.active) {
+                        // If route is NOT in the filtered list, dim it
+                        // Note: Phantom routes (no ID) will be dimmed as they aren't in the list
+                        if (!route.id || !filterState.filteredRoutes.includes(route.id)) {
+                            tile.classList.add('dimmed');
+                        }
+                    }
 
                     tile.addEventListener('click', (e) => {
                         e.stopPropagation();
@@ -1593,6 +1967,19 @@ function renderArrivals(arrivals) {
     if (arrivals.length === 0) {
         listEl.innerHTML = '<div class="empty">No upcoming arrivals</div>';
         return;
+    }
+
+    // Apply Filter
+    if (filterState.active) {
+        arrivals = arrivals.filter(a => {
+            const r = allRoutes.find(route => route.shortName === a.shortName);
+            return r && filterState.filteredRoutes.includes(r.id);
+        });
+
+        if (arrivals.length === 0) {
+            listEl.innerHTML = '<div class="empty">No arrivals for selected destination</div>';
+            return;
+        }
     }
 
     arrivals.forEach(arrival => {
@@ -2122,6 +2509,7 @@ function setSheetState(panel, state) {
 
     if (state === 'hidden') {
         panel.classList.add('hidden');
+        panel.style.display = 'none'; // Force hide
         // Only clear stop highlight when explicitly closing info-panel (not when switching to route)
         if (panel.id === 'info-panel' && map.getSource('selected-stop')) {
             // Preserve highlight if route-info is about to open (fromStopId case)
@@ -2136,6 +2524,7 @@ function setSheetState(panel, state) {
     } else if (state === 'half') {
         panel.classList.add('sheet-half');
         panel.classList.remove('hidden');
+        panel.style.display = ''; // Reset
     } else if (state === 'full') {
         panel.classList.add('sheet-full');
         panel.classList.remove('hidden');
@@ -2287,9 +2676,37 @@ function setPanelState(isOpen) {
     }
 }
 
+// Filter Button
+const filterBtn = document.getElementById('filter-routes');
+if (filterBtn) {
+    filterBtn.addEventListener('click', (e) => {
+        console.log('[Debug] Filter button clicked');
+        e.stopPropagation();
+        toggleFilterMode();
+    });
+} else {
+    // Retry if not found immediately (though defer/module should handle it)
+    console.warn('[Debug] Filter button not found at init, checking again in 1s');
+    setTimeout(() => {
+        const fb = document.getElementById('filter-routes');
+        if (fb) fb.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleFilterMode();
+        });
+    }, 1000);
+}
+
 // Close panel
 document.getElementById('close-panel').addEventListener('click', () => {
-    setSheetState(document.getElementById('info-panel'), 'hidden');
+    console.log('[Debug] Close panel clicked');
+    const panel = document.getElementById('info-panel');
+    setSheetState(panel, 'hidden');
+
+    // Explicitly hide just in case
+    // panel.classList.add('hidden'); // setSheetState should do this but let's be safe if it fails
+
+    clearFilter(); // Reset filter
+    setMapFocus(false); // Reset map focus (opacity)
     // Remove highlight
     if (map.getSource('selected-stop')) {
         map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
@@ -2301,6 +2718,12 @@ document.getElementById('close-panel').addEventListener('click', () => {
 document.getElementById('close-route-info').addEventListener('click', () => {
     setSheetState(document.getElementById('route-info'), 'hidden');
     clearHistory(); // Clear history on close
+    clearRoute(); // Helper to clear route layers (modified to also reset focus)
+});
+
+function clearRoute() {
+    // Reset Focus (Make everything opaque again)
+    setMapFocus(false);
 
     if (busUpdateInterval) clearInterval(busUpdateInterval);
 
@@ -2323,12 +2746,13 @@ document.getElementById('close-route-info').addEventListener('click', () => {
             }
         });
     }
-
     // Explicitly clear stop selection when closing route info
     if (map.getSource('selected-stop')) {
         map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
     }
-});
+}
+
+
 
 
 // Helper to Load SVG as a Raster Image for Mapbox

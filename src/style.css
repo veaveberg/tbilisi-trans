@@ -426,6 +426,11 @@ body {
   transform: scale(0.95);
 }
 
+.route-tile.dimmed {
+  opacity: 0.2;
+  pointer-events: none;
+}
+
 /* Info Panel Content */
 /* Panel Header (title + controls inline) */
 .panel-header {
@@ -516,6 +521,20 @@ body {
 .icon-btn:hover {
   opacity: 0.8;
   /* Darker on hover */
+}
+
+/* Active Filter Button */
+.icon-btn.active {
+  opacity: 1;
+  color: var(--primary);
+  /* If using SVG fill, but we use img src swap */
+  /* We can fix opacity though */
+}
+
+.icon-btn.active img {
+  /* If we want to tint it via CSS filter if it was black? 
+       But we are swapping the source to a filled version.
+       Just ensure opacity is high. */
 }
 
 .icon-btn img {
@@ -769,9 +788,12 @@ body {
 /* Route header content (number + details inline) */
 .route-info-header-content {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  /* Center align with number box */
   gap: 12px;
   flex: 1;
+  min-width: 0;
+  /* Critical for flex child truncation */
 }
 
 .route-info-number {
@@ -782,12 +804,26 @@ body {
   padding: 4px 12px;
   border-radius: 8px;
   flex-shrink: 0;
+  line-height: 1;
 }
 
 .route-info-details {
   font-size: 0.9rem;
   color: var(--text-light);
-  line-height: 1.4;
+  line-height: 1.3;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* Allow children to truncate */
+}
+
+.route-info-details .destination {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 700;
+  color: black;
+  font-size: 1rem;
 }
 
 .route-actions {
