@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Tbilisi Transit</title>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* Critical CSS to prevent FOUC */
+    .hidden {
+      display: none !important;
+    }
+
+    .panel {
+      display: none;
+    }
+
+    /* Initially hide until CSS loads */
+    #search-suggestions {
+      display: none;
+    }
+
+    /* Hide UI overlays while loading to prevent unstyled flash */
+    body.loading .search-wrapper,
+    body.loading #map-controls,
+    body.loading .reset-view-btn {
+      display: none !important;
+    }
+  </style>
+</head>
+
+<body class="loading">
+  <div id="app">
+    <div id="map"></div>
+
+    <!-- Search Bar -->
+    <div class="search-wrapper">
+      <div class="search-container">
+        <div class="search-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+        </div>
+        <input type="text" id="search-input" placeholder="Search stops or routes..." />
+        <div id="search-suggestions" class="suggestions hidden"></div>
+      </div>
+    </div>
+
+    <!-- Stop Info Panel (Bottom Sheet) -->
+    <div id="info-panel" class="panel hidden">
+      <div class="drag-handle"></div>
+      <div class="panel-header">
+        <h2 id="stop-name">Select a stop</h2>
+        <div class="panel-controls">
+          <button id="back-panel" class="icon-btn hidden" title="Back">
+            <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+          </button>
+          <button id="close-panel" class="icon-btn" title="Close">
+            <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+          </button>
+        </div>
+      </div>
+      <div id="arrivals-list" class="arrivals-list">
+        <!-- Arrivals will be injected here -->
+      </div>
+    </div>
+
+    <!-- Route Info Panel (Bottom Sheet) -->
+    <div id="route-info" class="panel hidden route-panel">
+      <div class="drag-handle"></div>
+      <div class="panel-header">
+        <div class="route-info-header-content">
+          <div id="route-info-number" class="route-info-number"></div>
+          <div id="route-info-text" class="route-info-details"></div>
+        </div>
+        <div class="panel-controls">
+          <button id="back-route-info" class="icon-btn hidden" title="Back">
+            <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+          </button>
+          <button id="close-route-info" class="icon-btn" title="Close">
+            <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+          </button>
+        </div>
+      </div>
+      <div class="route-actions">
+        <button id="switch-direction" class="switch-btn hidden">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="17 1 21 5 17 9"></polyline>
+            <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+            <polyline points="7 23 3 19 7 15"></polyline>
+            <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+          </svg>
+          Switch Direction
+        </button>
+      </div>
+    </div>
+
+    <button id="reset-view" class="reset-view-btn hidden">
+      <span>📍</span> Return to Tbilisi
+    </button>
+    <!-- Map Controls (Zoom & Location) -->
+    <div id="map-controls">
+      <button id="locate-me" class="control-btn" aria-label="Locate Me">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="3 11 22 2 13 21 11 13 3 11"></polygon>
+        </svg>
+      </button>
+      <div class="zoom-controls">
+        <button id="zoom-in" class="control-btn" aria-label="Zoom In">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+        <button id="zoom-out" class="control-btn" aria-label="Zoom Out">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>

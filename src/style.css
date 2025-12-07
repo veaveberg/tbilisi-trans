@@ -1,0 +1,802 @@
+:root {
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --text: #1f2937;
+  --text-light: #6b7280;
+  --bg: #ffffff;
+  --glass-bg: rgba(255, 255, 255, 0.95);
+  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --bottom-sheet-radius: 20px 20px 0 0;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  color: var(--text);
+  overflow: hidden;
+  height: 100dvh;
+  /* Dynamic Full Height for Safari */
+  width: 100vw;
+  margin: 0;
+  padding: 0;
+}
+
+#app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+#map {
+  width: 100%;
+  height: 100%;
+}
+
+/* --- Map Controls --- */
+#map-controls {
+  position: absolute;
+  bottom: 100px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  z-index: 10;
+  /* Below panels (z-index ~100) */
+  transition: opacity 0.2s ease;
+}
+
+/* Hide controls when panel is open on mobile */
+@media (max-width: 600px) {
+  body.panel-open #map-controls {
+    opacity: 0.3;
+    pointer-events: none;
+  }
+}
+
+/* Adjust position based on panels */
+@media (max-width: 600px) {
+  #map-controls {
+    bottom: 250px;
+    /* Make space for the half-sheet (40vh is roughly 300px, so 250 might overly it? Let's try higher) */
+    bottom: 45vh;
+    /* Safe area above the half sheet */
+  }
+}
+
+.control-btn {
+  width: 48px;
+  height: 48px;
+  background: white;
+  border: none;
+  border-radius: 50%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text);
+  transition: all 0.2s ease;
+}
+
+.control-btn:active {
+  transform: scale(0.95);
+  background: #f3f4f6;
+}
+
+/* Specific styling for location active state (can be applied by JS) */
+.control-btn.active {
+  color: var(--primary);
+  background: #eff6ff;
+}
+
+.zoom-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* --- Search Bar --- */
+.search-wrapper {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 10;
+  pointer-events: none;
+  /* Let clicks pass through around the search box */
+  display: flex;
+  justify-content: center;
+}
+
+.search-container {
+  pointer-events: auto;
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 8px 12px;
+  width: 100%;
+  max-width: 400px;
+  /* Desktop width */
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.3s ease;
+}
+
+.search-icon {
+  color: var(--text-light);
+  display: flex;
+  align-items: center;
+}
+
+#search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 1rem;
+  outline: none;
+  padding: 4px 0;
+  color: var(--text);
+}
+
+.suggestions {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: white;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  max-height: 300px;
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.suggestions.hidden {
+  display: none;
+}
+
+.suggestion-item {
+  padding: 12px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #f3f4f6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.suggestion-item:last-child {
+  border-bottom: none;
+}
+
+.suggestion-item:hover {
+  background: #f9fafb;
+}
+
+.suggestion-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: bold;
+}
+
+.suggestion-icon.stop {
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+.suggestion-icon.route {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.suggestion-text {
+  flex: 1;
+}
+
+.suggestion-subtext {
+  font-size: 0.75rem;
+  color: var(--text-light);
+}
+
+/* --- Panels (Bottom Sheet / Sidebar) --- */
+.panel {
+  position: absolute;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  z-index: 20;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  touch-action: none;
+  /* Important for dragging */
+  transform: translateX(-100%);
+  /* Start hidden off-screen (Desktop) */
+}
+
+.panel.hidden {
+  display: none !important;
+  pointer-events: none;
+}
+
+/* Sheet States (Mobile) */
+@media (max-width: 768px) {
+  .panel {
+    transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    will-change: transform;
+    height: 90vh;
+    /* Max height when full */
+    max-height: none;
+    transform: translateY(100%);
+    /* Default hidden */
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    border-radius: var(--bottom-sheet-radius);
+    padding: 20px;
+    padding-top: 12px;
+    overflow-y: auto;
+  }
+
+  .panel.sheet-collapsed {
+    transform: translateY(calc(100% - 80px));
+    /* Show 80px */
+  }
+
+  .panel.sheet-half {
+    transform: translateY(calc(100% - 40vh));
+    /* Show 40vh */
+  }
+
+  .panel.sheet-full {
+    transform: translateY(0);
+    /* Full up (10% from top as height is 90vh) */
+  }
+
+  /* When dragging, remove transition for instant follow */
+  .panel.is-dragging {
+    transition: none;
+  }
+}
+
+/* Desktop Styles (Sidebar) */
+@media (min-width: 769px) {
+  .search-wrapper {
+    justify-content: flex-start;
+    /* Align left on desktop */
+    width: 400px;
+  }
+
+  .panel {
+    top: 80px;
+    /* Below search */
+    left: 16px;
+    width: 400px;
+    max-height: calc(100vh - 100px);
+    border-radius: 16px;
+    padding: 20px;
+    max-height: calc(100vh - 100px);
+    border-radius: 16px;
+    padding: 20px;
+    overflow-y: auto;
+    transform: translateX(0);
+    /* Reset base transform to show on screen */
+  }
+
+  .panel.hidden {
+    transform: translateX(-120%);
+  }
+
+  .drag-handle {
+    display: none;
+  }
+}
+
+/* Mobile Styles (Bottom Sheet) */
+
+
+/* Route Tiles (All Routes) */
+.all-routes-container {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.route-tiles-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
+  gap: 6px;
+}
+
+.route-tile {
+  background: #f0f4f8;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 2px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+  min-width: 0;
+  /* Prevent overflow */
+}
+
+.route-tile:hover {
+  opacity: 0.8;
+  transform: translateY(-1px);
+}
+
+.route-tile:active {
+  transform: scale(0.95);
+}
+
+/* Info Panel Content */
+/* Panel Header (title + controls inline) */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.panel-header h2 {
+  margin: 0;
+  flex: 1;
+}
+
+/* Route panel header content */
+.route-info-header-content {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  /* Top align with number */
+  gap: 16px;
+}
+
+.route-info-number {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--primary);
+  background: #e0e7ff;
+  padding: 4px 12px;
+  border-radius: 8px;
+  min-width: 60px;
+  text-align: center;
+  line-height: 1;
+  /* Tighten line height for box */
+}
+
+.route-info-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 2px;
+  /* Optical alignment with top of number box */
+}
+
+.route-info-details .origin {
+  font-weight: 400;
+  color: #6b7280;
+  /* Grey */
+  font-size: 0.95rem;
+}
+
+.route-info-details .destination {
+  font-weight: 700;
+  color: #000000;
+  /* Black */
+  font-size: 1.1rem;
+  /* Bigger */
+}
+
+/* Panel Controls (Back & Close) - Inline with title */
+.panel-controls {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  background: transparent;
+  border: none;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: opacity 0.2s;
+  opacity: 0.4;
+  /* Grey default (assuming black icons) */
+}
+
+.icon-btn:hover {
+  opacity: 0.8;
+  /* Darker on hover */
+}
+
+.icon-btn img {
+  display: block;
+  /* Remove line-height gaps */
+}
+
+.icon-btn.hidden {
+  display: none;
+}
+
+/* --- Content Styles --- */
+#stop-name {
+  font-size: 1.25rem;
+  margin: 0;
+  padding: 0;
+}
+
+.arrivals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.arrival-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 8px;
+  border-left: 4px solid var(--primary);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.arrival-item:hover {
+  background: #f3f4f6;
+}
+
+.route-number {
+  font-weight: 700;
+  font-size: 1.125rem;
+  color: var(--primary);
+}
+
+.destination {
+  font-size: 0.875rem;
+  color: var(--text-light);
+  margin-left: 8px;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+.time {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text);
+  background: #e0e7ff;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* --- Metro Specific UI --- */
+.metro-header {
+  margin-bottom: 16px;
+}
+
+.metro-hours-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f0fdf4;
+  /* Green tint */
+  color: #16a34a;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: 1px solid #dcfce7;
+}
+
+.metro-hours-badge .icon {
+  font-size: 1rem;
+}
+
+/* Consolidated Metro Card */
+.metro-consolidated-item {
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  border-left-width: 6px;
+}
+
+.metro-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 12px 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.metro-card-top .route-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.metro-card-top .route-number {
+  font-size: 1.5rem;
+  /* Larger */
+}
+
+.metro-card-top .destination {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0;
+}
+
+.metro-card-bottom {
+  width: 100%;
+  padding: 8px 16px;
+  background: #f9fafb;
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+
+.first-last-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.first-last-row b {
+  color: #374151;
+  font-weight: 600;
+}
+
+.separator {
+  color: #d1d5db;
+}
+
+.next-arrival {
+  text-align: right;
+}
+
+.next-arrival-chip {
+  font-weight: 700;
+  color: #111827;
+  font-size: 1.1rem;
+}
+
+.small-time {
+  font-size: 0.8rem;
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+.status-closed {
+  font-size: 0.9rem;
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.metro-first-last-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.first-last-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.direction-label {
+  font-size: 0.8rem;
+  color: var(--text-light);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.times-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.times-row span b {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.arrival-chip {
+  display: inline-block;
+  margin-left: 4px;
+}
+
+
+/* --- Route Info Panel Specifics --- */
+.route-info-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-right: 24px;
+}
+
+/* Route header content (number + details inline) */
+.route-info-header-content {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex: 1;
+}
+
+.route-info-number {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--primary);
+  background: #e0e7ff;
+  padding: 4px 12px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.route-info-details {
+  font-size: 0.9rem;
+  color: var(--text-light);
+  line-height: 1.4;
+}
+
+.route-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.switch-btn {
+  background: white;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  width: 100%;
+  justify-content: center;
+}
+
+.switch-btn:hover {
+  background: var(--primary);
+  color: white;
+}
+
+.switch-btn.hidden {
+  display: none;
+}
+
+/* --- Controls --- */
+.controls {
+  position: absolute;
+  bottom: 24px;
+  /* Move up slightly to avoid bottom sheet overlap if needed, but sheets cover it anyway */
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 10;
+  transition: transform 0.3s;
+}
+
+/* Adjust controls when panel is open on mobile */
+body.panel-open .controls {
+  transform: translateY(-60vh);
+  /* Move up with the panel */
+}
+
+@media (min-width: 769px) {
+  body.panel-open .controls {
+    transform: none;
+    /* Don't move on desktop */
+  }
+}
+
+.control-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: white;
+  color: var(--text);
+  border: none;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.control-btn:hover {
+  transform: scale(1.05);
+  background: #f9fafb;
+}
+
+/* Reset View Button */
+.reset-view-btn {
+  position: absolute;
+  top: 80px;
+  /* Below search bar on mobile */
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--primary);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 20px;
+  border: none;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  z-index: 15;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.reset-view-btn:hover {
+  transform: translateX(-50%) scale(1.05);
+  background: var(--primary-dark);
+}
+
+.reset-view-btn.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -20px);
+}
+
+/* Mapbox overrides */
+.mapboxgl-ctrl-group {
+  display: none !important;
+  /* Hide native buttons (Zoom, Compass, Geolocate) */
+}
+
+.mapboxgl-popup-content {
+  border-radius: 12px;
+  padding: 12px;
+  font-family: 'Inter', sans-serif;
+  box-shadow: var(--shadow);
+}
