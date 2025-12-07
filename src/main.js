@@ -48,22 +48,24 @@ map.addControl(geolocate);
 // Handle Geolocate Errors (e.g., iOS HTTP restriction)
 geolocate.on('error', (e) => {
     console.error('Geolocate error:', e);
-    // Debug: serialization to see what 'e' actually is on the wrapped event
-    let msg = 'Unknown Error';
-    try {
-        // Try standard PositionError
-        if (e.code) msg = `Error ${e.code}: ${e.message}`;
-        // Try valid mapbox event wrapper
-        else if (e.error && e.error.code) msg = `Error ${e.error.code}: ${e.error.message}`;
-        // Fallback: Dump keys
-        else msg = JSON.stringify(e);
-    } catch (err) {
-        msg = 'Serialization Failed';
+    // Safe Debug Dump
+    let code = 'undefined';
+    let message = 'undefined';
+    let errorObjCode = 'undefined';
+    let errorObjMsg = 'undefined';
+
+    if (e) {
+        if ('code' in e) code = e.code;
+        if ('message' in e) message = e.message;
+        if (e.error) {
+            if ('code' in e.error) errorObjCode = e.error.code;
+            if ('message' in e.error) errorObjMsg = e.error.message;
+        }
     }
 
-    alert(`DEBUG: ${msg}`);
+    alert(`DEBUG:\nRoot Code: ${code}\nRoot Msg: ${message}\nErrObj Code: ${errorObjCode}\nErrObj Msg: ${errorObjMsg}`);
 
-    if (e.code === 1 || (e.error && e.error.code === 1)) { // PERMISSION_DENIED
+    if (code === 1 || errorObjCode === 1) { // PERMISSION_DENIED
         alert('Location permission denied via Settings.');
     } else if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
         alert('Location requires HTTPS.');
