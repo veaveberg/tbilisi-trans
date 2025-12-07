@@ -1,7 +1,7 @@
 import './style.css';
 import mapboxgl from 'mapbox-gl';
 import stopBearings from './data/stop_bearings.json';
-
+import stopsConfig from './data/stops_config.json'; // Import Config
 
 // Configuration
 const MAPBOX_TOKEN = 'pk.eyJ1IjoidHRjYXpyeSIsImEiOiJjam5sZWU2NHgxNmVnM3F0ZGN2N2lwaGF2In0.00TvUGr9Qu4Q4fc_Jb9wjw';
@@ -23,6 +23,15 @@ const map = new mapboxgl.Map({
     center: [44.78, 41.72], // Tbilisi center
     zoom: 12
 });
+
+// Debug: Expose map to window
+window.map = map;
+
+// Ensure map resizing handles layout changes
+const resizeObserver = new ResizeObserver(() => {
+    map.resize();
+});
+resizeObserver.observe(document.getElementById('map'));
 
 // Add Geolocate Control (Hidden, driven by custom button)
 const geolocate = new mapboxgl.GeolocateControl({
@@ -82,6 +91,9 @@ let allStops = [];
 let allRoutes = [];
 let stopToRoutesMap = new Map(); // Index: stopId -> [route objects]
 let lastRouteUpdateId = 0; // Async Lock for Route Updates
+// Merge/Redirect Maps
+const redirectMap = new Map(); // sourceId -> targetId
+const mergeSourcesMap = new Map(); // targetId -> [sourceId1, sourceId2]
 
 // --- Navigation History ---
 const historyStack = [];
@@ -121,6 +133,11 @@ function handleBack() {
     if (previous) {
         if (previous.type === 'stop') {
             // Restore map view to stop
+            // Restore persistence zoom if available
+            if (previous.data.savedZoom) {
+                window.savedZoom = previous.data.savedZoom; // Temporary global handoff (or modify showStopInfo)
+                // Actually easier to just modify showStopInfo to respect it from the object property
+            }
             showStopInfo(previous.data, false, true); // false = no history, true = flyTo
         } else if (previous.type === 'route') {
             showRouteOnMap(previous.data, false, { preserveBounds: true });
@@ -151,22 +168,58 @@ function getSearchHistory() {
 // Initialize map data
 map.on('load', async () => {
     try {
-        const [stops, routes] = await Promise.all([fetchStops(), fetchRoutes()]);
-        console.log('DEBUG: First Stop:', stops[0]);
-        console.log('DEBUG: First Route:', routes[0]);
+        const [rawStops, routes] = await Promise.all([fetchStops(), fetchRoutes()]);
+
+        // --- Process Stops (Overrides & Merges) ---
+        // 1. Apply Overrides & Build Redirects
+        const stops = [];
+        const overrides = stopsConfig?.overrides || {};
+        const merges = stopsConfig?.merges || {};
+
+        // Build merge mappings
+        Object.keys(merges).forEach(source => {
+            const target = merges[source];
+            redirectMap.set(source, target);
+            if (!mergeSourcesMap.has(target)) mergeSourcesMap.set(target, []);
+            mergeSourcesMap.get(target).push(source);
+        });
+
+        // Filter and Override
+        rawStops.forEach(stop => {
+            // If this stop is merged INTO another, skip adding it to map list
+            if (merges[stop.id]) return;
+
+            // Apply Override if exists
+            if (overrides[stop.id]) {
+                Object.assign(stop, overrides[stop.id]);
+            }
+
+            stops.push(stop);
+        });
+        // For debugging: Bypass processing
+        // rawStops.forEach(s => stops.push(s));
+
+        console.log(`Processed Stops: ${rawStops.length} -> ${stops.length} (Merged/Filtered)`);
+
         allStops = stops;
         allRoutes = routes;
         window.allStops = allStops; // Debug: Expose to window
-
+        window.stopsConfig = stopsConfig; // Debug
 
         // Index Routes by Stop ID (for "All Routes" list)
         allRoutes.forEach(route => {
             if (route.stops) {
                 route.stops.forEach(stopId => {
-                    if (!stopToRoutesMap.has(stopId)) {
-                        stopToRoutesMap.set(stopId, []);
+                    // If stopId is a merged source, map it to target
+                    const targetId = redirectMap.get(stopId) || stopId;
+
+                    if (!stopToRoutesMap.has(targetId)) {
+                        stopToRoutesMap.set(targetId, []);
                     }
-                    stopToRoutesMap.get(stopId).push(route);
+                    // Avoid dupes
+                    if (!stopToRoutesMap.get(targetId).includes(route)) {
+                        stopToRoutesMap.get(targetId).push(route);
+                    }
                 });
             }
         });
@@ -184,12 +237,18 @@ map.on('load', async () => {
         // Fix for Safari/Mobile (Force resize to account for dynamic address bar)
         setTimeout(() => map.resize(), 100);
 
+        // --- Dev Tools Support ---
+        if (import.meta.env.DEV) {
+            import('./dev-tools.js').then(module => module.initDevTools(map));
+        }
+
     } catch (error) {
         console.error('Error initializing app:', error);
         // Ensure UI is revealed even on error
         document.body.classList.remove('loading');
         alert(`Error plotting route: ${error.message}`);
     }
+
 
     // Load Bus Icon (Simple Arrow)
     const arrowImage = new Image(24, 24);
@@ -225,6 +284,7 @@ map.on('load', async () => {
         id: 'stops-highlight',
         type: 'symbol',
         source: 'selected-stop',
+        filter: ['!=', 'mode', 'SUBWAY'], // Don't hide Metro icons with generic pin
         layout: {
             'icon-image': 'stop-selected-icon',
             'icon-size': [
@@ -357,8 +417,10 @@ function addStopsToMap(stops) {
     const seenMetroNames = new Set();
 
     stops.forEach(stop => {
-        // Inject Bearing
-        stop.bearing = stopBearings[stop.id] || 0;
+        // Inject Bearing: Prioritize Override, then Default Config, then 0
+        if (stop.bearing === undefined) {
+            stop.bearing = stopBearings[stop.id] || 0;
+        }
 
         const isMetro = stop.vehicleMode === 'SUBWAY' || stop.name.includes('Metro Station') || (stop.id && stop.id.startsWith('M:'));
 
@@ -426,7 +488,7 @@ function addStopsToMap(stops) {
                     name: stop.name,
                     code: stop.code,
                     mode: stop.vehicleMode || 'BUS',
-                    bearing: stopBearings[stop.id] || 0 // Default to 0 if no bearing
+                    bearing: stop.bearing // Already resolved
                 }
             });
         }
@@ -684,10 +746,15 @@ map.on('click', 'stops-layer', async (e) => {
 
     // Keep global track of selected stop ID
     window.currentStopId = props.id;
+    if (window.selectDevStop) window.selectDevStop(props.id);
+
+    // Smart Zoom: Don't zoom out if already close
+    const currentZoom = map.getZoom();
+    const targetZoom = currentZoom > 16 ? currentZoom : 16;
 
     map.flyTo({
         center: coordinates,
-        zoom: 16
+        zoom: targetZoom
     });
 
     // Set selected stop data
@@ -701,7 +768,10 @@ map.on('click', 'stops-layer', async (e) => {
         features: [feature]
     });
 
-    showStopInfo(props, true, false); // Don't fly again inside showStopInfo
+    // Inject coordinates into props for History/Back navigation usage
+    const stopData = { ...props, lat: coordinates[1], lon: coordinates[0] };
+
+    showStopInfo(stopData, true, false); // Don't fly again inside showStopInfo
 });
 
 // Metro Click Handlers (Same logic as stops-layer)
@@ -713,10 +783,15 @@ metroLayers.forEach(layerId => {
 
         // Keep global track of selected stop ID
         window.currentStopId = props.id;
+        if (window.selectDevStop) window.selectDevStop(props.id);
+
+        // Smart Zoom: Don't zoom out if already close
+        const currentZoom = map.getZoom();
+        const targetZoom = currentZoom > 16 ? currentZoom : 16;
 
         map.flyTo({
             center: coordinates,
-            zoom: 16
+            zoom: targetZoom
         });
 
         // Set selected stop data (for highlight source if we want to use it, though metro circles are already highlighted by design usually)
@@ -734,7 +809,10 @@ metroLayers.forEach(layerId => {
             features: [feature]
         });
 
-        showStopInfo(props, true, false);
+        // Inject coordinates into props for History/Back navigation usage
+        const stopData = { ...props, lat: coordinates[1], lon: coordinates[0] };
+
+        showStopInfo(stopData, true, false);
     });
 
     // Add pointer cursor
@@ -1032,11 +1110,25 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
     });
 
     // Highlight selected stop
+    // Highlight selected stop
     if (stop.id) {
+        // Restore Global State (Crucial for Back Button / State Restoration)
+        window.currentStopId = stop.id;
+        if (window.selectDevStop) window.selectDevStop(stop.id);
+
         // Should we fetch the stop again to get coordinates if we don't have them?
         // Usually 'stop' object has lat/lon if coming from cache/list.
         if (flyToStop && stop.lon && stop.lat) {
-            map.flyTo({ center: [stop.lon, stop.lat], zoom: 16 });
+            // 1. Saved Persistence (Back Button)
+            if (stop.savedZoom) {
+                map.flyTo({ center: [stop.lon, stop.lat], zoom: stop.savedZoom });
+            }
+            // 2. Smart Zoom (Click)
+            else {
+                const currentZoom = map.getZoom();
+                const targetZoom = currentZoom > 16 ? currentZoom : 16;
+                map.flyTo({ center: [stop.lon, stop.lat], zoom: targetZoom });
+            }
         }
 
         // Update highlight source
@@ -1060,12 +1152,14 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
     const panel = document.getElementById('info-panel');
     const nameEl = document.getElementById('stop-name');
     const listEl = document.getElementById('arrivals-list');
+    const idDisplayEl = document.getElementById('stop-id-display');
 
     // Close route info if open (exclusive panels)
     // Close route info if open (exclusive panels)
     setSheetState(document.getElementById('route-info'), 'hidden');
 
     nameEl.textContent = stop.name || 'Unknown Stop';
+    if (idDisplayEl) idDisplayEl.textContent = `ID: ${stop.id}`;
     panel.classList.remove('metro-mode'); // Reset mode
     listEl.innerHTML = '<div class="loading">Loading arrivals...</div>';
 
@@ -1330,27 +1424,54 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
 
 
     try {
-        // Fetch both Routes (static) and Arrivals (live) in parallel
-        const [stopRoutes, arrivals] = await Promise.all([
-            fetchStopRoutes(stop.id).catch(e => { console.warn('fetchStopRoutes failed:', e); return []; }),
-            fetchArrivals(stop.id)
+        // Check for merged IDs
+        const subIds = mergeSourcesMap.get(stop.id) || [];
+        const idsAndParent = [stop.id, ...subIds];
+
+        // Fetch Routes (static) for ALL IDs in parallel
+        const routePromises = idsAndParent.map(id =>
+            fetchStopRoutes(id).catch(e => { console.warn(`fetchStopRoutes failed for ${id}:`, e); return []; })
+        );
+
+        // Fetch Arrivals (live) - this function already handles merged IDs internally
+        const arrivalsPromise = fetchArrivals(stop.id);
+
+        const [results, arrivals] = await Promise.all([
+            Promise.all(routePromises),
+            arrivalsPromise
         ]);
+
+        // Flatten attributes from all stops
+        const allFetchedRoutes = results.flat();
 
         // --- Build All Routes (Header Extension) ---
         const headerExtension = document.getElementById('header-extension');
         if (headerExtension) {
             headerExtension.innerHTML = ''; // Clear previous
 
-            let routesForStop = Array.isArray(stopRoutes) ? [...stopRoutes] : [];
+            // Deduplicate Routes (Prioritize Parent aka first fetched)
+            // Map: shortName -> routeObj
+            const uniqueRoutesMap = new Map();
 
-            // Merge with arrivals for robustness
+            allFetchedRoutes.forEach(r => {
+                if (!uniqueRoutesMap.has(r.shortName)) {
+                    uniqueRoutesMap.set(r.shortName, r);
+                }
+            });
+
+            // Convert back to array
+            let routesForStop = Array.from(uniqueRoutesMap.values());
+
+            // Merge with arrivals for robustness (in case static schedule missed something live)
             if (arrivals && arrivals.length > 0) {
-                const existingNumbers = new Set(routesForStop.map(r => r.shortName));
                 arrivals.forEach(arr => {
-                    if (!existingNumbers.has(arr.shortName)) {
-                        existingNumbers.add(arr.shortName);
+                    if (!uniqueRoutesMap.has(arr.shortName)) {
+                        // Create phantom route entry for live-only bus
                         const fullRoute = allRoutes.find(r => r.shortName === arr.shortName);
-                        routesForStop.push(fullRoute || { shortName: arr.shortName, id: null, color: '2563eb' });
+                        const newRoute = fullRoute || { shortName: arr.shortName, id: null, color: '2563eb' };
+
+                        uniqueRoutesMap.set(arr.shortName, newRoute);
+                        routesForStop.push(newRoute);
                     }
                 });
             }
@@ -1403,11 +1524,47 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
 }
 
 async function fetchArrivals(stopId) {
-    const response = await fetch(`${API_BASE_URL}/stops/${stopId}/arrival-times?locale=en&ignoreScheduledArrivalTimes=false`, {
-        headers: { 'x-api-key': API_KEY }
+    // Check if this ID merges others
+    const subIds = mergeSourcesMap.get(stopId) || [];
+    const idsToCheck = [stopId, ...subIds];
+
+    // Fetch all in parallel
+    const promises = idsToCheck.map(id =>
+        fetch(`${API_BASE_URL}/stops/${id}/arrival-times?locale=en&ignoreScheduledArrivalTimes=false`, {
+            headers: { 'x-api-key': API_KEY }
+        }).then(res => {
+            if (!res.ok) return [];
+            return res.json();
+        }).catch(err => {
+            console.warn(`Failed to fetch arrivals for merged ID ${id}:`, err);
+            return [];
+        })
+    );
+
+    const results = await Promise.all(promises);
+    const combined = results.flat();
+
+    // Dedup by simple key (route + time + headsign)?
+    // Or just let them pile up? 
+    // Usually duplicates happen if data is identical.
+    // Let's rely on simple dedup by JSON string if identical?
+    // Or deduplicate by vehicleId if available?
+    // Let's dedup by (shortName + arrivalTime).
+
+    const unique = [];
+    const seen = new Set();
+    combined.forEach(a => {
+        const key = `${a.shortName}_${a.realtimeArrivalMinutes}_${a.headsign}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            unique.push(a);
+        }
     });
-    if (!response.ok) throw new Error('Network response was not ok');
-    return await response.json();
+
+    // Sort by time
+    unique.sort((a, b) => a.realtimeArrivalMinutes - b.realtimeArrivalMinutes);
+
+    return unique;
 }
 
 function renderArrivals(arrivals) {
@@ -1599,6 +1756,15 @@ let currentPatternIndex = 0;
 let busUpdateInterval = null;
 
 async function showRouteOnMap(route, addToStack = true, options = {}) {
+    // Snapshot current Zoom into the previous state (the Stop view) 
+    // This allows "Back" to restore the exact zoom level.
+    if (historyStack.length > 0) {
+        const top = historyStack[historyStack.length - 1];
+        if (top.type === 'stop') {
+            top.data.savedZoom = map.getZoom();
+        }
+    }
+
     if (addToStack) addToHistory('route', route);
 
     currentRoute = route;
@@ -1762,13 +1928,12 @@ async function updateRouteView(route, options = {}) {
                 }
             });
 
-            // Fit bounds OR Zoom out slightly
-            if (options.preserveBounds) {
-                if (map.getZoom() > 14) map.flyTo({ zoom: 13.5 });
+            // Gentle Zoom Out (No Panning)
+            // If zoomed in close (>14.5), ease to 14. Otherwise keep current view.
+            if (map.getZoom() > 14.5) {
+                map.easeTo({ zoom: 14, duration: 800 });
             } else {
-                const bounds = new mapboxgl.LngLatBounds();
-                coordinates.forEach(coord => bounds.extend(coord));
-                map.fitBounds(bounds, { padding: 50 });
+                // Do nothing (preserve center and zoom)
             }
         }
 
