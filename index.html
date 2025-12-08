@@ -38,6 +38,13 @@
         window.history.replaceState(null, null,
           l.pathname.slice(0, -1) + decoded + l.hash
         );
+      } else if (l.search.startsWith('?p=')) {
+        var decoded = l.search.slice(3).split('&').map(function (s) {
+          return s.replace(/~and~/g, '&')
+        }).join('?');
+        window.history.replaceState(null, null,
+          l.pathname.slice(0, -1) + decoded + l.hash
+        );
       }
     }(window.location))
   </script>
@@ -89,9 +96,11 @@
       <div class="panel-header">
         <h2 id="stop-name">Select a stop</h2>
         <div class="panel-controls">
-          <img src="/tbilisi-trans/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+          <button id="back-panel" class="icon-btn hidden" title="Back">
+            <img src="/tbilisi-trans/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
           </button>
-          <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+          <button id="close-panel" class="icon-btn" title="Close">
+            <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
           </button>
         </div>
       </div>
@@ -117,9 +126,11 @@
             <div id="route-info-text" class="route-info-details"></div>
           </div>
           <div class="panel-controls">
-            <img src="/tbilisi-trans/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+            <button id="back-route-info" class="icon-btn hidden" title="Back">
+              <img src="/tbilisi-trans/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
             </button>
-            <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+            <button id="close-route-info" class="icon-btn" title="Close">
+              <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
             </button>
           </div>
         </div>
