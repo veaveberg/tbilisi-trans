@@ -90,10 +90,10 @@ geolocate.on('error', (e) => {
 });
 
 // Custom Controls Logic
-document.getElementById('zoom-in').addEventListener('click', () => map.zoomIn());
-document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
+document.getElementById('zoom-in')?.addEventListener('click', () => map.zoomIn());
+document.getElementById('zoom-out')?.addEventListener('click', () => map.zoomOut());
 
-document.getElementById('locate-me').addEventListener('click', () => {
+document.getElementById('locate-me')?.addEventListener('click', () => {
     // 1. Immediately trigger Location (Primary Action)
     // Prevent toggling off if already active
     if (!geolocate._watchState || geolocate._watchState === 'OFF' || geolocate._watchState === 'BACKGROUND') {
@@ -697,8 +697,8 @@ function clearFilter() {
 }
 
 // Back Button Listeners
-document.getElementById('back-panel').addEventListener('click', handleBack);
-document.getElementById('back-route-info').addEventListener('click', handleBack);
+document.getElementById('back-panel')?.addEventListener('click', handleBack);
+document.getElementById('back-route-info')?.addEventListener('click', handleBack);
 
 // --- Search History ---
 function saveToSearchHistory(item) {

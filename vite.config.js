@@ -41,7 +41,7 @@ const saveStopsPlugin = () => ({
 
 export default defineConfig({
     plugins: [saveStopsPlugin()],
-    base: './', // For GitHub Pages
+    base: '/tbilisi-trans/', // For GitHub Pages
     server: {
         watch: {
             // Prevent full reload when saving stops config
