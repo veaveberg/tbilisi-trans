@@ -52,9 +52,21 @@ export default defineConfig({
             '/pis-gateway': {
                 target: 'https://transit.ttc.com.ge',
                 changeOrigin: true,
+                secure: false, // Accept self-signed or picky certs if needed
                 headers: {
                     'Referer': 'https://transit.ttc.com.ge/',
                     'Origin': 'https://transit.ttc.com.ge'
+                },
+                configure: (proxy, _options) => {
+                    proxy.on('error', (err, _req, _res) => {
+                        console.log('proxy error', err);
+                    });
+                    proxy.on('proxyReq', (proxyReq, req, _res) => {
+                        console.log('Sending Request to the Target:', req.method, req.url);
+                    });
+                    proxy.on('proxyRes', (proxyRes, req, _res) => {
+                        console.log('Received Response from the Target:', proxyRes.statusCode, req.url);
+                    });
                 }
             }
         }

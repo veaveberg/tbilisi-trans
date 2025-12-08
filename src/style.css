@@ -301,6 +301,10 @@ body {
   transform: translateY(calc(100% - 80px - env(safe-area-inset-bottom)));
 }
 
+.panel.sheet-peek {
+  transform: translateY(calc(100% - 25vh));
+}
+
 .panel.sheet-half {
   transform: translateY(calc(100% - 40vh));
 }
@@ -984,4 +988,98 @@ body.panel-open .controls {
   font-size: 0.7rem;
   color: #9ca3af;
   font-style: italic;
+}
+
+/* Filter Instruction Text */
+.filter-instruction {
+  text-align: center;
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 6px 12px;
+  border-radius: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
+  pointer-events: none;
+  /* Let clicks pass through if needed */
+}
+
+/* Pulsing Filter Instruction in Panel */
+.filter-instruction-panel {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #000;
+  margin: 8px 20px 0 20px;
+  /* Align with panel padding */
+  animation: pulse-black 2s infinite;
+}
+
+@keyframes pulse-black {
+  0% {
+    opacity: 0.6;
+  }
+
+  50% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.6;
+  }
+}
+
+/* New Filter Toggle Row */
+.filter-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Space between icon and text */
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0 20px 12px 20px;
+  /* Align with panel padding, bottom spacing */
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.filter-toggle-row .filter-icon {
+  width: 24px;
+  height: 24px;
+  opacity: 0.5;
+  /* Default Greyish */
+}
+
+.filter-toggle-row .filter-text {
+  font-size: 1rem;
+  font-weight: 500;
+  color: #6b7280;
+  /* Grey text */
+}
+
+/* Active State */
+.filter-toggle-row.active .filter-icon {
+  opacity: 1;
+  /* Icon src will swap to filled black via JS */
+}
+
+.filter-toggle-row.active .filter-text {
+  color: #000000;
+  font-weight: 600;
+}
+/* Shake Animation for Filter Button */
+@keyframes shake-horizontal {
+    0%, 100% { transform: translateX(0); }
+    10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
+    20%, 40%, 60%, 80% { transform: translateX(4px); }
+}
+
+.shake {
+    animation: shake-horizontal 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }

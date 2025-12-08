@@ -2,6 +2,10 @@ import './style.css';
 import mapboxgl from 'mapbox-gl';
 import stopBearings from './data/stop_bearings.json';
 import stopsConfig from './data/stops_config.json'; // Import Config
+import { Router } from './router.js';
+import { db } from './db.js';
+import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
+import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg';
 
 // Configuration
 const MAPBOX_TOKEN = 'pk.eyJ1IjoidHRjYXpyeSIsImEiOiJjam5sZWU2NHgxNmVnM3F0ZGN2N2lwaGF2In0.00TvUGr9Qu4Q4fc_Jb9wjw';
@@ -103,6 +107,11 @@ document.getElementById('locate-me').addEventListener('click', () => {
     }
 });
 
+// Initialize Filter Icon
+const initialFilterBtn = document.getElementById('filter-routes-toggle');
+if (initialFilterBtn) {
+    initialFilterBtn.querySelector('.filter-icon').src = iconFilterOutline;
+}
 
 
 // State
@@ -186,12 +195,91 @@ const filterState = {
     filteredRoutes: [] // Array of route IDs
 };
 
+const RouteFilterColorManager = {
+    palette: [
+        '#5BB042', // green
+        '#97544C', // brown
+        '#C78FBF', // violet
+        '#0083C8', // blue
+        '#EF3F47', // red
+        '#FFCB05', // yellow
+        '#00C1F3', // light blue
+        '#ADCD3F', // lime
+        '#F58620', // orange
+        '#EE4C9B', // magenta
+        '#A1A2A3', // grey
+        '#09B096', // mint
+        '#8F489C', // purple
+        '#FBA919'  // physalis
+    ],
+    pathColors: new Map(), // signature -> color
+    routeColors: new Map(), // routeId -> color
+    colorQueue: [],
+    queueIndex: 0,
+
+    reset() {
+        console.log('[ColorManager] RESET triggered.');
+        this.pathColors.clear();
+        this.routeColors.clear();
+        this.colorQueue = this.shuffle([...this.palette]);
+        this.queueIndex = 0;
+    },
+
+    // Fisher-Yates Shuffle
+    shuffle(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+        return array;
+    },
+
+    // Peek at the next color for Hover
+    getNextColor() {
+        if (this.colorQueue.length === 0) this.reset();
+        return this.colorQueue[this.queueIndex % this.colorQueue.length];
+    },
+
+    // Consume next color for Selection
+    assignNextColor(signature, routeIds) {
+        // If already assigned, return existing
+        if (this.pathColors.has(signature)) {
+            const existing = this.pathColors.get(signature);
+            console.log(`[ColorManager] Reusing EXISTING color ${existing} for signature ${signature}`);
+            routeIds.forEach(rid => this.routeColors.set(rid, existing));
+            return existing;
+        }
+
+        const color = this.getNextColor(); // Get current peek color
+        console.log(`[ColorManager] Assigning NEW color ${color} to signature ${signature}. Path Queue Index: ${this.queueIndex} -> ${(this.queueIndex + 1) % this.colorQueue.length}`);
+        this.pathColors.set(signature, color);
+        routeIds.forEach(rid => this.routeColors.set(rid, color));
+
+        // Advance Pointer
+        this.queueIndex = (this.queueIndex + 1) % this.colorQueue.length;
+
+        return color;
+    },
+
+    // Legacy method mostly replaced by assignNextColor, but kept for compatibility if needed
+    assignColorForPath(signature, routeIds) {
+        return this.assignNextColor(signature, routeIds);
+    },
+
+    getColorForRoute(routeId) {
+        return this.routeColors.get(routeId);
+    }
+};
+
 async function toggleFilterMode() {
     console.log('[Debug] toggleFilterMode called. Active:', filterState.active, 'Picking:', filterState.picking, 'CurrentStop:', window.currentStopId);
 
     // If already active/picking, cancel it
     if (filterState.active || filterState.picking) {
         clearFilter();
+        // Force UI update to ensure button state syncs
+        const btn = document.getElementById('filter-routes-toggle');
+        if (btn) btn.classList.remove('active');
         return;
     }
 
@@ -205,17 +293,24 @@ async function toggleFilterMode() {
     filterState.originId = window.currentStopId;
 
     // Filter Button UI Update
-    const btn = document.getElementById('filter-routes');
+    const btn = document.getElementById('filter-routes-toggle');
     if (btn) {
         btn.classList.add('active');
-        btn.querySelector('img').src = 'line.3.horizontal.decrease.circle.fill.svg';
+        btn.querySelector('.filter-icon').src = iconFilterFill;
+        btn.querySelector('.filter-text').textContent = 'Select destination stops...';
     }
 
-    // Show Prompt
-    document.getElementById('stop-name').textContent = "Select destination stop...";
+    // Removed old instruction panel logic
+    // const instructionEl = document.getElementById('filter-instruction-panel');
+    // if (instructionEl) instructionEl.classList.remove('hidden');
 
     // Camera Logic: Zoom out & Pan
     if (window.currentStopId) {
+        // Auto-collapse panel to reveal map (Peek State)
+        const panel = document.getElementById('info-panel');
+        // Only collapse if it's currently blocking view (half or full), or just force consistent "Filter Mode View"
+        if (panel) setSheetState(panel, 'peek');
+
         const stop = allStops.find(s => s.id === window.currentStopId);
         if (stop) {
             const currentZoom = map.getZoom();
@@ -397,6 +492,9 @@ function updateMapFilterState() {
             map.setPaintProperty('stops-layer', 'icon-opacity', 1);
             map.setLayoutProperty('stops-layer', 'symbol-sort-key', 0);
         }
+        if (map.getLayer('stops-label-selected')) {
+            map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', []]]);
+        }
         if (map.getLayer('metro-layer-circle')) {
             map.setPaintProperty('metro-layer-circle', 'circle-opacity', 1);
             map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', 1);
@@ -447,6 +545,15 @@ function updateMapFilterState() {
     if (map.getLayer('stops-layer')) {
         map.setPaintProperty('stops-layer', 'icon-opacity', opacityExpression);
         map.setLayoutProperty('stops-layer', 'symbol-sort-key', caseExpression);
+    }
+
+    if (map.getLayer('stops-label-selected')) {
+        // Only show labels for SELECTED targetIds
+        if (selectedArray.length > 0) {
+            map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', selectedArray]]);
+        } else {
+            map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', []]]);
+        }
     }
 
     if (map.getLayer('metro-layer-circle')) {
@@ -530,6 +637,21 @@ function applyFilter(targetId) {
 
     // Highlight Targets on Map & Draw Lines
     updateConnectionLine(filterState.originId, filterState.targetIds, false);
+
+    // Sync URL (Router)
+    Router.update(filterState.originId, true, Array.from(filterState.targetIds));
+
+    // Refresh Panel List if we are still viewing the origin stop
+    // RE-RENDER TO APPLY COLORS
+    if (window.currentStopId === filterState.originId) {
+        console.log('[Debug] ApplyFilter: Refreshing arrivals to apply colors...');
+        if (window.lastArrivals) {
+            renderArrivals(window.lastArrivals, filterState.originId);
+            if (window.lastRoutes) {
+                renderAllRoutes(window.lastRoutes, window.lastArrivals);
+            }
+        }
+    }
 }
 
 function clearFilter() {
@@ -538,6 +660,7 @@ function clearFilter() {
     filterState.originId = null;
     filterState.targetIds = new Set(); // Reset Set
     filterState.filteredRoutes = [];
+    RouteFilterColorManager.reset(); // Reset Colors
 
     // Clear Connection Line
     if (map.getSource('filter-connection')) {
@@ -545,19 +668,21 @@ function clearFilter() {
     }
 
     // Reset UI
-    const btn = document.getElementById('filter-routes');
+    // Reset UI
+    const btn = document.getElementById('filter-routes-toggle');
     if (btn) {
         btn.classList.remove('active');
-        // Use relative path (Vite/Base path safe) or imported asset
-        // If file is in public, relative to root without leading slash works if base is set, 
-        // OR use leading slash if we assume base is handled. 
-        // Actually, for GH pages with base '/repo/', '/file.svg' goes to host root. 
-        // 'file.svg' or './file.svg' is safer.
-        btn.querySelector('img').src = 'line.3.horizontal.decrease.circle.svg';
+        btn.querySelector('.filter-icon').src = iconFilterOutline; // Revert Icon
+        btn.querySelector('.filter-text').textContent = 'Filter routes...';
     }
+    // const instructionEl = document.getElementById('filter-instruction-panel');
+    // if (instructionEl) instructionEl.classList.add('hidden');
 
     // Reset Map
     if (map.getLayer('stops-layer')) map.setPaintProperty('stops-layer', 'icon-opacity', 1);
+    if (map.getLayer('stops-label-selected')) {
+        map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', []]]);
+    }
     if (map.getLayer('metro-layer-circle')) {
         map.setPaintProperty('metro-layer-circle', 'circle-opacity', 1);
         map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', 1);
@@ -566,7 +691,8 @@ function clearFilter() {
     // Refresh view
     if (window.currentStopId) {
         const stop = allStops.find(s => s.id === window.currentStopId);
-        if (stop) showStopInfo(stop, false, false);
+        // Force flyTo=true to restore zoom
+        if (stop) showStopInfo(stop, false, true);
     }
 }
 
@@ -610,6 +736,7 @@ map.on('load', async () => {
         });
 
         // Filter and Override
+        const seenCoords = new Set();
         rawStops.forEach(stop => {
             // If this stop is merged INTO another, skip adding it to map list
             if (merges[stop.id]) return;
@@ -618,6 +745,21 @@ map.on('load', async () => {
             if (overrides[stop.id]) {
                 Object.assign(stop, overrides[stop.id]);
             }
+
+            // Deduplicate by Coordinates (Fix for stacking/flashing in Safari)
+            // Round to high precision to catch exact matches but allow slight drift?
+            // Usually raw data exact matches.
+            const coordKey = `${stop.lat.toFixed(6)},${stop.lon.toFixed(6)}`;
+            if (seenCoords.has(coordKey)) {
+                // If we skip this visual stop, we MUST ensure the logic knows about it.
+                // The logical redirectMap might need this.
+                // But usually duplicates are just dirt in the API.
+                // If it's a legitimate separate stop at same loc, hiding it is fine visually if redirect not needed.
+                // Just log it for now.
+                // console.warn('Duplicate Stop Coords:', stop.id, coordKey);
+                return;
+            }
+            seenCoords.add(coordKey);
 
             stops.push(stop);
         });
@@ -662,16 +804,163 @@ map.on('load', async () => {
         // Fix for Safari/Mobile (Force resize to account for dynamic address bar)
         setTimeout(() => map.resize(), 100);
 
+
         // --- Dev Tools Support ---
         if (import.meta.env.DEV) {
             import('./dev-tools.js').then(module => module.initDevTools(map));
         }
 
+        // Router Initialization
+        Router.init();
+
+        // Handle Deep Linking (Initial Load)
+        const initialState = Router.parse();
+        if (initialState.stopId) {
+            console.log('[App] Deep Link Detected:', initialState);
+
+            // 1. Normalize Stop ID (Handle Merged/Redirected Stops)
+            const rawStopId = initialState.stopId;
+            const normStopId = redirectMap.get(rawStopId) || rawStopId;
+
+            // Wait for map idle or just slight delay to ensure rendering
+            const stop = allStops.find(s => String(s.id) === String(normStopId));
+
+            if (stop) {
+                // Determine if we need to restore filter state
+                if (initialState.filterActive) {
+                    // Show Stop Info (NO URL UPDATE to preserve filter params)
+                    showStopInfo(stop, false, true, false);
+
+                    // HACK: Allow showStopInfo to run, then apply filter.
+                    setTimeout(() => {
+                        // Ensure Stop Highlight is Enforced
+                        if (map.getSource('selected-stop')) {
+                            map.getSource('selected-stop').setData({
+                                type: 'FeatureCollection',
+                                features: [{
+                                    type: 'Feature',
+                                    geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
+                                    properties: stop
+                                }]
+                            });
+                        }
+
+                        // Initialize Filter Mode (Fetch Data & Calculate)
+                        // Do NOT set active=true beforehand, or toggleFilterMode will close it!
+                        toggleFilterMode().then(() => {
+                            // Restore Targets
+                            filterState.targetIds.clear();
+                            initialState.targetIds.forEach(tid => {
+                                const normTid = redirectMap.get(tid) || tid;
+                                filterState.targetIds.add(normTid);
+                            });
+
+                            filterState.active = true;
+                            // filterState.picking is set true by toggleFilterMode, leave it or set false if we want strict viewing mode?
+                            // Leave it true as we are technically in a filtered state where picking might be relevant.
+
+                            // Manually run the "Apply" logic
+                            // ... Logic from applyFilter ...
+                            const originRoutes = stopToRoutesMap.get(filterState.originId) || [];
+                            const commonRoutes = originRoutes.filter(r => {
+                                for (const tid of filterState.targetIds) {
+                                    let matches = false;
+                                    if (r._details && r._details.patterns) {
+                                        matches = r._details.patterns.some(p => {
+                                            if (!p.stops) return false;
+                                            const idxO = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === filterState.originId);
+                                            const idxT = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === tid);
+                                            return idxO !== -1 && idxT !== -1 && idxO < idxT;
+                                        });
+                                    } else if (r.stops) {
+                                        const stops = r.stops;
+                                        const idxO = stops.findIndex(sid => (redirectMap.get(sid) || sid) === filterState.originId);
+                                        const idxT = stops.findIndex(sid => (redirectMap.get(sid) || sid) === tid);
+                                        matches = (idxO !== -1 && idxT !== -1 && idxO < idxT);
+                                    }
+                                    if (matches) return true;
+                                }
+                                return false;
+                            });
+
+                            filterState.filteredRoutes = commonRoutes.map(r => r.id);
+
+                            updateMapFilterState();
+                            updateConnectionLine(filterState.originId, filterState.targetIds, false);
+
+                            // Refresh Panel
+                            if (window.lastArrivals) {
+                                renderArrivals(window.lastArrivals, filterState.originId);
+                            }
+                            if (window.lastRoutes && window.lastArrivals) {
+                                renderAllRoutes(window.lastRoutes, window.lastArrivals);
+                            }
+
+                            // Final URL Sync to ensure canonical state
+                            // Now we are fully ready
+                            Router.update(stop.id, true, Array.from(filterState.targetIds));
+                        });
+
+                    }, 500);
+
+                } else {
+                    showStopInfo(stop, false, true);
+                    // Ensure highlight enforces
+                    setTimeout(() => {
+                        if (map.getSource('selected-stop')) {
+                            map.getSource('selected-stop').setData({
+                                type: 'FeatureCollection',
+                                features: [{
+                                    type: 'Feature',
+                                    geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
+                                    properties: stop
+                                }]
+                            });
+                        }
+                    }, 200);
+                }
+            } else {
+                console.warn(`[App] Deep Link Stop ${normStopId} (Raw: ${rawStopId}) not found in allStops.`);
+            }
+        }
+
+        // Router Listener for Back Button
+        Router.onPopState = (state) => {
+            console.log('[App] PopState Handled:', state);
+            if (state.stopId) {
+                const stop = allStops.find(s => String(s.id) === String(state.stopId));
+                if (stop) {
+                    // Check if filter state changed
+                    if (state.filterActive !== filterState.active) {
+                        if (state.filterActive) {
+                            // Restore Filter (Complex, maybe just Alert or Reload?)
+                            // For MVP, just reloading page is safer for Deep Link restoration?
+                            // No, SPA feel is better.
+                            // Simply re-run the "Deep Link Detected" logic above?
+                            // Yes, extract it to valid function?
+                        } else {
+                            clearFilter();
+                        }
+                    }
+                    // Show Stop
+                    showStopInfo(stop, false, true);
+                }
+            } else {
+                // Home
+                handleBack(); // Pops history stack. Ideally we clear UI.
+                // handleBack pops internal stack. If we are syncing, maybe we just reset UI.
+                closeAllPanels();
+                setMapFocus(false);
+                clearRoute();
+                window.currentStopId = null;
+            }
+        };
+
     } catch (error) {
         console.error('Error initializing app:', error);
         // Ensure UI is revealed even on error
         document.body.classList.remove('loading');
-        alert(`Error plotting route: ${error.message}`);
+        alert(`Error plotting route: ${error.message} `);
     }
 
 
@@ -680,20 +969,20 @@ map.on('load', async () => {
     arrowImage.onload = () => map.addImage('bus-arrow', arrowImage);
     // Create a simple arrow SVG as a data URI
     const svg = `
-    <svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 2L4.5 20.29L5.21 21L12 18L18.79 21L19.5 20.29L12 2Z" fill="#ef4444"/>
-    </svg>`;
+            <svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L4.5 20.29L5.21 21L12 18L18.79 21L19.5 20.29L12 2Z" fill="#ef4444" />
+            </svg>`;
     arrowImage.onload = () => {
         map.addImage('bus-arrow', arrowImage, { sdf: true }); // enable SDF for coloring
     };
 
     // Load Transfer Station Icon (Half Red / Half Green)
     const transferSvg = `
-    <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="16" cy="16" r="14" fill="#ef4444" /> <!-- Red Base -->
-        <path d="M16 2 A14 14 0 0 1 16 30 L16 2 Z" fill="#22c55e" /> <!-- Green Right Half -->
-        <circle cx="16" cy="16" r="14" fill="none" stroke="white" stroke-width="4"/> <!-- White border to match others -->
-    </svg>`;
+        <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="16" cy="16" r="14" fill="#ef4444" /> <!--Red Base-->
+        <path d="M16 2 A14 14 0 0 1 16 30 L16 2 Z" fill="#22c55e" /> <!--Green Right Half-->
+        <circle cx="16" cy="16" r="14" fill="none" stroke="white" stroke-width="4"/> <!--White border to match others-->
+    </svg > `;
     const transferImage = new Image(32, 32);
     transferImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(transferSvg);
     transferImage.onload = () => map.addImage('station-transfer', transferImage);
@@ -732,25 +1021,41 @@ map.on('load', async () => {
     });
 });
 
+const pendingRequests = new Map(); // Global in-flight deduplication
+
+
+
+// ... (keep this replacement near imports later)
+
+// Modify fetchWithCache to use db
 async function fetchWithCache(url, options = {}) {
     const cacheKey = `cache_${url}`;
     const now = Date.now();
-    const cached = localStorage.getItem(cacheKey);
+    let cached = null;
+
+    try {
+        cached = await db.get(cacheKey);
+    } catch (e) {
+        console.warn('DB Get Failed', e);
+    }
 
     if (cached) {
-        try {
-            const { timestamp, data } = JSON.parse(cached);
-            if (now - timestamp < CACHE_DURATION) {
-                console.log(`[Cache] Hit: ${url}`);
-                return data;
-            } else {
-                console.log(`[Cache] Expired: ${url}`);
-                localStorage.removeItem(cacheKey);
-            }
-        } catch (e) {
-            console.error('[Cache] Error parsing cache:', e);
-            localStorage.removeItem(cacheKey);
+        // IDB stores objects directly, no need to JSON.parse
+        const { timestamp, data } = cached;
+        if (now - timestamp < CACHE_DURATION) {
+            console.log(`[Cache] Hit: ${url}`);
+            return data;
+        } else {
+            console.log(`[Cache] Expired: ${url}`);
+            db.del(cacheKey);
         }
+    }
+
+    // Deduplication Logic
+    // If a request for this URL is already in flight, return the existing promise
+    if (pendingRequests.has(url)) {
+        console.log(`[Cache] Deduping in-flight request: ${url}`);
+        return pendingRequests.get(url);
     }
 
     console.log(`[Cache] Miss: ${url}`);
@@ -758,23 +1063,35 @@ async function fetchWithCache(url, options = {}) {
     // Merge options with credentials: 'omit' to avoid sending problematic cookies
     const fetchOptions = { ...options, credentials: 'omit' };
 
-    const response = await fetch(url, fetchOptions);
-    if (!response.ok) throw new Error('Network response was not ok');
-    const data = await response.json();
+    // Create the promise and store it
+    const requestPromise = (async () => {
+        try {
+            const response = await fetch(url, fetchOptions);
+            if (!response.ok) throw new Error('Network response was not ok');
+            const data = await response.json();
 
-    try {
-        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: now, data }));
-    } catch (e) {
-        console.warn('[Cache] Failed to set item (likely quota exceeded):', e);
-    }
+            // Cache Success
+            try {
+                // Store object directly
+                await db.set(cacheKey, { timestamp: now, data });
+            } catch (e) {
+                console.warn('[Cache] Failed to set item in DB:', e);
+            }
+            return data;
+        } finally {
+            // Cleanup pending request regardless of success/failure
+            pendingRequests.delete(url);
+        }
+    })();
 
-    return data;
+    pendingRequests.set(url, requestPromise);
+    return requestPromise;
 }
 
 async function fetchStopRoutes(stopId) {
     // Try raw ID first as seen in HAR/Curl (e.g. "1:1000")
     // Some APIs handle encoded vs unencoded differently.
-    return await fetchWithCache(`${API_BASE_URL}/stops/${stopId}/routes?locale=en`, {
+    return await fetchWithCache(`${API_BASE_URL}/stops/${encodeURIComponent(stopId)}/routes?locale=en`, {
         headers: { 'x-api-key': API_KEY }
     });
 }
@@ -801,7 +1118,7 @@ async function fetchMetroSchedule(routeId) {
     // However, the worker proxy likely forwards the whole path.
     // Our API_BASE_URL is .../api/v2. We need .../api/v3.
     const v3Base = API_BASE_URL.replace('/v2', '/v3');
-    return await fetchWithCache(`${v3Base}/routes/${routeId}/schedule?patternSuffix=0:01&locale=en`, {
+    return await fetchWithCache(`${v3Base}/routes/${encodeURIComponent(routeId)}/schedule?patternSuffix=0:01&locale=en`, {
         headers: { 'x-api-key': API_KEY }
     });
 }
@@ -1004,6 +1321,9 @@ function addStopsToMap(stops) {
             type: 'symbol',
             source: 'stops',
             layout: {
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true,
+                'symbol-z-order': 'source',
                 'icon-image': [
                     'step',
                     ['zoom'],
@@ -1032,9 +1352,7 @@ function addStopsToMap(stops) {
                     0,       // Default (zoom < 16.5)
                     16.5, ['get', 'bearing'] // Zoom >= 16.5
                 ],
-                'icon-rotation-alignment': 'map', // Fixed to map (North relative)
-                'icon-allow-overlap': true,
-                'icon-ignore-placement': false
+                'icon-rotation-alignment': 'map' // Fixed to map (North relative)
             },
             paint: {
                 'icon-opacity': 1
@@ -1073,12 +1391,25 @@ function addStopsToMap(stops) {
     // Hover Effect for Connection Line
     map.on('mousemove', 'stops-layer', (e) => {
         if (filterState.picking) {
-            const hoveredStop = e.features[0].properties;
-            const normId = redirectMap.get(hoveredStop.id) || hoveredStop.id;
+            let targetStopId = null;
 
-            if (normId !== filterState.originId) {
+            // Find first selectable stop in stack
+            for (const f of e.features) {
+                const p = f.properties;
+                const normId = redirectMap.get(p.id) || p.id;
+
+                // Exclude Origin, but allow any reachable/highlighted
+                // Actually hover effect logic: we want to draw line to POTENTIAL target.
+                // Usually we only draw to reachable stops.
+                if (filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId)) {
+                    targetStopId = normId;
+                    break;
+                }
+            }
+
+            if (targetStopId) {
                 // Pass Current Selection + Hover ID
-                updateConnectionLine(filterState.originId, filterState.targetIds, true, normId);
+                updateConnectionLine(filterState.originId, filterState.targetIds, true, targetStopId);
             }
         }
     });
@@ -1129,6 +1460,30 @@ function addStopsToMap(stops) {
                 'line-opacity': 0.3
             }
         }); // Add on top for now, we will reorder it when stops-layer exists
+    }
+
+    // 4. Labels for Selected Filter Stops (New)
+    // Initially empty filter, populated by updateMapFilterState
+    if (!map.getLayer('stops-label-selected')) {
+        map.addLayer({
+            id: 'stops-label-selected',
+            type: 'symbol',
+            source: 'stops',
+            filter: ['in', ['get', 'id'], ['literal', []]], // Default empty
+            layout: {
+                'text-field': ['get', 'name'],
+                'text-size': 12,
+                'text-offset': [0, 1.2],
+                'text-anchor': 'top',
+                'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'], // Standard mapbox fonts
+                'text-allow-overlap': false
+            },
+            paint: {
+                'text-color': '#000000',
+                'text-halo-color': '#ffffff',
+                'text-halo-width': 2
+            }
+        });
     }
 
     // 2. Metro Source & Layers (Dots)
@@ -1233,7 +1588,25 @@ map.on('click', 'stops-layer', async (e) => {
 
     // FILTER PICKING MODE
     if (filterState.picking) {
-        applyFilter(props.id);
+        let selectedFeature = null;
+
+        // Loop through ALL features at this point to find a selectable one (handle z-overlap)
+        for (const f of e.features) {
+            const p = f.properties;
+            const normId = redirectMap.get(p.id) || p.id;
+            // Exclude originId from being selectable in filter mode
+            const isSelectable = filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId);
+            if (isSelectable) {
+                selectedFeature = f;
+                break;
+            }
+        }
+
+        if (selectedFeature) {
+            applyFilter(selectedFeature.properties.id);
+        } else {
+            shakeFilterButton();
+        }
         return;
     }
 
@@ -1277,7 +1650,25 @@ metroLayers.forEach(layerId => {
 
         // FILTER PICKING MODE
         if (filterState.picking) {
-            applyFilter(props.id);
+            let selectedFeature = null;
+
+            // Loop through ALL features at this click point
+            for (const f of e.features) {
+                const p = f.properties;
+                const normId = redirectMap.get(p.id) || p.id;
+                // Exclude originId from being selectable in filter mode
+                const isSelectable = filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId);
+                if (isSelectable) {
+                    selectedFeature = f;
+                    break;
+                }
+            }
+
+            if (selectedFeature) {
+                applyFilter(selectedFeature.properties.id);
+            } else {
+                shakeFilterButton();
+            }
             return;
         }
 
@@ -1318,12 +1709,60 @@ metroLayers.forEach(layerId => {
     });
 
     // Add pointer cursor
-    map.on('mouseenter', layerId, () => {
+    map.on('mouseenter', layerId, (e) => {
+        if (filterState.picking) {
+            const hasSelectable = e.features.some(f => {
+                const p = f.properties;
+                const normId = redirectMap.get(p.id) || p.id;
+                return filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId);
+            });
+            if (!hasSelectable) return;
+        }
         map.getCanvas().style.cursor = 'pointer';
     });
     map.on('mouseleave', layerId, () => {
         map.getCanvas().style.cursor = '';
     });
+});
+
+// Add pointer cursor for stops-layer
+map.on('mouseenter', 'stops-layer', (e) => {
+    if (filterState.picking) {
+        const hasSelectable = e.features.some(f => {
+            const p = f.properties;
+            const normId = redirectMap.get(p.id) || p.id;
+            return filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId);
+        });
+
+        if (!hasSelectable) return;
+    }
+    map.getCanvas().style.cursor = 'pointer';
+});
+map.on('mouseleave', 'stops-layer', () => {
+    map.getCanvas().style.cursor = '';
+});
+
+// Helper: Shake Animation
+function shakeFilterButton() {
+    const btn = document.getElementById('filter-routes-toggle');
+    if (btn) {
+        btn.classList.remove('shake');
+        void btn.offsetWidth; // Force reflow
+        btn.classList.add('shake');
+    }
+}
+
+// Generic Map Click (Catch background clicks in Filter Mode)
+map.on('click', (e) => {
+    if (!filterState.picking) return;
+
+    // Check if we clicked a stop layer (stops or metro)
+    const features = map.queryRenderedFeatures(e.point, { layers: ['stops-layer', ...metroLayers] });
+
+    // If we didn't hit a stop layer, we hit background -> Shake
+    if (features.length === 0) {
+        shakeFilterButton();
+    }
 });
 
 
@@ -1453,6 +1892,9 @@ function setupPanelDrag(panelId) {
         if (velocity > TRIGGER_VELOCITY) {
             if (delta > 0) {
                 // Flipped Down
+                // If really low or fast, go hidden?
+                // For now, let's Stick to Collapsed to avoid accidental closes, 
+                // UNLESS we are near bottom.
                 targetState = currentY > HALF_SHEET_Y + 50 ? 'collapsed' : 'half';
             } else {
                 // Flipped Up
@@ -1615,17 +2057,27 @@ function setMapFocus(active) {
         map.setPaintProperty('metro-transfer-layer', 'text-opacity', opacity);
     }
 
+    if (map.getLayer('stops-label-selected')) {
+        map.setPaintProperty('stops-label-selected', 'text-opacity', opacity);
+    }
+
     // Selected Stop Highlight - ALWAYS KEEP OPAQUE
     if (map.getLayer('stops-highlight')) {
         map.setPaintProperty('stops-highlight', 'icon-opacity', 1.0);
     }
 }
 
-async function showStopInfo(stop, addToStack = true, flyToStop = false) {
+async function showStopInfo(stop, addToStack = true, flyToStop = false, updateURL = true) {
     // Enable Focus Mode (Dim others)
     setMapFocus(true);
 
     if (addToStack) addToHistory('stop', stop);
+
+    // Sync URL (Router)
+    // Only update if it's a new stop or first load, and updateURL is true
+    if (updateURL) {
+        Router.update(stop.id, filterState.active, Array.from(filterState.targetIds));
+    }
 
     // Explicitly clean up any route layers when showing a stop
     // This is crucial when coming "Back" from a route
@@ -1674,6 +2126,9 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
         // We might not have the full feature if coming from history/cache depending on structure
         console.log('[Debug] showStopInfo called for:', stop);
 
+
+
+
         if (stop.lon && stop.lat) {
             console.log('[Debug] Updating selected-stop source with:', stop.lon, stop.lat);
             const feature = {
@@ -1686,6 +2141,8 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
                     type: 'FeatureCollection',
                     features: [feature]
                 });
+
+
 
                 // Force highlight layers to top
                 if (map.getLayer('debug-selected-circle')) map.moveLayer('debug-selected-circle');
@@ -1978,9 +2435,15 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false) {
         const idsAndParent = [stop.id, ...subIds];
 
         // Fetch Routes (static) for ALL IDs in parallel
-        const routePromises = idsAndParent.map(id =>
-            fetchStopRoutes(id).catch(e => { console.warn(`fetchStopRoutes failed for ${id}:`, e); return []; })
-        );
+        // Optimization: Only fetch if NOT already in stopToRoutesMap
+        const routePromises = idsAndParent.map(id => {
+            if (stopToRoutesMap.has(id) && stopToRoutesMap.get(id).length > 0) {
+                console.log(`[Optimization] Routes for ${id} already loaded. Skipping fetch.`);
+                // Return wrapped promise compatible with the result structure (array of routes)
+                return Promise.resolve(stopToRoutesMap.get(id));
+            }
+            return fetchStopRoutes(id).catch(e => { console.warn(`fetchStopRoutes failed for ${id}:`, e); return []; });
+        });
 
         // Fetch Arrivals (live) - this function already handles merged IDs internally
         const arrivalsPromise = fetchArrivals(stop.id);
@@ -2082,6 +2545,13 @@ function renderAllRoutes(routesInput, arrivals) {
                 const realId = route.id || (allRoutes.find(r => r.shortName === route.shortName) || {}).id;
                 if (!realId || !filterState.filteredRoutes.includes(realId)) {
                     tile.classList.add('dimmed');
+                } else {
+                    // Apply Filter Color
+                    const filterColor = RouteFilterColorManager.getColorForRoute(realId);
+                    if (filterColor) {
+                        tile.style.backgroundColor = `${filterColor}20`; // Hex + opacity
+                        tile.style.color = filterColor;
+                    }
                 }
             }
 
@@ -2109,7 +2579,7 @@ async function fetchArrivals(stopId) {
 
     // Fetch all in parallel
     const promises = idsToCheck.map(id =>
-        fetch(`${API_BASE_URL}/stops/${id}/arrival-times?locale=en&ignoreScheduledArrivalTimes=false`, {
+        fetch(`${API_BASE_URL}/stops/${encodeURIComponent(id)}/arrival-times?locale=en&ignoreScheduledArrivalTimes=false`, {
             headers: { 'x-api-key': API_KEY }
         }).then(res => {
             if (!res.ok) return [];
@@ -2181,7 +2651,8 @@ async function fetchArrivals(stopId) {
 let v3RoutesMap = null; // Maps shortName ("306") -> V3 ID ("1:R98190")
 const v3Cache = {
     patterns: new Map(), // routeId -> patterns
-    schedules: new Map() // routeId:suffix:date -> schedule
+    schedules: new Map(), // routeId:suffix:date -> schedule
+    polylines: new Map() // routeId:suffix -> polyline data
 };
 
 // Use the proxy's base URL and append /v3 manually to avoid proxy path issues
@@ -2204,9 +2675,9 @@ async function fetchV3Routes() {
 
     // 1. Try Local Storage Cache first
     try {
-        const cached = localStorage.getItem(V3_ROUTES_CACHE_KEY);
+        const cached = await db.get(V3_ROUTES_CACHE_KEY);
         if (cached) {
-            const { timestamp, data } = JSON.parse(cached);
+            const { timestamp, data } = cached;
             if (Date.now() - timestamp < V3_CACHE_DURATION) {
                 console.log('[V3] Loaded routes map from local cache');
                 v3RoutesMap = new Map(data); // Rehydrate Map from array
@@ -2219,6 +2690,19 @@ async function fetchV3Routes() {
 
     // 2. Fetch from API if no cache
     v3RoutesPromise = (async () => {
+        // 1. Try Cache First
+        try {
+            const cached = await db.get(V3_ROUTES_CACHE_KEY);
+            if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
+                console.log('[V3] Loaded global routes list from DB Cache');
+                v3RoutesMap = new Map(cached.data);
+                return;
+            }
+        } catch (e) {
+            console.warn('[V3] Failed to read routes cache', e);
+        }
+
+        // 2. Network Fetch
         try {
             console.log('[V3] Fetching global routes list from API...');
             const res = await fetch(`${API_V3_BASE_URL}/routes?locale=en`, {
@@ -2235,13 +2719,17 @@ async function fetchV3Routes() {
             console.log(`[V3] Mapped ${v3RoutesMap.size} routes`);
 
             // Save to cache (Map -> Array for JSON)
-            localStorage.setItem(V3_ROUTES_CACHE_KEY, JSON.stringify({
+            await db.set(V3_ROUTES_CACHE_KEY, {
                 timestamp: Date.now(),
                 data: Array.from(v3RoutesMap.entries())
-            }));
+            });
 
         } catch (err) {
             console.warn('[V3] Error fetching routes map:', err);
+            // Don't set v3RoutesMap to null if we can help it, but here we have nothing.
+            // If cache failed AND network failed, we are stuck.
+            // But we should probably throttle retries?
+            // For now, allow retry on next call, but the cache check above helps if cache was valid.
             v3RoutesMap = null;
         } finally {
             v3RoutesPromise = null;
@@ -2257,6 +2745,28 @@ async function fetchV3Routes() {
 const MAX_CONCURRENT_V3_REQUESTS = 3;
 let activeV3Requests = 0;
 const v3RequestQueue = [];
+
+// Retry Utility
+async function fetchWithRetry(url, options = {}, retries = 3, backoff = 1000) {
+    try {
+        const res = await fetch(url, options);
+        // Retry on 5xx errors
+        if (retries > 0 && res.status >= 500 && res.status < 600) {
+            console.warn(`[Network] 5xx Error (${res.status}) fetching ${url}. Retrying in ${backoff}ms... (${retries} left)`);
+            await new Promise(r => setTimeout(r, backoff));
+            return fetchWithRetry(url, options, retries - 1, backoff * 2);
+        }
+        return res;
+    } catch (err) {
+        // Retry on network failures (fetch throws)
+        if (retries > 0) {
+            console.warn(`[Network] Connection Failed fetching ${url}. Retrying in ${backoff}ms... (${retries} left). Error: ${err.message}`);
+            await new Promise(r => setTimeout(r, backoff));
+            return fetchWithRetry(url, options, retries - 1, backoff * 2);
+        }
+        throw err;
+    }
+}
 
 async function enqueueV3Request(fn) {
     return new Promise((resolve, reject) => {
@@ -2309,9 +2819,9 @@ async function getV3Schedule(routeShortName, stopId) {
             if (!patterns) {
                 const lsKey = `v3_patterns_${routeId}`;
                 try {
-                    const cached = localStorage.getItem(lsKey);
+                    const cached = await db.get(lsKey);
                     if (cached) {
-                        const { timestamp, data } = JSON.parse(cached);
+                        const { timestamp, data } = cached;
                         // Cache patterns for 7 days (they change rarely)
                         if (Date.now() - timestamp < 7 * 24 * 60 * 60 * 1000) {
                             patterns = data;
@@ -2328,7 +2838,7 @@ async function getV3Schedule(routeShortName, stopId) {
                     patterns = await v3InFlight.patterns.get(routeId);
                 } else {
                     const promise = (async () => {
-                        const suffixesRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}?locale=en`, {
+                        const suffixesRes = await fetchWithRetry(`${API_V3_BASE_URL}/routes/${routeId}?locale=en`, {
                             headers: { 'x-api-key': API_KEY },
                             credentials: 'omit'
                         });
@@ -2337,7 +2847,7 @@ async function getV3Schedule(routeShortName, stopId) {
 
                         if (routeData.patterns) {
                             const suffixes = routeData.patterns.map(p => p.patternSuffix).join(',');
-                            const patRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}/stops-of-patterns?patternSuffixes=${suffixes}&locale=en`, {
+                            const patRes = await fetchWithRetry(`${API_V3_BASE_URL}/routes/${routeId}/stops-of-patterns?patternSuffixes=${suffixes}&locale=en`, {
                                 headers: { 'x-api-key': API_KEY },
                                 credentials: 'omit'
                             });
@@ -2354,10 +2864,10 @@ async function getV3Schedule(routeShortName, stopId) {
                         if (patterns) {
                             v3Cache.patterns.set(routeId, patterns);
                             try {
-                                localStorage.setItem(`v3_patterns_${routeId}`, JSON.stringify({
+                                await db.set(`v3_patterns_${routeId}`, {
                                     timestamp: Date.now(),
                                     data: patterns
-                                }));
+                                });
                             } catch (e) { console.warn('LS Write Failed (Patterns)', e); }
                         }
                     } catch (e) {
@@ -2407,9 +2917,9 @@ async function getV3Schedule(routeShortName, stopId) {
             if (!schedule) {
                 const lsKey = `v3_sched_${cacheKey}`;
                 try {
-                    const cached = localStorage.getItem(lsKey);
+                    const cached = await db.get(lsKey);
                     if (cached) {
-                        const { timestamp, data } = JSON.parse(cached);
+                        const { timestamp, data } = cached;
                         // Cache for 24h
                         if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
                             schedule = data;
@@ -2440,11 +2950,13 @@ async function getV3Schedule(routeShortName, stopId) {
                         if (schedule) {
                             v3Cache.schedules.set(cacheKey, schedule);
                             try {
-                                localStorage.setItem(`v3_sched_${cacheKey}`, JSON.stringify({
+                                await db.set(`v3_sched_${cacheKey}`, {
                                     timestamp: Date.now(),
                                     data: schedule
-                                }));
-                            } catch (e) { console.warn('LS Write Failed (Schedule)', e); }
+                                });
+                            } catch (e) {
+                                console.warn('LS Write Failed (Schedule)', e);
+                            }
                         }
                     } catch (e) {
                         console.error(`[V3] Schedule fetch error`, e);
@@ -2454,64 +2966,71 @@ async function getV3Schedule(routeShortName, stopId) {
                 }
             }
 
+            if (!schedule) return null;
+
             // 4. Parse Schedule
-            // Fix: Force Tbilisi Timezone (GMT+4)
-            const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' }); // YYYY-MM-DD
-            const todayStr = tbilisiNow;
+            try {
+                // Fix: Force Tbilisi Timezone (GMT+4)
+                const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' }); // YYYY-MM-DD
+                const todayStr = tbilisiNow;
 
-            let daySchedule = schedule.find(s => s.serviceDates.includes(todayStr));
+                let daySchedule = schedule.find(s => s.serviceDates.includes(todayStr));
 
-            // Helper to find next time in a specific day's schedule
-            const findNextTime = (sched, minTimeMinutes) => {
-                if (!sched) return null;
-                const stop = sched.stops.find(s => s.id === stopEntry.stop.id);
-                if (!stop) return null;
+                // Helper to find next time in a specific day's schedule
+                const findNextTime = (sched, minTimeMinutes) => {
+                    if (!sched) return null;
+                    const stop = sched.stops.find(s => s.id === stopEntry.stop.id);
+                    if (!stop) return null;
 
-                const times = stop.arrivalTimes.split(',');
-                for (const t of times) {
-                    const [h, m] = t.split(':').map(Number);
-                    const stopMinutes = h * 60 + m; // Absolute minutes in the day
-                    if (stopMinutes > minTimeMinutes) {
-                        return t;
+                    const times = stop.arrivalTimes.split(',');
+                    for (const t of times) {
+                        const [h, m] = t.split(':').map(Number);
+                        const stopMinutes = h * 60 + m; // Absolute minutes in the day
+                        if (stopMinutes > minTimeMinutes) {
+                            return t;
+                        }
                     }
+                    return null;
+                };
+
+                // Get Current Minutes in Tbilisi
+                const now = new Date();
+                const tbilisiParts = new Intl.DateTimeFormat('en-US', {
+                    timeZone: "Asia/Tbilisi",
+                    hour: 'numeric',
+                    minute: 'numeric',
+                    hour12: false
+                }).formatToParts(now);
+                const h = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
+                const m = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
+                const curMinutes = h * 60 + m;
+
+                let nextTime = findNextTime(daySchedule, curMinutes);
+
+                // Fallback: Check tomorrow if no time found today
+                if (!nextTime) {
+                    // Calculate tomorrow string safe for timezone
+                    // Parsing YYYY-MM-DD as UTC is safest for date math
+                    const tDate = new Date(todayStr);
+                    tDate.setDate(tDate.getDate() + 1);
+                    const tomorrowStr = tDate.toISOString().split('T')[0];
+
+                    const tmrSchedule = schedule.find(s => s.serviceDates.includes(tomorrowStr));
+                    nextTime = findNextTime(tmrSchedule, -1);
                 }
-                return null;
-            };
 
-            // Get Current Minutes in Tbilisi
-            const now = new Date();
-            const tbilisiParts = new Intl.DateTimeFormat('en-US', {
-                timeZone: "Asia/Tbilisi",
-                hour: 'numeric',
-                minute: 'numeric',
-                hour12: false
-            }).formatToParts(now);
-            const h = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
-            const m = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
-            const curMinutes = h * 60 + m;
+                if (nextTime) {
+                    return nextTime;
+                }
 
-            let nextTime = findNextTime(daySchedule, curMinutes);
-
-            // Fallback: Check tomorrow if no time found today
-            if (!nextTime) {
-                // Calculate tomorrow string safe for timezone
-                // Parsing YYYY-MM-DD as UTC is safest for date math
-                const tDate = new Date(todayStr);
-                tDate.setDate(tDate.getDate() + 1);
-                const tomorrowStr = tDate.toISOString().split('T')[0];
-
-                const tmrSchedule = schedule.find(s => s.serviceDates.includes(tomorrowStr));
-                nextTime = findNextTime(tmrSchedule, -1);
+            } catch (err) {
+                console.warn(`[V3] Logic Error for ${routeShortName}:`, err);
             }
-
-            if (nextTime) {
-                return nextTime;
-            }
-
-        } catch (err) {
-            console.warn(`[V3] Logic Error for ${routeShortName}:`, err);
+            return null;
+        } catch (e) {
+            console.error('[V3] Critical Error:', e);
+            return null;
         }
-        return null;
     });
 }
 
@@ -2573,100 +3092,11 @@ function sortArrivalsList() {
     items.forEach(item => listEl.appendChild(item));
 }
 
-// Helper for Synchronous Cache Lookup
+// Helper for Synchronous Cache Lookup (Removed - IDB is async)
 function getV3ScheduleSync(routeShortName, stopId) {
-    if (!v3RoutesMap) return null;
-    const routeId = v3RoutesMap.get(String(routeShortName));
-    if (!routeId) return null;
-
-    // 1. Get Patterns
-    let patterns = v3Cache.patterns.get(routeId);
-    if (!patterns) {
-        try {
-            const cached = localStorage.getItem(`v3_patterns_${routeId}`);
-            if (cached) {
-                const { timestamp, data } = JSON.parse(cached);
-                if (Date.now() - timestamp < 7 * 24 * 60 * 60 * 1000) {
-                    patterns = data;
-                    v3Cache.patterns.set(routeId, patterns);
-                }
-            }
-        } catch (e) { }
-    }
-    if (!patterns) return null;
-
-    // 2. Find Stop Suffix
-    let potentialIds = [String(stopId)];
-    if (typeof mergeSourcesMap !== 'undefined' && mergeSourcesMap.has(stopId)) {
-        const subIds = mergeSourcesMap.get(stopId) || [];
-        potentialIds.push(...subIds.map(String));
-    }
-
-    const stopEntry = patterns.find(p => {
-        const pId = String(p.stop.id);
-        const pCode = String(p.stop.code);
-        return potentialIds.some(targetId => {
-            const targetStr = String(targetId);
-            if (targetStr === pId) return true;
-            if (targetStr.split(':')[1] === pCode) return true;
-            return false;
-        });
-    });
-    if (!stopEntry || !stopEntry.patternSuffixes.length) return null;
-    const suffix = stopEntry.patternSuffixes[0];
-
-    // 3. Get Schedule
-    const cacheKey = `${routeId}:${suffix}`;
-    let schedule = v3Cache.schedules.get(cacheKey);
-    if (!schedule) {
-        try {
-            const cached = localStorage.getItem(`v3_sched_${cacheKey}`);
-            if (cached) {
-                const { timestamp, data } = JSON.parse(cached);
-                if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
-                    schedule = data;
-                    v3Cache.schedules.set(cacheKey, schedule);
-                }
-            }
-        } catch (e) { }
-    }
-    if (!schedule) return null;
-
-    // 4. Calculate Time
-    const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
-    let daySchedule = schedule.find(s => s.serviceDates.includes(tbilisiNow));
-
-    const now = new Date();
-    const tbilisiParts = new Intl.DateTimeFormat('en-US', {
-        timeZone: "Asia/Tbilisi", hour: 'numeric', minute: 'numeric', hour12: false
-    }).formatToParts(now);
-    const h = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
-    const m = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
-    const curMinutes = h * 60 + m;
-
-    const findNextTime = (sched, minTimeMinutes) => {
-        if (!sched) return null;
-        const stop = sched.stops.find(s => s.id === stopEntry.stop.id);
-        if (!stop) return null;
-        const times = stop.arrivalTimes.split(',');
-        for (const t of times) {
-            const [h, m] = t.split(':').map(Number);
-            if ((h * 60 + m) > minTimeMinutes) return t;
-        }
-        return null;
-    };
-
-    let nextTime = findNextTime(daySchedule, curMinutes);
-    if (!nextTime) {
-        // Tomorrow logic
-        const tDate = new Date(tbilisiNow);
-        tDate.setDate(tDate.getDate() + 1);
-        const tomorrowStr = tDate.toISOString().split('T')[0];
-        const tmrSchedule = schedule.find(s => s.serviceDates.includes(tomorrowStr));
-        nextTime = findNextTime(tmrSchedule, -1);
-    }
-    return nextTime;
+    return null; // Force async fallback
 }
+
 
 
 function renderArrivals(arrivals, currentStopId = null) {
@@ -2705,7 +3135,9 @@ function renderArrivals(arrivals, currentStopId = null) {
                 ? (a.scheduledArrivalMinutes ?? 999)
                 : (a.realtimeArrivalMinutes ?? 999),
             // Pre-calculate display strings
-            color: a.color ? `#${a.color}` : 'var(--primary)',
+            color: (filterState.active && RouteFilterColorManager.getColorForRoute(allRoutes.find(r => r.shortName === a.shortName)?.id))
+                ? RouteFilterColorManager.getColorForRoute(allRoutes.find(r => r.shortName === a.shortName)?.id)
+                : (a.color ? `#${a.color}` : 'var(--primary)'),
             headsign: a.headsign
         });
     });
@@ -2733,8 +3165,10 @@ function renderArrivals(arrivals, currentStopId = null) {
             type: 'scheduled',
             data: r,
             minutes: minutes,
-            timeDisplay: timeDisplay,
-            color: r.color ? `#${r.color}` : 'var(--primary)',
+
+            color: (filterState.active && RouteFilterColorManager.getColorForRoute(r.id))
+                ? RouteFilterColorManager.getColorForRoute(r.id)
+                : (r.color ? `#${r.color}` : 'var(--primary)'),
             needsFetch: !cachedTimeStr
         });
     });
@@ -3128,7 +3562,11 @@ async function updateRouteView(route, options = {}) {
                 // Find index of pattern that has the stop
                 const matchedIndex = patterns.findIndex(p => {
                     const data = allStopsData.find(d => d.suffix === p.patternSuffix);
-                    return data && data.stops.some(s => s.id === options.fromStopId || s.stopId === options.fromStopId);
+                    return data && data.stops.some(s => {
+                        const sId = String(s.id || s.stopId);
+                        const normId = redirectMap.get(sId) || sId;
+                        return normId === options.fromStopId;
+                    });
                 });
 
                 if (matchedIndex !== -1) {
@@ -3235,11 +3673,21 @@ async function updateRouteView(route, options = {}) {
 
         const stopsGeoJSON = {
             type: 'FeatureCollection',
-            features: stopsData.map(stop => ({
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
-                properties: { name: stop.name }
-            }))
+            features: stopsData.map(stop => {
+                // Apply Merges & Overrides
+                const sId = String(stop.id);
+                const normId = redirectMap.get(sId) || sId;
+                // Look up in allStops to get overridden coordinates
+                const existingStop = allStops.find(s => s.id === normId);
+                const lat = existingStop ? existingStop.lat : stop.lat;
+                const lon = existingStop ? existingStop.lon : stop.lon;
+
+                return {
+                    type: 'Feature',
+                    geometry: { type: 'Point', coordinates: [lon, lat] },
+                    properties: { name: stop.name }
+                };
+            })
         };
 
         map.addSource('route-stops', { type: 'geojson', data: stopsGeoJSON });
@@ -3340,8 +3788,8 @@ async function updateLiveBuses(routeId, patternSuffix, color) {
 
 // Helper for Sheet State (Mobile)
 function setSheetState(panel, state) {
-    // states: hidden, collapsed, half, full
-    panel.classList.remove('hidden', 'sheet-half', 'sheet-full', 'sheet-collapsed');
+    // states: hidden, collapsed, peek, half, full
+    panel.classList.remove('hidden', 'sheet-half', 'sheet-full', 'sheet-collapsed', 'sheet-peek');
 
     if (state === 'hidden') {
         panel.classList.add('hidden');
@@ -3357,6 +3805,10 @@ function setSheetState(panel, state) {
     } else if (state === 'collapsed') {
         panel.classList.add('sheet-collapsed');
         panel.classList.remove('hidden');
+    } else if (state === 'peek') {
+        panel.classList.add('sheet-peek');
+        panel.classList.remove('hidden');
+        panel.style.display = ''; // Reset
     } else if (state === 'half') {
         panel.classList.add('sheet-half');
         panel.classList.remove('hidden');
@@ -3442,25 +3894,21 @@ function setSheetState(panel, state) {
 }
 
 async function fetchRouteDetailsV3(routeId) {
-    return await fetchWithCache(`${API_BASE_URL.replace('/v2', '/v3')}/routes/${routeId}`, {
+    return await fetchWithCache(`${API_BASE_URL.replace('/v2', '/v3')}/routes/${encodeURIComponent(routeId)}`, {
         headers: { 'x-api-key': API_KEY }
     });
 }
 
-async function fetchRoutePolylineV3(routeId, patternSuffixes) {
-    return await fetchWithCache(`${API_BASE_URL.replace('/v2', '/v3')}/routes/${routeId}/polylines?patternSuffixes=${patternSuffixes}`, {
-        headers: { 'x-api-key': API_KEY }
-    });
-}
+
 
 async function fetchRouteStopsV3(routeId, patternSuffix) {
-    return await fetchWithCache(`${API_BASE_URL.replace('/v2', '/v3')}/routes/${routeId}/stops?patternSuffix=${patternSuffix}`, {
+    return await fetchWithCache(`${API_BASE_URL.replace('/v2', '/v3')}/routes/${encodeURIComponent(routeId)}/stops?patternSuffix=${encodeURIComponent(patternSuffix)}`, {
         headers: { 'x-api-key': API_KEY }
     });
 }
 
 async function fetchBusPositionsV3(routeId, patternSuffix) {
-    const response = await fetch(`${API_BASE_URL.replace('/v2', '/v3')}/routes/${routeId}/positions?patternSuffixes=${patternSuffix}`, {
+    const response = await fetch(`${API_BASE_URL.replace('/v2', '/v3')}/routes/${encodeURIComponent(routeId)}/positions?patternSuffixes=${encodeURIComponent(patternSuffix)}`, {
         headers: { 'x-api-key': API_KEY }
     });
     if (!response.ok) throw new Error('Network response was not ok');
@@ -3513,7 +3961,8 @@ function setPanelState(isOpen) {
 }
 
 // Filter Button
-const filterBtn = document.getElementById('filter-routes');
+
+const filterBtn = document.getElementById('filter-routes-toggle');
 if (filterBtn) {
     filterBtn.addEventListener('click', (e) => {
         console.log('[Debug] Filter button clicked');
@@ -3524,7 +3973,7 @@ if (filterBtn) {
     // Retry if not found immediately (though defer/module should handle it)
     console.warn('[Debug] Filter button not found at init, checking again in 1s');
     setTimeout(() => {
-        const fb = document.getElementById('filter-routes');
+        const fb = document.getElementById('filter-routes-toggle');
         if (fb) fb.addEventListener('click', (e) => {
             e.stopPropagation();
             toggleFilterMode();
@@ -3556,16 +4005,26 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
     const panel = document.getElementById('info-panel');
     setSheetState(panel, 'hidden');
 
-    window.currentStopId = null; // Clear Global State
-    if (window.selectDevStop) window.selectDevStop(null); // Notify DevTools
+    try {
+        window.currentStopId = null; // Clear Global State
+        if (window.selectDevStop) window.selectDevStop(null); // Notify DevTools
 
-    clearFilter(); // Reset filter
-    setMapFocus(false); // Reset map focus (opacity)
-    // Remove highlight
-    if (map.getSource('selected-stop')) {
-        map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
+        try { clearFilter(); } catch (err) { console.error('Clear Filter Error', err); }
+
+        // Always try to reset map focus
+        try { setMapFocus(false); } catch (err) { console.error('Reset Focus Error', err); }
+
+        // Remove highlight
+        if (map.getSource('selected-stop')) {
+            map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
+        }
+    } catch (err) {
+        console.error('Error during close cleanup', err);
+    } finally {
+        clearHistory(); // Clear history on close
+        Router.update(null);
+        map.flyTo({ pitch: 0, zoom: Math.min(map.getZoom(), 14) });
     }
-    clearHistory(); // Clear history on close
 });
 
 // Close Route Info
@@ -3577,6 +4036,10 @@ document.getElementById('close-route-info').addEventListener('click', (e) => {
     setSheetState(document.getElementById('route-info'), 'hidden');
     clearHistory(); // Clear history on close
     clearRoute(); // Helper to clear route layers (modified to also reset focus)
+
+    // Also reset URL when closing route info
+    Router.update(null);
+    map.flyTo({ pitch: 0, zoom: Math.min(map.getZoom(), 14) });
 });
 
 function clearRoute() {
@@ -3686,7 +4149,7 @@ function loadImages(map) {
     map.addImage('bus-arrow', imageData, { sdf: true });
 }
 
-// Updated Multi-Target Connection Line Logic
+// Updated Multi-Target Connection Line Logic with Path Separation
 function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId = null) {
     if (!originId) return;
 
@@ -3706,6 +4169,13 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
     if (!originStop) return;
 
     const features = [];
+    const allActiveSignatures = new Set();
+
+    // Reset colors if this is a "real" update (active filter), not just a hover preview
+    // Actually, we want to maintain consistent colors during a session.
+    // If isHover only (not applied), maybe ephemeral? 
+    // But typically this called by applyFilter -> permanent.
+    // Let's assume the manager handles persistence.
 
     // Process EACH target independently
     targets.forEach(targetId => {
@@ -3715,106 +4185,205 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
         // Find connecting routes
         const originRoutes = stopToRoutesMap.get(originId) || [];
 
-        const common = originRoutes.filter(r => {
+        // Group Routes by Path Signature
+        const pathGroups = new Map(); // signature -> { routes: [], patternStops: [], pattern: patternObj }
+
+        originRoutes.forEach(r => {
             // Strict Check Logic (Duplicates applyFilter logic but per target)
+            // We need to EXTRACT the specific path segment for this route to generate signature
+            let segmentStops = null;
+            let matchedPattern = null;
+
             if (r._details && r._details.patterns) {
-                return r._details.patterns.some(p => {
+                r._details.patterns.some(p => {
                     if (!p.stops) return false;
                     const idxO = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === originId);
                     const idxT = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === targetId);
-                    return idxO !== -1 && idxT !== -1 && idxO < idxT;
+                    if (idxO !== -1 && idxT !== -1 && idxO < idxT) {
+                        segmentStops = p.stops.slice(idxO, idxT + 1);
+                        matchedPattern = p;
+                        return true;
+                    }
+                    return false;
                 });
-            }
-            if (r.stops) {
+            } else if (r.stops) {
+                // Fallback geometry (just origin+target or full list subset)
                 const stops = r.stops;
+                // r.stops is just IDs usually. Need fetching? 
+                // We likely only have IDs in r.stops if details missing.
+                // We can't easily build signature from IDs only if we don't have coords for intermediate?
+                // Actually we can enable signature by ID sequence.
                 const idxO = stops.findIndex(sid => (redirectMap.get(sid) || sid) === originId);
                 const idxT = stops.findIndex(sid => (redirectMap.get(sid) || sid) === targetId);
-                return idxO !== -1 && idxT !== -1 && idxO < idxT;
+
+                if (idxO !== -1 && idxT !== -1 && idxO < idxT) {
+                    // We need actual stop objects for geometry, but for grouping IDs are enough.
+                    // But to draw, we need coords.
+                    // Let's rely on 'allStops' to hydrate.
+                    segmentStops = stops.slice(idxO, idxT + 1).map(sid => allStops.find(s => s.id === (redirectMap.get(sid) || sid))).filter(Boolean);
+                }
             }
-            return false;
+
+            if (segmentStops && segmentStops.length >= 2) {
+                // Generate Signature
+                const ids = segmentStops.map(s => s.id || s).join('|');
+
+                if (!pathGroups.has(ids)) {
+                    pathGroups.set(ids, {
+                        routes: [],
+                        stops: segmentStops,
+                        pattern: matchedPattern
+                    });
+                }
+                pathGroups.get(ids).routes.push(r);
+            }
         });
 
-        if (common.length === 0) return; // Skip unconnected
+        if (pathGroups.size === 0) return; // Skip unconnected
 
-        // Color Logic
-        const greenRoute = common.find(r => r.color && r.color.toUpperCase() === '00B38B');
-        const bestRoute = greenRoute || common[0];
-        const color = (bestRoute && bestRoute.color && bestRoute.color.toUpperCase() === '00B38B') ? '#00B38B' : '#2563eb';
-
-        // Geometry Logic
-        let selectedPatternStops = [];
-        let bestPattern = null;
-
-        if (bestRoute && bestRoute._details && bestRoute._details.patterns) {
-            bestRoute._details.patterns.some(p => {
-                if (!p.stops) return false;
-                const idxO = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === originId);
-                const idxT = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === targetId);
-                if (idxO !== -1 && idxT !== -1 && idxO < idxT) {
-                    selectedPatternStops = p.stops.slice(idxO, idxT + 1).map(s => [s.lon, s.lat]);
-                    bestPattern = p;
-                    return true;
-                }
-                return false;
-            });
+        // Track Active Signatures for Global GC
+        for (const sig of pathGroups.keys()) {
+            allActiveSignatures.add(sig);
         }
 
-        // Fallback Geometry
-        if (selectedPatternStops.length < 2) {
-            selectedPatternStops = [
-                [originStop.lon, originStop.lat],
-                [targetStop.lon, targetStop.lat]
-            ];
-        }
+        // Process Groups
+        pathGroups.forEach((group, signature) => {
+            const routeIds = group.routes.map(r => r.id);
 
-        let finalCoordinates = null;
+            // If the route is destined for one of our selected targets, 
+            // ensure it gets the color WE assigned to it (if any).
+            // But assignNextColor handles logic: if exists, return it. If not, assign and advance.
+            // Wait, we need to know if this specific GROUP is heading to a *newly selected* target.
+            // Actually, we can just call assignNextColor for ALL valid paths.
+            // If they were already assigned (e.g. from previous select), they keep color.
+            // If they are new (just selected), they get the current peek color AND queue advances.
+            // But wait, if we have multiple routes to the SAME target, they share a signature?
+            // Yes, grouped by signature (usually origin+dest+stops).
 
-        // "Actual Route" Logic for Selection (Persistent Targets)
-        // Fix: Don't downgrade selected lines when hovering. Check if THIS target is selected.
-        const isPersistent = filterState.targetIds && filterState.targetIds.has(targetId);
+            // Check if this path goes to a target we care about
+            if (group.pattern && group.pattern.stops) {
+                const destStop = group.pattern.stops[group.pattern.stops.length - 1];
+                // Check if this path eventually hits a selected target
+                // Actually relying on "signature" is safer if we trust the group logic.
+                // But simply: if `targetId` passed to applyFilter is in this group?
+            }
+            // Simplified: Just assign color for this path if it connects origin -> ANY target
+            // But applyFilter is dealing with a SPECIFIC targetId addition/removal.
 
-        if (isPersistent && bestPattern && bestRoute) {
-            // Ensure we have a suffix
-            if (!bestPattern.suffix && bestPattern.patternSuffix) {
-                bestPattern.suffix = bestPattern.patternSuffix;
+            // Correct approach:
+            // 1. Identify if this pathGroup connects Origin -> NormTargetId
+            // 2. If so, call assignNextColor(signature, routeIds).
+
+            // We need to know which target this group serves.
+            // The signature is usually based on the pattern.
+            // Let's look at how we found commonRoutes.
+            // commonRoutes was just a list of routes. `pathGroups` is derived from commonRoutes.
+
+            // Determine Color Strategy
+            let color;
+            const isSelected = filterState.targetIds && filterState.targetIds.has(targetId);
+
+            if (isSelected) {
+                // Selected: Consume/Lock Color
+                color = RouteFilterColorManager.assignNextColor(signature, routeIds);
+            } else if (isHover && String(targetId) === String(hoverId)) {
+                // Hover: Peek Next Color (Preview)
+                color = RouteFilterColorManager.getNextColor();
+                // Do NOT assign to map.
+            } else {
+                // Fallback (e.g. existing map but not selected? Should be covered by GC)
+                color = RouteFilterColorManager.pathColors.get(signature) || '#888888';
             }
 
-            if (!bestPattern.suffix) {
-                console.warn('[Debug] Pattern missing suffix:', bestPattern);
-            } else {
-                if (bestPattern._decodedPolyline) {
-                    // Try Slicing
-                    const sliced = slicePolyline(bestPattern._decodedPolyline, originStop, targetStop);
-                    if (sliced) {
-                        finalCoordinates = sliced;
+            const selectedPatternStops = group.stops.map(s => [s.lon, s.lat]);
+
+            // Geometry Logic
+            let finalCoordinates = null;
+
+            // "Actual Route" Logic
+            // Prioritize fetched polyline from the pattern
+            // Fix: Don't downgrade selected lines when hovering. Check if THIS target is selected.
+            const isPersistent = filterState.targetIds && filterState.targetIds.has(targetId);
+
+            if (isPersistent && group.pattern) {
+                const bestPattern = group.pattern;
+                const bestRoute = group.routes[0]; // Just need one route ID for fetching
+
+                // Ensure we have a suffix
+                if (!bestPattern.suffix && bestPattern.patternSuffix) {
+                    bestPattern.suffix = bestPattern.patternSuffix;
+                }
+
+                if (bestPattern.suffix) {
+                    if (bestPattern._decodedPolyline) {
+                        try {
+                            const sliced = slicePolyline(bestPattern._decodedPolyline, originStop, targetStop);
+                            if (sliced) finalCoordinates = sliced;
+                        } catch (e) {
+                            console.warn('Polyline slice failed', e);
+                        }
+                    } else {
+                        // Trigger Fetch
+                        fetchAndCacheGeometry(bestRoute, bestPattern);
                     }
-                } else {
-                    // Trigger Fetch
-                    fetchAndCacheGeometry(bestRoute, bestPattern);
                 }
             }
-        }
 
-        // Default / Fallback Smoothing
-        if (!finalCoordinates) {
+            // "Simple Line" (Spline) - ALWAYS create this as base or fallback?
+            // User request: "so if the stops are a little or very different, we should plot another line (first a simple stop-by stop one, then an accurate from route shape."
+            // This implies showing BOTH? 
+            // "first a simple stop-by stop one, then an accurate from route shape" might mean loading sequence or layering.
+            // "and they should have different colors" -> Wait, user said "if the stops are a little or very different... we should plot another line".
+            // This means for DIFFERENT paths, we plot different lines. 
+            // "first a simple stop-by stop one, then an accurate from route shape. and they should have different colors."
+            // This phrasing is slightly ambiguous. 
+            // 1. Path A (Simple) vs Path A (Accurate) have different colors? NO, that's weird.
+            // 2. Path A vs Path B have different colors.
+            // I'm assuming Interpretation 2.
+
+            // Fallback / Simple Geometry
+            let simpleCoordinates = null;
             if (selectedPatternStops.length >= 2) {
-                finalCoordinates = getCatmullRomSpline(selectedPatternStops);
+                simpleCoordinates = getCatmullRomSpline(selectedPatternStops);
             } else {
-                finalCoordinates = selectedPatternStops;
+                simpleCoordinates = [[originStop.lon, originStop.lat], [targetStop.lon, targetStop.lat]];
             }
-        }
 
-        features.push({
-            type: 'Feature',
-            geometry: {
-                type: 'LineString',
-                coordinates: finalCoordinates
-            },
-            properties: {
-                color: color
-            }
+            // If we lack accurate polyline, us simpleCoordinates as the main line.
+            // If we have accurate, maybe we just show accurate?
+            // "first a simple stop-by stop one, then an accurate from route shape" seems to imply progressive loading.
+            // I will add BOTH features if available, or just one.
+
+            // Add Simple Feature (always, or only if no accurate?)
+            // If I add both, they overlap.
+            // Maybe add simple as a "halo" or base? 
+            // Let's just add the best available geometry. 
+            // If awaiting fetch, simple. If fetched, accurate.
+
+            const activeCoords = finalCoordinates || simpleCoordinates;
+
+            features.push({
+                type: 'Feature',
+                geometry: {
+                    type: 'LineString',
+                    coordinates: activeCoords
+                },
+                properties: {
+                    color: color,
+                    lineWidth: 4,
+                    opacity: 0.8
+                }
+            });
         });
     });
+
+    // Garbage Collect Unused Colors (Global)
+    for (const [sig, col] of RouteFilterColorManager.pathColors.entries()) {
+        if (!allActiveSignatures.has(sig)) {
+            console.log('[ColorManager] GC Deleting signature:', sig, 'Color:', col);
+            RouteFilterColorManager.pathColors.delete(sig);
+        }
+    }
 
     // Update Source
     const source = map.getSource('filter-connection');
@@ -3825,6 +4394,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
     // Switch to Data-Driven Styling if needed
     if (map.getLayer('filter-connection-line')) {
         map.setPaintProperty('filter-connection-line', 'line-color', ['get', 'color']);
+        map.setPaintProperty('filter-connection-line', 'line-width', 4); // Fixed width or data driven
         map.setPaintProperty('filter-connection-line', 'line-opacity', 0.8);
     }
 }
@@ -3910,12 +4480,43 @@ function slicePolyline(points, originStop, targetStop) {
     return segment;
 }
 
+// Helper to fetch V3 route polyline (with caching)
+async function fetchRoutePolylineV3(routeId, patternSuffixes) {
+    const cacheKey = `/pis-gateway/api/v3/routes/${routeId}/polylines?patternSuffixes=${patternSuffixes}`;
+    // Use v3Cache.polylines
+    if (v3Cache.polylines.has(cacheKey)) {
+        console.log('[Cache] Hit:', cacheKey);
+        return v3Cache.polylines.get(cacheKey);
+    }
+
+    // Use Queue
+    return enqueueV3Request(async () => {
+        try {
+            console.log('[Cache] Miss:', cacheKey);
+            const res = await fetchWithRetry(`${API_V3_BASE_URL}/routes/${encodeURIComponent(routeId)}/polylines?patternSuffixes=${encodeURIComponent(patternSuffixes)}`, {
+                headers: { 'x-api-key': API_KEY },
+                credentials: 'omit'
+            });
+
+            if (!res.ok) throw new Error(`Polyline fetch failed: ${res.status}`);
+            const data = await res.json();
+
+            v3Cache.polylines.set(cacheKey, data);
+            return data;
+        } catch (error) {
+            console.error('Failed to fetch polyline', error);
+            throw error;
+        }
+    });
+}
+
 async function fetchAndCacheGeometry(route, pattern) {
     if (pattern._fetchingPolyline || pattern._polyfailed) return;
     pattern._fetchingPolyline = true;
 
     try {
         const data = await fetchRoutePolylineV3(route.id, pattern.suffix);
+
         // console.log(`[Debug] Polyline API Response for ${route.shortName} (${pattern.suffix}):`, JSON.stringify(data));
         // Data format usually: { [suffix]: "encoded_string" } OR { [suffix]: { encodedValue: "..." } }
         let entry = data[pattern.suffix];
