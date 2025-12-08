@@ -1223,6 +1223,12 @@ function addStopsToMap(stops) {
 
 // Handle clicks
 map.on('click', 'stops-layer', async (e) => {
+    // Check Click Lock
+    if (window.ignoreMapClicks) {
+        console.log('[Debug] Map Click Ignored (Lock Active)');
+        return;
+    }
+
     const props = e.features[0].properties;
 
     // FILTER PICKING MODE
@@ -1344,6 +1350,12 @@ function setupPanelDrag(panelId) {
     // Unified Start Handler (Mouse & Touch)
     const handleStart = (e) => {
         const target = e.target;
+
+        // Explicitly ignore Close Buttons
+        if (target.closest('#close-panel') || target.closest('#close-route-info') || target.closest('.icon-btn')) {
+            return;
+        }
+
         // Check if header or body
         const isHeader = target.closest('.panel-header') ||
             target.closest('#header-extension') ||
@@ -2242,7 +2254,7 @@ async function fetchV3Routes() {
 // Simple concurrency limiter
 // Simple concurrency limiter
 // Re-enabling throttling to prevent 520/500 errors
-const MAX_CONCURRENT_V3_REQUESTS = 6;
+const MAX_CONCURRENT_V3_REQUESTS = 3;
 let activeV3Requests = 0;
 const v3RequestQueue = [];
 
@@ -2261,8 +2273,8 @@ function processV3Queue() {
 
     fn().then(resolve).catch(reject).finally(() => {
         activeV3Requests--;
-        // Add 100ms delay to be safe
-        setTimeout(processV3Queue, 100);
+        // Add 200ms delay to be safe
+        setTimeout(processV3Queue, 200);
     });
 }
 
@@ -2561,42 +2573,176 @@ function sortArrivalsList() {
     items.forEach(item => listEl.appendChild(item));
 }
 
+// Helper for Synchronous Cache Lookup
+function getV3ScheduleSync(routeShortName, stopId) {
+    if (!v3RoutesMap) return null;
+    const routeId = v3RoutesMap.get(String(routeShortName));
+    if (!routeId) return null;
+
+    // 1. Get Patterns
+    let patterns = v3Cache.patterns.get(routeId);
+    if (!patterns) {
+        try {
+            const cached = localStorage.getItem(`v3_patterns_${routeId}`);
+            if (cached) {
+                const { timestamp, data } = JSON.parse(cached);
+                if (Date.now() - timestamp < 7 * 24 * 60 * 60 * 1000) {
+                    patterns = data;
+                    v3Cache.patterns.set(routeId, patterns);
+                }
+            }
+        } catch (e) { }
+    }
+    if (!patterns) return null;
+
+    // 2. Find Stop Suffix
+    let potentialIds = [String(stopId)];
+    if (typeof mergeSourcesMap !== 'undefined' && mergeSourcesMap.has(stopId)) {
+        const subIds = mergeSourcesMap.get(stopId) || [];
+        potentialIds.push(...subIds.map(String));
+    }
+
+    const stopEntry = patterns.find(p => {
+        const pId = String(p.stop.id);
+        const pCode = String(p.stop.code);
+        return potentialIds.some(targetId => {
+            const targetStr = String(targetId);
+            if (targetStr === pId) return true;
+            if (targetStr.split(':')[1] === pCode) return true;
+            return false;
+        });
+    });
+    if (!stopEntry || !stopEntry.patternSuffixes.length) return null;
+    const suffix = stopEntry.patternSuffixes[0];
+
+    // 3. Get Schedule
+    const cacheKey = `${routeId}:${suffix}`;
+    let schedule = v3Cache.schedules.get(cacheKey);
+    if (!schedule) {
+        try {
+            const cached = localStorage.getItem(`v3_sched_${cacheKey}`);
+            if (cached) {
+                const { timestamp, data } = JSON.parse(cached);
+                if (Date.now() - timestamp < 24 * 60 * 60 * 1000) {
+                    schedule = data;
+                    v3Cache.schedules.set(cacheKey, schedule);
+                }
+            }
+        } catch (e) { }
+    }
+    if (!schedule) return null;
+
+    // 4. Calculate Time
+    const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
+    let daySchedule = schedule.find(s => s.serviceDates.includes(tbilisiNow));
+
+    const now = new Date();
+    const tbilisiParts = new Intl.DateTimeFormat('en-US', {
+        timeZone: "Asia/Tbilisi", hour: 'numeric', minute: 'numeric', hour12: false
+    }).formatToParts(now);
+    const h = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
+    const m = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
+    const curMinutes = h * 60 + m;
+
+    const findNextTime = (sched, minTimeMinutes) => {
+        if (!sched) return null;
+        const stop = sched.stops.find(s => s.id === stopEntry.stop.id);
+        if (!stop) return null;
+        const times = stop.arrivalTimes.split(',');
+        for (const t of times) {
+            const [h, m] = t.split(':').map(Number);
+            if ((h * 60 + m) > minTimeMinutes) return t;
+        }
+        return null;
+    };
+
+    let nextTime = findNextTime(daySchedule, curMinutes);
+    if (!nextTime) {
+        // Tomorrow logic
+        const tDate = new Date(tbilisiNow);
+        tDate.setDate(tDate.getDate() + 1);
+        const tomorrowStr = tDate.toISOString().split('T')[0];
+        const tmrSchedule = schedule.find(s => s.serviceDates.includes(tomorrowStr));
+        nextTime = findNextTime(tmrSchedule, -1);
+    }
+    return nextTime;
+}
+
+
 function renderArrivals(arrivals, currentStopId = null) {
     const listEl = document.getElementById('arrivals-list');
     listEl.innerHTML = '';
 
-    // Safety check for currentStopId
     const stopId = currentStopId || window.currentStopId;
 
-    // 1. Identify "Missing" Routes (Routes serving this stop but not in arrivals)
+    // 1. Identify "Missing" Routes
     let extraRoutes = [];
     if (stopId && stopToRoutesMap.has(stopId)) {
         const servingRoutes = stopToRoutesMap.get(stopId) || [];
-        const arrivalRouteShortNames = new Set(arrivals.map(a => String(a.shortName))); // String normalize
-
+        const arrivalRouteShortNames = new Set(arrivals.map(a => String(a.shortName)));
         extraRoutes = servingRoutes.filter(r => !arrivalRouteShortNames.has(String(r.shortName)));
     }
 
-    // 2. Filter Logic (Applies to both Arrivals and Extras)
+    // 2. Filter Logic
     if (filterState.active) {
-        console.log(`[Debug] RenderArrivals Filtering. Active: true. Allowed IDs: ${filterState.filteredRoutes.length}`);
-
-        // Filter Arrivals
-        const initialCount = arrivals.length;
         arrivals = arrivals.filter(a => {
             const r = allRoutes.find(route => String(route.shortName) === String(a.shortName));
-            const include = r && filterState.filteredRoutes.includes(r.id);
-            return include;
+            return r && filterState.filteredRoutes.includes(r.id);
         });
-
-        // Filter Extras
         extraRoutes = extraRoutes.filter(r => filterState.filteredRoutes.includes(r.id));
-
-        console.log(`[Debug] Filtered: Arrivals ${initialCount}->${arrivals.length}, Extras ${extraRoutes.length}`);
     }
 
-    if (arrivals.length === 0 && extraRoutes.length === 0) {
-        // Only show empty if TRULY empty
+    // 3. Unified List Creation with Cache Lookup
+    let renderList = [];
+
+    // Add Live Arrivals
+    arrivals.forEach(a => {
+        renderList.push({
+            type: 'live',
+            data: a,
+            // Calculate sort minutes
+            minutes: (!a.realtime)
+                ? (a.scheduledArrivalMinutes ?? 999)
+                : (a.realtimeArrivalMinutes ?? 999),
+            // Pre-calculate display strings
+            color: a.color ? `#${a.color}` : 'var(--primary)',
+            headsign: a.headsign
+        });
+    });
+
+    // Add Extra Routes (Try Sync Cache)
+    extraRoutes.forEach(r => {
+        // Try to get time from cache synchronously
+        const cachedTimeStr = getV3ScheduleSync(r.shortName, stopId);
+
+        // Calculate minutes if cached
+        let minutes = 99999;
+        let timeDisplay = '...';
+
+        if (cachedTimeStr) {
+            minutes = getMinutesFromNow(cachedTimeStr);
+            // Smart formatting
+            if (minutes < 60 && minutes >= 0) {
+                timeDisplay = `${minutes} min`;
+            } else {
+                timeDisplay = cachedTimeStr;
+            }
+        }
+
+        renderList.push({
+            type: 'scheduled',
+            data: r,
+            minutes: minutes,
+            timeDisplay: timeDisplay,
+            color: r.color ? `#${r.color}` : 'var(--primary)',
+            needsFetch: !cachedTimeStr
+        });
+    });
+
+    // 4. Sort EVERYTHING
+    renderList.sort((a, b) => a.minutes - b.minutes);
+
+    if (renderList.length === 0) {
         if (filterState.active) {
             listEl.innerHTML = '<div class="empty">No arrivals for selected destination</div>';
         } else {
@@ -2605,121 +2751,91 @@ function renderArrivals(arrivals, currentStopId = null) {
         return;
     }
 
-    // 3. Render Live/API Arrivals
-    arrivals.forEach(arrival => {
-        const item = document.createElement('div');
-        item.className = 'arrival-item';
+    // 5. Render Unified List
+    renderList.forEach(item => {
+        const div = document.createElement('div');
+        div.className = item.type === 'scheduled' ? 'arrival-item extra-route' : 'arrival-item';
+        div.style.borderLeftColor = item.color;
+        div.setAttribute('data-minutes', item.minutes);
 
-        // Color based on route color if available
-        const color = arrival.color ? `#${arrival.color}` : 'var(--primary)';
-        item.style.borderLeftColor = color;
+        let innerContent = '';
 
-        // Time Display Logic
-        const isScheduled = !arrival.realtime;
-        // Calculate Minutes for Sorting
-        let minutesVal = 9999;
-        let timeDisplay;
+        if (item.type === 'live') {
+            const a = item.data;
+            const isScheduled = !a.realtime;
+            const scheduledClass = isScheduled ? 'scheduled-time' : '';
+            const disclaimer = isScheduled ? '<div class="scheduled-disclaimer">Scheduled</div>' : '';
 
-        if (isScheduled) {
-            minutesVal = arrival.scheduledArrivalMinutes ?? 999;
-            if (minutesVal < 60 && minutesVal >= 0) {
-                timeDisplay = `${minutesVal} min`;
+            let tDisp;
+            if (isScheduled && item.minutes < 60 && item.minutes >= 0) {
+                tDisp = `${item.minutes} min`;
+            } else if (isScheduled) {
+                tDisp = formatScheduledTime(a.scheduledArrivalMinutes);
             } else {
-                timeDisplay = formatScheduledTime(arrival.scheduledArrivalMinutes);
+                tDisp = `${a.realtimeArrivalMinutes} min`;
             }
-        } else {
-            minutesVal = arrival.realtimeArrivalMinutes ?? 999;
-            timeDisplay = arrival.realtimeArrivalMinutes + ' min';
-        }
 
-        item.setAttribute('data-minutes', minutesVal);
+            innerContent = `
+              <div class="route-number" style="color: ${item.color}">${a.shortName}</div>
+              <div class="destination" title="${a.headsign}">${a.headsign}</div>
+              <div class="time-container">
+                  <div class="time ${scheduledClass}">${tDisp}</div>
+                  ${disclaimer}
+              </div>
+            `;
 
-        const scheduledClass = isScheduled ? 'scheduled-time' : '';
-        const disclaimer = isScheduled ? '<div class="scheduled-disclaimer">Scheduled</div>' : '';
-
-        item.innerHTML = `
-      <div class="route-number" style="color: ${color}">${arrival.shortName}</div>
-      <div class="destination" title="${arrival.headsign}">${arrival.headsign}</div>
-      <div class="time-container">
-          <div class="time ${scheduledClass}">${timeDisplay}</div>
-          ${disclaimer}
-      </div>
-    `;
-
-        // Click Handler
-        const routeObj = allRoutes.find(r => r.shortName === arrival.shortName);
-        if (routeObj) {
-            item.addEventListener('click', () => {
-                showRouteOnMap(routeObj, true, {
-                    preserveBounds: true,
-                    fromStopId: currentStopId || window.currentStopId,
-                    targetHeadsign: arrival.headsign
+            const routeObj = allRoutes.find(r => r.shortName === a.shortName);
+            if (routeObj) {
+                div.addEventListener('click', () => {
+                    showRouteOnMap(routeObj, true, {
+                        preserveBounds: true,
+                        fromStopId: stopId,
+                        targetHeadsign: a.headsign
+                    });
                 });
-            });
-        }
-        listEl.appendChild(item);
-    });
-
-    // 4. Render Missing/Scheduled-Only Routes (Async Update)
-    extraRoutes.forEach(route => {
-        const item = document.createElement('div');
-        item.className = 'arrival-item extra-route';
-
-        const color = route.color ? `#${route.color}` : 'var(--primary)';
-        item.style.borderLeftColor = color;
-
-        // Unique ID for updating time later
-        const timeElId = `time-${route.shortName}-${stopId}`;
-
-        // Initial HIGH minutes so it sinks to bottom
-        item.setAttribute('data-minutes', '99999');
-
-        item.innerHTML = `
-      <div class="route-number" style="color: ${color}">${route.shortName}</div>
-      <div class="destination" title="${route.longName}">${route.longName}</div>
-      <div class="time-container">
-          <div id="${timeElId}" class="time scheduled-time">...</div>
-          <div class="scheduled-disclaimer">Scheduled</div>
-      </div>
-    `;
-
-        item.addEventListener('click', () => {
-            // Just show route geometry?
-            showRouteOnMap(route, true, {
-                preserveBounds: true,
-                fromStopId: stopId
-            });
-        });
-
-        listEl.appendChild(item);
-
-        // Trigger Async Fetch
-        getV3Schedule(route.shortName, stopId).then(timeStr => {
-            const el = document.getElementById(timeElId);
-            if (el) {
-                // Update sorting key
-                const minutes = getMinutesFromNow(timeStr);
-                item.setAttribute('data-minutes', minutes);
-
-                // Format display: < 60 mins -> "X min", else HH:mm
-                let displayStr = timeStr;
-                if (minutes < 60 && minutes >= 0) {
-                    displayStr = `${minutes} min`;
-                }
-
-                el.innerText = displayStr || '--:--';
-
-                // Trigger Live Sort
-                sortArrivalsList();
             }
-        });
-    });
 
-    // Initial sort
-    sortArrivalsList();
+        } else {
+            // Scheduled (Extra)
+            const r = item.data;
+            const timeElId = `time-${r.shortName}-${stopId}`;
+
+            innerContent = `
+              <div class="route-number" style="color: ${item.color}">${r.shortName}</div>
+              <div class="destination" title="${r.longName}">${r.longName}</div>
+              <div class="time-container">
+                  <div id="${timeElId}" class="time scheduled-time">${item.timeDisplay}</div>
+                  <div class="scheduled-disclaimer">Scheduled</div>
+              </div>
+            `;
+
+            div.addEventListener('click', () => {
+                showRouteOnMap(r, true, { preserveBounds: true, fromStopId: stopId });
+            });
+
+            // Trigger Async Fetch if needed
+            if (item.needsFetch) {
+                getV3Schedule(r.shortName, stopId).then(timeStr => {
+                    const el = document.getElementById(timeElId);
+                    if (el) {
+                        const mins = getMinutesFromNow(timeStr);
+                        div.setAttribute('data-minutes', mins);
+
+                        let displayStr = timeStr;
+                        if (mins < 60 && mins >= 0) displayStr = `${mins} min`;
+                        el.innerText = displayStr || '--:--';
+
+                        sortArrivalsList();
+                    }
+                });
+            }
+        }
+
+        div.innerHTML = innerContent;
+        listEl.appendChild(div);
+    });
 }
 
-// Search Logic
 // Search Logic
 function setupSearch() {
     const input = document.getElementById('search-input');
@@ -3416,14 +3532,32 @@ if (filterBtn) {
     }, 1000);
 }
 
+// Prevent Drag/Map click propagation on Close Buttons
+['mousedown', 'touchstart', 'click'].forEach(evt => {
+    document.getElementById('close-panel').addEventListener(evt, e => e.stopPropagation(), { passive: false });
+    document.getElementById('close-route-info').addEventListener(evt, e => e.stopPropagation(), { passive: false });
+});
+
+// Helper to block map clicks briefly
+function triggerMapClickLock() {
+    window.ignoreMapClicks = true;
+    setTimeout(() => {
+        window.ignoreMapClicks = false;
+    }, 500); // 500ms safety window
+}
+
 // Close panel
-document.getElementById('close-panel').addEventListener('click', () => {
+document.getElementById('close-panel').addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    triggerMapClickLock();
+
     console.log('[Debug] Close panel clicked');
     const panel = document.getElementById('info-panel');
     setSheetState(panel, 'hidden');
 
-    // Explicitly hide just in case
-    // panel.classList.add('hidden'); // setSheetState should do this but let's be safe if it fails
+    window.currentStopId = null; // Clear Global State
+    if (window.selectDevStop) window.selectDevStop(null); // Notify DevTools
 
     clearFilter(); // Reset filter
     setMapFocus(false); // Reset map focus (opacity)
@@ -3435,7 +3569,11 @@ document.getElementById('close-panel').addEventListener('click', () => {
 });
 
 // Close Route Info
-document.getElementById('close-route-info').addEventListener('click', () => {
+document.getElementById('close-route-info').addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    triggerMapClickLock();
+
     setSheetState(document.getElementById('route-info'), 'hidden');
     clearHistory(); // Clear history on close
     clearRoute(); // Helper to clear route layers (modified to also reset focus)
