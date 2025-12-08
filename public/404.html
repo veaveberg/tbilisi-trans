@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Tbilisi Transit - Routing...</title>
+    <script>
+        // 404 Hack for GitHub Pages SPA
+        // This script takes the current path (which caused the 404)
+        // and redirects to index.html with the path in a query param.
+
+        // 1. Get the current Clean Path
+        const segment = 1;
+        const l = window.location;
+
+        // Preserve search params and hash
+        l.replace(
+            l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+            l.pathname.split('/').slice(0, 1 + segment).join('/') + '/?p=/' +
+            l.pathname.slice(1).split('/').slice(segment).join('/').replace(/&/g, '~and~') +
+            (l.search ? '&q=' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+            l.hash
+        );
+    </script>
+</head>
+
+<body>
+    <!-- Clean Redirect Message -->
+    <p>Redirecting to Tbilisi Transit...</p>
+</body>
+
+</html>
