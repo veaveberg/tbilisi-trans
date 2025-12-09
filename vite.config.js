@@ -45,7 +45,7 @@ export default defineConfig({
     server: {
         watch: {
             // Prevent full reload when saving stops config
-            ignored: ['**/src/data/stops_config.json']
+            ignored: ['**/stops_config.json', '**/src/data/stops_config.json']
         },
         host: true, // Allow LAN access
         proxy: {

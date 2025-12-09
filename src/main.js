@@ -1,9 +1,10 @@
 import './style.css';
 import mapboxgl from 'mapbox-gl';
 import stopBearings from './data/stop_bearings.json';
-import stopsConfig from './data/stops_config.json'; // Import Config
+// stopsConfig will be loaded dynamically
 import { Router } from './router.js';
 import { db } from './db.js';
+import { historyManager } from './history.js';
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg';
 
@@ -28,8 +29,43 @@ const map = new mapboxgl.Map({
     zoom: 12
 });
 
+// Check for deep link hash (Standard Mapbox format: #zoom/lat/lng)
+const initialHash = window.location.hash;
+if (initialHash) {
+    const parts = initialHash.replace('#', '').split('/');
+    if (parts.length >= 3) {
+        const z = parseFloat(parts[0]);
+        const lat = parseFloat(parts[1]);
+        const lng = parseFloat(parts[2]);
+        if (!isNaN(z) && !isNaN(lat) && !isNaN(lng)) {
+            map.setZoom(z);
+            map.setCenter([lng, lat]);
+        }
+    }
+}
+
 // Debug: Expose map to window
 window.map = map;
+
+function getMapHash() {
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+    return `#${zoom.toFixed(2)}/${center.lat.toFixed(5)}/${center.lng.toFixed(5)}`;
+}
+
+map.on('moveend', () => {
+    if (!window.currentStopId) {
+        Router.updateMapLocation(getMapHash());
+    }
+});
+
+// Debug: Trace Map Movement
+const originalFlyTo = map.flyTo.bind(map);
+map.flyTo = (args, options) => {
+    console.log('[MapDebug] flyTo called:', args);
+    // console.trace('[MapDebug] flyTo stack');
+    return originalFlyTo(args, options);
+};
 
 // Ensure map resizing handles layout changes
 const resizeObserver = new ResizeObserver(() => {
@@ -116,12 +152,31 @@ if (initialFilterBtn) {
 
 // State
 let allStops = [];
+let rawStops = []; // Persist raw data for re-processing
 let allRoutes = [];
 let stopToRoutesMap = new Map(); // Index: stopId -> [route objects]
 let lastRouteUpdateId = 0; // Async Lock for Route Updates
 // Merge/Redirect Maps
 const redirectMap = new Map(); // sourceId -> targetId
-const mergeSourcesMap = new Map(); // targetId -> [sourceId1, sourceId2]
+const hubMap = new Map(); // stopId -> hubLeaderId (Hub Group)
+const hubSourcesMap = new Map(); // hubLeaderId -> [memberIds]
+const mergeSourcesMap = new Map(); // targetId -> [sourceIds]
+
+function getEquivalentStops(id) {
+    const parent = hubMap.get(id) || id;
+    const children = hubSourcesMap.get(parent);
+
+    if (children) {
+        // If it's a hub, return all children.
+        // The parent (hubId) is virtual and should NOT be in the set if it's not a real stop.
+        // But our logic elsewhere might expect the input 'id' to be present? 
+        // Logic: Return Set(children).
+        return new Set(children);
+    }
+
+    // Not a hub member. Return self.
+    return new Set([id]);
+}
 
 // --- Navigation History ---
 const historyStack = [];
@@ -133,7 +188,8 @@ function addToHistory(type, data) {
 
     historyStack.push({ type, data });
     updateBackButtons();
-    saveToSearchHistory({ type, data });
+    // Save to Recent Cards history (separately from Search History)
+    historyManager.addCard({ type, id: data.id, data });
 }
 
 function popHistory() {
@@ -172,6 +228,7 @@ function handleBack() {
         }
     } else {
         // If going back to nothing (empty stack), clear everything
+        stopEditing(true); // Persist and Close Edit Mode
         closeAllPanels();
         // Reset Map Focus
         setMapFocus(false);
@@ -274,6 +331,9 @@ const RouteFilterColorManager = {
 async function toggleFilterMode() {
     console.log('[Debug] toggleFilterMode called. Active:', filterState.active, 'Picking:', filterState.picking, 'CurrentStop:', window.currentStopId);
 
+    // Cancel Edit Pick Mode if active
+    if (window.isPickModeActive) setEditPickMode(null);
+
     // If already active/picking, cancel it
     if (filterState.active || filterState.picking) {
         clearFilter();
@@ -342,13 +402,20 @@ async function toggleFilterMode() {
     }
 
     // Calculate Reachable Stops
-    // 1. Get all routes passing through currentStopId
-    const routes = stopToRoutesMap.get(window.currentStopId) || [];
+    // 1. Get all routes passing through currentStopId (and its hub equivalents)
+    const originEq = getEquivalentStops(window.currentStopId);
+    const routes = new Set();
+    originEq.forEach(oid => {
+        const r = stopToRoutesMap.get(oid) || [];
+        r.forEach(route => routes.add(route));
+    });
+    const originRoutes = Array.from(routes);
+
     const reachableStopIds = new Set(); // Initialize Scope Here
 
     // FETCH MISSING DETAILS
     // If routes exist but don't have 'stops', we must fetch them.
-    const routesNeedingFetch = routes.filter(r => !r._details || !r._details.patterns); // Check for _details and patterns
+    const routesNeedingFetch = originRoutes.filter(r => !r._details || !r._details.patterns); // Check for _details and patterns
 
     if (routesNeedingFetch.length > 0) {
         console.log(`[Debug] Need to fetch details for ${routesNeedingFetch.length} routes...`);
@@ -379,13 +446,14 @@ async function toggleFilterMode() {
                             if (p.stops && p.stops.length > 0) {
                                 foundStopsInPatterns = true;
                                 // Directional Logic: Only add stops AFTER currentStopId (Normalized)
-                                // Find index of current stop (checking redirects)
-                                const idx = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === window.currentStopId);
+                                // Find index of current stop (checking redirects and hubs)
+                                const idx = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
 
                                 if (idx !== -1 && idx < p.stops.length - 1) {
                                     p.stops.slice(idx + 1).forEach(s => {
                                         const normId = redirectMap.get(s.id) || s.id;
-                                        reachableStopIds.add(normId);
+                                        // Add all equivalent stops of the reachable stop
+                                        getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
                                     });
                                 }
                             }
@@ -408,11 +476,11 @@ async function toggleFilterMode() {
                                     p.stops = stopsList;
 
                                     // Directional Logic (Normalized)
-                                    const idx = stopsList.findIndex(s => (redirectMap.get(s.id) || s.id) === window.currentStopId);
+                                    const idx = stopsList.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
                                     if (idx !== -1 && idx < stopsList.length - 1) {
                                         stopsList.slice(idx + 1).forEach(s => {
                                             const normId = redirectMap.get(s.id) || s.id;
-                                            reachableStopIds.add(normId);
+                                            getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
                                         });
                                     }
                                 } catch (err) {
@@ -426,7 +494,9 @@ async function toggleFilterMode() {
                         r._details.stops = routeDetails.stops; // normalize
                         routeDetails.stops.forEach(s => {
                             const normId = redirectMap.get(s.id) || s.id;
-                            if (normId !== window.currentStopId) reachableStopIds.add(normId);
+                            if (!originEq.has(normId)) { // Check against all origin equivalents
+                                getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
+                            }
                         });
                     }
                 } catch (e) {
@@ -443,16 +513,16 @@ async function toggleFilterMode() {
 
     // Iterate over ALL routes (whether fetched or not) and calculate reachability
     // This ensures consistency and covers routes that were already cached.
-    routes.forEach(r => {
+    originRoutes.forEach(r => {
         if (r._details && r._details.patterns) {
             r._details.patterns.forEach(p => {
                 if (p.stops) {
                     // Normalized Find
-                    const idx = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === window.currentStopId);
+                    const idx = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
                     if (idx !== -1 && idx < p.stops.length - 1) {
                         p.stops.slice(idx + 1).forEach(s => {
                             const normId = redirectMap.get(s.id) || s.id;
-                            reachableStopIds.add(normId);
+                            getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
                         });
                     }
                 }
@@ -460,7 +530,9 @@ async function toggleFilterMode() {
         } else if (r._details && r._details.stops) { // Fallback for V2-like structure
             r._details.stops.forEach(s => {
                 const normId = redirectMap.get(s.id) || s.id;
-                if (normId !== window.currentStopId) reachableStopIds.add(normId);
+                if (!originEq.has(normId)) {
+                    getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
+                }
             });
         }
     });
@@ -468,10 +540,10 @@ async function toggleFilterMode() {
     // Store Reachable Stops in State
     filterState.reachableStopIds = reachableStopIds; // Save Set
 
-    console.log(`[Debug] Filter Mode. Origin: ${window.currentStopId}. Routes: ${routes.length}. Reachable Stops: ${reachableStopIds.size}`);
+    console.log(`[Debug] Filter Mode. Origin: ${window.currentStopId}. Routes: ${originRoutes.length}. Reachable Stops: ${reachableStopIds.size}`);
 
     // Debug Data Availability
-    if (routes.length === 0) {
+    if (originRoutes.length === 0) {
         console.warn('[Debug] stopToRoutesMap is empty. Checking fetchStopRoutes cache?');
     }
 
@@ -494,6 +566,11 @@ function updateMapFilterState() {
         }
         if (map.getLayer('stops-label-selected')) {
             map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', []]]);
+        }
+        if (map.getLayer('stops-layer-circle')) {
+            map.setPaintProperty('stops-layer-circle', 'circle-opacity', 1);
+            map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', 1);
+            map.setPaintProperty('stops-layer-circle', 'circle-radius', getCircleRadiusExpression(1));
         }
         if (map.getLayer('metro-layer-circle')) {
             map.setPaintProperty('metro-layer-circle', 'circle-opacity', 1);
@@ -547,6 +624,34 @@ function updateMapFilterState() {
         map.setLayoutProperty('stops-layer', 'symbol-sort-key', caseExpression);
     }
 
+    if (map.getLayer('stops-layer-circle')) {
+        map.setPaintProperty('stops-layer-circle', 'circle-opacity', opacityExpression);
+        map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', opacityExpression);
+
+        // Make selectable stops BIGGER (1.5x)
+        // Make selectable stops BIGGER (1.5x)
+        // Note: We cannot nest 'interpolate' inside 'match'. We must use 'interpolate' at top level
+        // and condition inside the stops.
+        const radiusExpression = [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            12.5, [
+                'case',
+                ['match', ['get', 'id'], Array.from(highOpacityIds), true, false], // Is High Opacity?
+                1.2 * 1.5,
+                1.2
+            ],
+            16, [
+                'case',
+                ['match', ['get', 'id'], Array.from(highOpacityIds), true, false], // Is High Opacity?
+                4.8 * 1.5,
+                4.8
+            ]
+        ];
+        map.setPaintProperty('stops-layer-circle', 'circle-radius', radiusExpression);
+    }
+
     if (map.getLayer('stops-label-selected')) {
         // Only show labels for SELECTED targetIds
         if (selectedArray.length > 0) {
@@ -559,46 +664,56 @@ function updateMapFilterState() {
     if (map.getLayer('metro-layer-circle')) {
         map.setPaintProperty('metro-layer-circle', 'circle-opacity', opacityExpression);
         map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', opacityExpression);
+        // Metro stays same size for now (unless requested otherwise)
     }
 }
 
-function applyFilter(targetId) {
-    if (!filterState.picking || !filterState.originId) return;
+function refreshRouteFilter() {
+    console.log(`[Debug] refreshRouteFilter. Origin: ${filterState.originId}, Targets: ${Array.from(filterState.targetIds).join(', ')}`);
 
-    // Normalize Target ID
-    const normTargetId = redirectMap.get(targetId) || targetId;
-
-    // Toggle Selection
-    if (filterState.targetIds.has(normTargetId)) {
-        filterState.targetIds.delete(normTargetId);
-    } else {
-        filterState.targetIds.add(normTargetId);
-    }
-
-    console.log(`[Debug] Apply Filter. Origin: ${filterState.originId}, Targets: ${Array.from(filterState.targetIds).join(', ')}`);
-
-    // Logic: Find routes connecting Origin to ANY of the TargetIds using Strict Check
-    const originRoutes = stopToRoutesMap.get(filterState.originId) || [];
+    const originEq = getEquivalentStops(filterState.originId);
+    const originRoutesSet = new Set();
+    originEq.forEach(oid => {
+        const routes = stopToRoutesMap.get(oid) || [];
+        routes.forEach(r => originRoutesSet.add(r));
+    });
+    const originRoutes = Array.from(originRoutesSet);
 
     // We want routes that pass check for AT LEAST ONE target
     const commonRoutes = originRoutes.filter(r => {
+        // HUB LOGIC: Route matches if it touches ANY equivalent of Origin AND ANY equivalent of Target
+        // Order must be OriginSection < TargetSection
+
+        // Optimize: Convert route stops to normalized IDs to avoid repeated map lookups? 
+        // Or just iterate.
+        let routeStopsNormalized = null; // Lazy load
+
         // Check against ALL targets. If matches ANY, keep it.
         for (const tid of filterState.targetIds) {
+            const targetEq = getEquivalentStops(tid);
             let matches = false;
 
             if (r._details && r._details.patterns) {
                 matches = r._details.patterns.some(p => {
                     if (!p.stops) return false;
-                    const idxO = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === filterState.originId);
-                    const idxT = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === tid);
-                    return idxO !== -1 && idxT !== -1 && idxO < idxT;
+                    // Find first occurrence of ANY Origin Equivalent
+                    const idxO = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
+                    // Find first occurrence of ANY Target Equivalent AFTER idxO
+                    if (idxO === -1) return false;
+
+                    const idxT = p.stops.findIndex((s, i) => i > idxO && targetEq.has(redirectMap.get(s.id) || s.id));
+                    return idxT !== -1;
                 });
             } else if (r.stops) {
-                // Fallback Strict
-                const stops = r.stops;
-                const idxO = stops.findIndex(sid => (redirectMap.get(sid) || sid) === filterState.originId);
-                const idxT = stops.findIndex(sid => (redirectMap.get(sid) || sid) === tid);
-                matches = (idxO !== -1 && idxT !== -1 && idxO < idxT);
+                if (!routeStopsNormalized) {
+                    routeStopsNormalized = r.stops.map(sid => redirectMap.get(sid) || sid);
+                }
+                const stops = routeStopsNormalized;
+                const idxO = stops.findIndex(sid => originEq.has(sid));
+                if (idxO !== -1) {
+                    const idxT = stops.findIndex((sid, i) => i > idxO && targetEq.has(sid));
+                    matches = (idxT !== -1);
+                }
             }
 
             if (matches) return true; // Keep route
@@ -618,24 +733,19 @@ function applyFilter(targetId) {
     // Refresh Panel List if we are still viewing the origin stop
     if (window.currentStopId === filterState.originId) {
         console.log('[Debug] ApplyFilter: Attempting to refresh arrivals list...');
-        // Re-fetch arrivals / refresh UI
         if (window.lastArrivals) {
-            console.log(`[Debug] Using cached lastArrivals: ${window.lastArrivals.length}`);
             renderArrivals(window.lastArrivals, filterState.originId);
-
-            // Also refresh All Routes Header
             if (window.lastRoutes) {
                 renderAllRoutes(window.lastRoutes, window.lastArrivals);
             }
         } else {
-            console.warn('[Debug] No window.lastArrivals found. Triggering full fetch.');
-            // Fallback: trigger showStopInfo refresh logic (without network if possible, but safe to just refresh)
             const stop = allStops.find(s => s.id === filterState.originId);
             if (stop) showStopInfo(stop, false, false);
         }
     }
 
     // Highlight Targets on Map & Draw Lines
+    // HUB LOGIC: updateConnectionLine should use Hub IDs for color signature
     updateConnectionLine(filterState.originId, filterState.targetIds, false);
 
     // Sync URL (Router)
@@ -647,11 +757,27 @@ function applyFilter(targetId) {
         console.log('[Debug] ApplyFilter: Refreshing arrivals to apply colors...');
         if (window.lastArrivals) {
             renderArrivals(window.lastArrivals, filterState.originId);
-            if (window.lastRoutes) {
+            if (window.lastRoutes && window.lastArrivals) {
                 renderAllRoutes(window.lastRoutes, window.lastArrivals);
             }
         }
     }
+}
+
+function applyFilter(targetId) {
+    if (!filterState.picking || !filterState.originId) return;
+
+    // Normalize Target ID
+    const normTargetId = redirectMap.get(targetId) || targetId;
+
+    // Toggle Selection
+    if (filterState.targetIds.has(normTargetId)) {
+        filterState.targetIds.delete(normTargetId);
+    } else {
+        filterState.targetIds.add(normTargetId);
+    }
+
+    refreshRouteFilter();
 }
 
 function clearFilter() {
@@ -687,6 +813,11 @@ function clearFilter() {
         map.setPaintProperty('metro-layer-circle', 'circle-opacity', 1);
         map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', 1);
     }
+    if (map.getLayer('stops-layer-circle')) {
+        map.setPaintProperty('stops-layer-circle', 'circle-opacity', 1);
+        map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', 1);
+        map.setPaintProperty('stops-layer-circle', 'circle-radius', getCircleRadiusExpression(1));
+    }
 
     // Refresh view
     if (window.currentStopId) {
@@ -719,57 +850,18 @@ function getSearchHistory() {
 // Initialize map data
 map.on('load', async () => {
     try {
-        const [rawStops, routes] = await Promise.all([fetchStops(), fetchRoutes()]);
+        // Initialize Raw Data
+        const [stopsData, routesData] = await Promise.all([fetchStops(), fetchRoutes()]);
+        rawStops = stopsData;
+        allRoutes = routesData;
 
-        // --- Process Stops (Overrides & Merges) ---
-        // 1. Apply Overrides & Build Redirects
-        const stops = [];
-        const overrides = stopsConfig?.overrides || {};
-        const merges = stopsConfig?.merges || {};
+        // Load Config & Process
+        await refreshStopsLayer();
 
-        // Build merge mappings
-        Object.keys(merges).forEach(source => {
-            const target = merges[source];
-            redirectMap.set(source, target);
-            if (!mergeSourcesMap.has(target)) mergeSourcesMap.set(target, []);
-            mergeSourcesMap.get(target).push(source);
-        });
+        // Check cache for initial edits
+        // ... (existing logic continues from line 816?)
+        // Wait, line 816 uses allRoutes. Correct.
 
-        // Filter and Override
-        const seenCoords = new Set();
-        rawStops.forEach(stop => {
-            // If this stop is merged INTO another, skip adding it to map list
-            if (merges[stop.id]) return;
-
-            // Apply Override if exists
-            if (overrides[stop.id]) {
-                Object.assign(stop, overrides[stop.id]);
-            }
-
-            // Deduplicate by Coordinates (Fix for stacking/flashing in Safari)
-            // Round to high precision to catch exact matches but allow slight drift?
-            // Usually raw data exact matches.
-            const coordKey = `${stop.lat.toFixed(6)},${stop.lon.toFixed(6)}`;
-            if (seenCoords.has(coordKey)) {
-                // If we skip this visual stop, we MUST ensure the logic knows about it.
-                // The logical redirectMap might need this.
-                // But usually duplicates are just dirt in the API.
-                // If it's a legitimate separate stop at same loc, hiding it is fine visually if redirect not needed.
-                // Just log it for now.
-                // console.warn('Duplicate Stop Coords:', stop.id, coordKey);
-                return;
-            }
-            seenCoords.add(coordKey);
-
-            stops.push(stop);
-        });
-        // For debugging: Bypass processing
-        // rawStops.forEach(s => stops.push(s));
-
-        console.log(`Processed Stops: ${rawStops.length} -> ${stops.length} (Merged/Filtered)`);
-
-        allStops = stops;
-        allRoutes = routes;
         window.allStops = allStops; // Debug: Expose to window
         window.stopsConfig = stopsConfig; // Debug
 
@@ -793,7 +885,7 @@ map.on('load', async () => {
 
         // Initialize Search & Layers
         setupSearch();
-        addStopsToMap(stops);
+        addStopsToMap(allStops);
 
         // Load custom icons (SDF for coloring)
         await loadImages(map);
@@ -806,9 +898,11 @@ map.on('load', async () => {
 
 
         // --- Dev Tools Support ---
-        if (import.meta.env.DEV) {
-            import('./dev-tools.js').then(module => module.initDevTools(map));
-        }
+        // --- Dev Tools Support ---
+        // Removed old DevTools as per user request
+        // if (import.meta.env.DEV) {
+        //     import('./dev-tools.js').then(module => module.initDevTools(map));
+        // }
 
         // Router Initialization
         Router.init();
@@ -859,49 +953,14 @@ map.on('load', async () => {
                             // filterState.picking is set true by toggleFilterMode, leave it or set false if we want strict viewing mode?
                             // Leave it true as we are technically in a filtered state where picking might be relevant.
 
-                            // Manually run the "Apply" logic
-                            // ... Logic from applyFilter ...
-                            const originRoutes = stopToRoutesMap.get(filterState.originId) || [];
-                            const commonRoutes = originRoutes.filter(r => {
-                                for (const tid of filterState.targetIds) {
-                                    let matches = false;
-                                    if (r._details && r._details.patterns) {
-                                        matches = r._details.patterns.some(p => {
-                                            if (!p.stops) return false;
-                                            const idxO = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === filterState.originId);
-                                            const idxT = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === tid);
-                                            return idxO !== -1 && idxT !== -1 && idxO < idxT;
-                                        });
-                                    } else if (r.stops) {
-                                        const stops = r.stops;
-                                        const idxO = stops.findIndex(sid => (redirectMap.get(sid) || sid) === filterState.originId);
-                                        const idxT = stops.findIndex(sid => (redirectMap.get(sid) || sid) === tid);
-                                        matches = (idxO !== -1 && idxT !== -1 && idxO < idxT);
-                                    }
-                                    if (matches) return true;
-                                }
-                                return false;
-                            });
+                            filterState.active = true;
+                            // filterState.picking is set true by toggleFilterMode
 
-                            filterState.filteredRoutes = commonRoutes.map(r => r.id);
-
-                            updateMapFilterState();
-                            updateConnectionLine(filterState.originId, filterState.targetIds, false);
-
-                            // Refresh Panel
-                            if (window.lastArrivals) {
-                                renderArrivals(window.lastArrivals, filterState.originId);
-                            }
-                            if (window.lastRoutes && window.lastArrivals) {
-                                renderAllRoutes(window.lastRoutes, window.lastArrivals);
-                            }
-
-                            // Final URL Sync to ensure canonical state
-                            // Now we are fully ready
-                            Router.update(stop.id, true, Array.from(filterState.targetIds));
+                            // Refactored: Use shared logic
+                            refreshRouteFilter();
                         });
+                    }, 500); // Wait for showStopInfo to settle
 
-                    }, 500);
 
                 } else {
                     showStopInfo(stop, false, true);
@@ -966,15 +1025,12 @@ map.on('load', async () => {
 
     // Load Bus Icon (Simple Arrow)
     const arrowImage = new Image(24, 24);
-    arrowImage.onload = () => map.addImage('bus-arrow', arrowImage);
-    // Create a simple arrow SVG as a data URI
-    const svg = `
+    const arrowSvg = `
             <svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 2L4.5 20.29L5.21 21L12 18L18.79 21L19.5 20.29L12 2Z" fill="#ef4444" />
             </svg>`;
-    arrowImage.onload = () => {
-        map.addImage('bus-arrow', arrowImage, { sdf: true }); // enable SDF for coloring
-    };
+    arrowImage.onload = () => map.addImage('bus-arrow', arrowImage, { sdf: true });
+    arrowImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(arrowSvg);
 
     // Load Transfer Station Icon (Half Red / Half Green)
     const transferSvg = `
@@ -1007,8 +1063,8 @@ map.on('load', async () => {
             ],
             'icon-size': [
                 'case',
-                ['>', ['get', 'bearing'], 0], 1.2, // Arrow fixed scale
-                1.5 // Circle fixed scale (Big)
+                ['==', ['get', 'mode'], 'SUBWAY'], 1.5, // Keep Metro Big
+                1.2 // Unified size for Bus (Arrow or Circle) matches visual weight
             ],
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
@@ -1132,13 +1188,25 @@ async function fetchMetroSchedulePattern(routeId, patternSuffix) {
 
 
 
+
+// Helper for Circle Radius Logic
+function getCircleRadiusExpression(scale = 1) {
+    return [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        12.5, 1.2 * scale,
+        16, 4.8 * scale
+    ];
+}
+
 const GREEN_LINE_STOPS = [
     'State University', 'University', 'Univercity', 'Vazha-Pshavela', 'Vazha Pshavela', 'Delisi', 'Medical University', 'Technical University', 'Tsereteli', 'Station Square 2'
 ];
 
 function addStopsToMap(stops) {
     // Cleanup existing layers/sources if they exist (idempotency)
-    const layers = ['metro-layer-label', 'metro-layer-circle', 'metro-transfer-layer', 'metro-lines-layer', 'stops-layer'];
+    const layers = ['metro-layer-label', 'metro-layer-circle', 'metro-transfer-layer', 'metro-lines-layer', 'stops-layer', 'stops-layer-circle'];
     const sources = ['metro-stops', 'metro-lines-manual', 'stops'];
 
     layers.forEach(id => {
@@ -1156,6 +1224,23 @@ function addStopsToMap(stops) {
     // Actually, checking the raw data, metro stops often have NO code or a non-numeric ID.
     // Let's assume input 'stops' has vehicleMode.
 
+    // --- Generate Metro Lines (Manual) ---
+    // We need to find the coordinates for each station in order.
+    // Order matters!
+    const RED_LINE_ORDER = [
+        'Varketili', 'Samgori', 'Isani', 'Aviabar', '300 Aragveli', 'Avlabari', 'Liberty Square', 'Rustaveli', 'Marjanishvili', 'Station Square', 'Nadzaladevi', 'Gotsiridze', 'Didube', 'Ghrmaghele', 'Guramishvili', 'Sarajishvili', 'Akhmeteli Theatre'
+    ];
+    // Note: 'Aviabar' might be a typo or alias for Avlabari/300ish? 'Avlabari' is there. '300 Aragveli'.
+    // Let's stick to known major stations using fuzzy match.
+    // Cleaned names: 'Varketili', 'Samgori', 'Isani', '300 Aragveli', 'Avlabari', 'Liberty Square', 'Rustaveli', 'Marjanishvili', 'Station Square', 'Nadzaladevi', 'Gotsiridze', 'Didube', 'Ghrmaghele', 'Guramishvili', 'Sarajishvili', 'Akhmeteli Theatre'
+
+    const GREEN_LINE_ORDER = [
+        'State University', 'Vazha-Pshavela', 'Delisi', 'Medical University', 'Technical University', 'Tsereteli', 'Station Square'
+    ];
+    // Station Square is the transfer point.
+
+    const ALL_METRO_NAMES = [...RED_LINE_ORDER, ...GREEN_LINE_ORDER, ...GREEN_LINE_STOPS];
+
     const busStops = [];
     const metroFeatures = [];
     const seenMetroNames = new Set();
@@ -1166,7 +1251,14 @@ function addStopsToMap(stops) {
             stop.bearing = stopBearings[stop.id] || 0;
         }
 
-        const isMetro = stop.vehicleMode === 'SUBWAY' || stop.name.includes('Metro Station') || (stop.id && stop.id.startsWith('M:'));
+        // Robust Metro Check
+        const nameMatch = ALL_METRO_NAMES.some(m => stop.name.includes(m));
+        const codeMissing = !stop.code || stop.code.length === 0 || !stop.code.match(/^\d+$/);
+
+        const isMetro = stop.vehicleMode === 'SUBWAY' ||
+            stop.name.includes('Metro Station') ||
+            (stop.id && stop.id.startsWith('M:')) ||
+            (nameMatch && codeMissing);
 
         if (isMetro) {
             // Clean Name
@@ -1238,20 +1330,7 @@ function addStopsToMap(stops) {
         }
     });
 
-    // --- Generate Metro Lines (Manual) ---
-    // We need to find the coordinates for each station in order.
-    // Order matters!
-    const RED_LINE_ORDER = [
-        'Varketili', 'Samgori', 'Isani', 'Aviabar', '300 Aragveli', 'Avlabari', 'Liberty Square', 'Rustaveli', 'Marjanishvili', 'Station Square', 'Nadzaladevi', 'Gotsiridze', 'Didube', 'Ghrmaghele', 'Guramishvili', 'Sarajishvili', 'Akhmeteli Theatre'
-    ];
-    // Note: 'Aviabar' might be a typo or alias for Avlabari/300ish? 'Avlabari' is there. '300 Aragveli'.
-    // Let's stick to known major stations using fuzzy match.
-    // Cleaned names: 'Varketili', 'Samgori', 'Isani', '300 Aragveli', 'Avlabari', 'Liberty Square', 'Rustaveli', 'Marjanishvili', 'Station Square', 'Nadzaladevi', 'Gotsiridze', 'Didube', 'Ghrmaghele', 'Guramishvili', 'Sarajishvili', 'Akhmeteli Theatre'
 
-    const GREEN_LINE_ORDER = [
-        'State University', 'Vazha-Pshavela', 'Delisi', 'Medical University', 'Technical University', 'Tsereteli', 'Station Square'
-    ];
-    // Station Square is the transfer point.
 
     function getLineCoordinates(orderList, features) {
         const coords = [];
@@ -1315,44 +1394,54 @@ function addStopsToMap(stops) {
         });
     }
 
+    // 2. Bus Layers (Split for smooth scaling)
+
+    // Layer A: Small Circles (Zoom < 16)
+    if (!map.getLayer('stops-layer-circle')) {
+        map.addLayer({
+            id: 'stops-layer-circle',
+            type: 'circle',
+            source: 'stops',
+            maxzoom: 16, // Visible until 16, then switches to icons
+            paint: {
+                'circle-color': '#000000',
+                'circle-stroke-color': '#ffffff',
+                'circle-stroke-width': 2.1, // Increased by 40% (1.5 * 1.4)
+                'circle-radius': getCircleRadiusExpression(1),
+                'circle-opacity': 1
+            }
+        });
+    }
+
+    // Layer B: Icons (Zoom >= 16)
     if (!map.getLayer('stops-layer')) {
         map.addLayer({
             id: 'stops-layer',
             type: 'symbol',
             source: 'stops',
+            minzoom: 16, // Only visible when zoomed in
             layout: {
                 'icon-allow-overlap': true,
                 'icon-ignore-placement': true,
                 'symbol-z-order': 'source',
                 'icon-image': [
-                    'step',
-                    ['zoom'],
-                    'stop-far-away-icon', // < 14
-                    14, 'stop-icon',      // 14-16.5
-                    16.5, [               // >= 16.5
-                        'case',
-                        ['==', ['get', 'bearing'], 0],
-                        'stop-icon',      // Bearing 0 -> Circle
-                        'stop-close-up-icon' // Bearing !0 -> Directional
-                    ]
+                    'case',
+                    ['==', ['get', 'bearing'], 0],
+                    'stop-icon',      // Bearing 0 -> Circle
+                    'stop-close-up-icon' // Bearing !0 -> Directional
                 ],
+                // Fixed size at zoom 16+ (or slight scaling if desired, but request implies parity)
                 'icon-size': [
                     'interpolate',
                     ['linear'],
                     ['zoom'],
-                    10, 0.4,   // Visible at zoom 10
-                    13, 0.5,
-                    14, 0.8,
-                    16, 1
+                    // Unified size for both circle (bearing 0) and directional icons to prevent unevenness
+                    16, 0.6,
+                    18, 0.8
                 ],
-                // Rotation Logic: 0 until 16.5, then follow bearing.
-                'icon-rotate': [
-                    'step',
-                    ['zoom'],
-                    0,       // Default (zoom < 16.5)
-                    16.5, ['get', 'bearing'] // Zoom >= 16.5
-                ],
-                'icon-rotation-alignment': 'map' // Fixed to map (North relative)
+                // Rotation Logic
+                'icon-rotate': ['get', 'bearing'],
+                'icon-rotation-alignment': 'map'
             },
             paint: {
                 'icon-opacity': 1
@@ -1389,37 +1478,40 @@ function addStopsToMap(stops) {
     }
 
     // Hover Effect for Connection Line
-    map.on('mousemove', 'stops-layer', (e) => {
-        if (filterState.picking) {
-            let targetStopId = null;
+    const hoverLayers = ['stops-layer', 'stops-layer-circle'];
+    hoverLayers.forEach(layerId => {
+        map.on('mousemove', layerId, (e) => {
+            if (filterState.picking) {
+                let selectedFeature = null;
 
-            // Find first selectable stop in stack
-            for (const f of e.features) {
-                const p = f.properties;
-                const normId = redirectMap.get(p.id) || p.id;
+                // Loop through ALL features at this point to find a selectable one (handle z-overlap)
+                for (const f of e.features) {
+                    const p = f.properties;
+                    const normId = redirectMap.get(p.id) || p.id;
 
-                // Exclude Origin, but allow any reachable/highlighted
-                // Actually hover effect logic: we want to draw line to POTENTIAL target.
-                // Usually we only draw to reachable stops.
-                if (filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId)) {
-                    targetStopId = normId;
-                    break;
+                    // Exclude Origin, but allow any reachable/highlighted
+                    // Actually hover effect logic: we want to draw line to POTENTIAL target.
+                    // Usually we only draw to reachable stops.
+                    if (filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId)) {
+                        selectedFeature = f;
+                        break;
+                    }
+                }
+
+                if (selectedFeature) {
+                    // Pass Current Selection + Hover ID
+                    updateConnectionLine(filterState.originId, filterState.targetIds, true, selectedFeature.properties.id);
                 }
             }
+        });
 
-            if (targetStopId) {
-                // Pass Current Selection + Hover ID
-                updateConnectionLine(filterState.originId, filterState.targetIds, true, targetStopId);
+        map.on('mouseleave', layerId, () => {
+            if (filterState.picking) {
+                // Revert to just the selected lines (remove hover line)
+                // Pass false for isHover
+                updateConnectionLine(filterState.originId, filterState.targetIds, false);
             }
-        }
-    });
-
-    map.on('mouseleave', 'stops-layer', () => {
-        if (filterState.picking) {
-            // Revert to just the selected lines (remove hover line)
-            // Pass false for isHover
-            updateConnectionLine(filterState.originId, filterState.targetIds, false);
-        }
+        });
     });
 
     // --- Insert Metro Lines HERE ---
@@ -1476,12 +1568,12 @@ function addStopsToMap(stops) {
                 'text-offset': [0, 1.2],
                 'text-anchor': 'top',
                 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'], // Standard mapbox fonts
+                'text-halo-color': '#ffffff',
+                'text-halo-width': 2,
                 'text-allow-overlap': false
             },
             paint: {
-                'text-color': '#000000',
-                'text-halo-color': '#ffffff',
-                'text-halo-width': 2
+                'text-color': '#000000'
             }
         });
     }
@@ -1579,8 +1671,8 @@ function addStopsToMap(stops) {
 // Handle clicks
 map.on('click', 'stops-layer', async (e) => {
     // Check Click Lock
-    if (window.ignoreMapClicks) {
-        console.log('[Debug] Map Click Ignored (Lock Active)');
+    if (window.ignoreMapClicks || window.isPickModeActive) {
+        console.log('[Debug] Map Click Ignored (Lock Active or Pick Mode)');
         return;
     }
 
@@ -1640,6 +1732,63 @@ map.on('click', 'stops-layer', async (e) => {
     const stopData = { ...props, lat: coordinates[1], lon: coordinates[0] };
 
     showStopInfo(stopData, true, false); // Don't fly again inside showStopInfo
+});
+
+// Reuse same click logic for stops-layer-circle
+map.on('click', 'stops-layer-circle', async (e) => {
+    // Check Click Lock
+    if (window.ignoreMapClicks || window.isPickModeActive) {
+        return;
+    }
+
+    const props = e.features[0].properties;
+
+    // FILTER PICKING MODE
+    if (filterState.picking) {
+        let selectedFeature = null;
+        for (const f of e.features) {
+            const p = f.properties;
+            const normId = redirectMap.get(p.id) || p.id;
+            const isSelectable = filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId);
+            if (isSelectable) {
+                selectedFeature = f;
+                break;
+            }
+        }
+
+        if (selectedFeature) {
+            applyFilter(selectedFeature.properties.id);
+        } else {
+            shakeFilterButton();
+        }
+        return;
+    }
+
+    const coordinates = e.features[0].geometry.coordinates.slice();
+
+    window.currentStopId = props.id;
+    if (window.selectDevStop) window.selectDevStop(props.id);
+
+    const currentZoom = map.getZoom();
+    const targetZoom = currentZoom > 16 ? currentZoom : 16;
+
+    map.flyTo({
+        center: coordinates,
+        zoom: targetZoom
+    });
+
+    const feature = {
+        type: 'Feature',
+        geometry: e.features[0].geometry,
+        properties: props
+    };
+    map.getSource('selected-stop').setData({
+        type: 'FeatureCollection',
+        features: [feature]
+    });
+
+    const stopData = { ...props, lat: coordinates[1], lon: coordinates[0] };
+    showStopInfo(stopData, true, false);
 });
 
 // Metro Click Handlers (Same logic as stops-layer)
@@ -1726,20 +1875,24 @@ metroLayers.forEach(layerId => {
 });
 
 // Add pointer cursor for stops-layer
-map.on('mouseenter', 'stops-layer', (e) => {
-    if (filterState.picking) {
-        const hasSelectable = e.features.some(f => {
-            const p = f.properties;
-            const normId = redirectMap.get(p.id) || p.id;
-            return filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId);
-        });
+// Add pointer cursor for stops-layer and stops-layer-circle
+const busLayers = ['stops-layer', 'stops-layer-circle'];
+busLayers.forEach(layerId => {
+    map.on('mouseenter', layerId, (e) => {
+        if (filterState.picking) {
+            const hasSelectable = e.features.some(f => {
+                const p = f.properties;
+                const normId = redirectMap.get(p.id) || p.id;
+                return filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId);
+            });
 
-        if (!hasSelectable) return;
-    }
-    map.getCanvas().style.cursor = 'pointer';
-});
-map.on('mouseleave', 'stops-layer', () => {
-    map.getCanvas().style.cursor = '';
+            if (!hasSelectable) return;
+        }
+        map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', layerId, () => {
+        map.getCanvas().style.cursor = '';
+    });
 });
 
 // Helper: Shake Animation
@@ -1754,10 +1907,11 @@ function shakeFilterButton() {
 
 // Generic Map Click (Catch background clicks in Filter Mode)
 map.on('click', (e) => {
-    if (!filterState.picking) return;
+    if (!filterState.picking && !window.isPickModeActive) return;
 
     // Check if we clicked a stop layer (stops or metro)
-    const features = map.queryRenderedFeatures(e.point, { layers: ['stops-layer', ...metroLayers] });
+    // Check if we clicked a stop layer (stops or metro)
+    const features = map.queryRenderedFeatures(e.point, { layers: ['stops-layer', 'stops-layer-circle', ...metroLayers] });
 
     // If we didn't hit a stop layer, we hit background -> Shake
     if (features.length === 0) {
@@ -1951,7 +2105,7 @@ function setupPanelDrag(panelId) {
 
 
         if (currentClass === 'collapsed') {
-            if (e.deltaY > 0) { // Scroll Down (pull) -> Expand
+            if (e.deltaY < 0) { // Scroll Up (pull) -> Expand
                 e.preventDefault();
                 setSheetState(panel, 'half');
             }
@@ -2182,6 +2336,18 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     // STRICT CHECK: Metro stations must have mode 'SUBWAY' (set in addStopsToMap) OR have a specific ID pattern.
     const isMetro = stop.mode === 'SUBWAY' || (stop.id && stop.id.startsWith('1:metro'));
 
+    // Toggle Edit Button Visibility
+    const editBtn = document.getElementById('btn-edit-stop');
+    if (editBtn) {
+        if (isMetro) {
+            editBtn.classList.add('hidden');
+            editBtn.style.display = 'none';
+        } else {
+            editBtn.classList.remove('hidden');
+            editBtn.style.display = ''; // Reset to default (flex/block)
+        }
+    }
+
     if (isMetro) {
         panel.classList.add('metro-mode');
         // --- Metro Display Logic ---
@@ -2333,8 +2499,6 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                                     let timeMins = h * 60 + m;
                                     if (h < 4) timeMins += 24 * 60; // Handle post-midnight (00:xx, 01:xx) as next day relative to 6am start? 
                                     // Actually, if current is 23:00 and train is 00:10, timeMins needs adjustment?
-                                    // Let's keep simple comparison. If timeMins >= currentMinutes. 
-                                    // What if current is 23:55 and train is 00:05? 
                                     // 00:05 is 5 mins. 23:55 is 1435 mins.
                                     // 5 < 1435. Won't show.
                                     // We should normalize "service day". 
@@ -2381,9 +2545,17 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                                                 <div class="route-number" style="color: #${route.color || 'ef4444'}">${route.shortName}</div>
                                                 <div class="destination">${headsign}</div>
                                             </div>
-                                            <div class="next-arrival">
+                                    <div class="next-arrival">
                                                  ${upcoming.length > 0
-                                        ? `<div class="next-arrival-chip">${upcoming[0].diff} min <span class="small-time">(${upcoming[0].time})</span></div>`
+                                        ? (() => {
+                                            const diff = upcoming[0].diff;
+                                            const time = upcoming[0].time;
+                                            const displayTime = diff < 60 ? `${diff} min` : time;
+                                            return `<div class="time-container">
+                                                       <div class="time scheduled-time">${displayTime}</div>
+                                                       <div class="scheduled-disclaimer">Scheduled</div>
+                                                   </div>`;
+                                        })()
                                         : `<div class="status-closed">End of Service</div>`
                                     }
                                             </div>
@@ -2573,19 +2745,25 @@ function renderAllRoutes(routesInput, arrivals) {
 }
 
 async function fetchArrivals(stopId) {
-    // Check if this ID merges others
-    const subIds = mergeSourcesMap.get(stopId) || [];
-    const idsToCheck = [stopId, ...subIds];
+    // Check for all equivalent IDs (merged and hubbed)
+    const equivalentIds = getEquivalentStops(stopId);
+    const idsToCheck = new Set();
+    equivalentIds.forEach(eqId => {
+        idsToCheck.add(eqId);
+        // Also add any direct merges into this equivalent ID
+        const subIds = mergeSourcesMap.get(eqId) || [];
+        subIds.forEach(sId => idsToCheck.add(sId));
+    });
 
     // Fetch all in parallel
-    const promises = idsToCheck.map(id =>
+    const promises = Array.from(idsToCheck).map(id =>
         fetch(`${API_BASE_URL}/stops/${encodeURIComponent(id)}/arrival-times?locale=en&ignoreScheduledArrivalTimes=false`, {
             headers: { 'x-api-key': API_KEY }
         }).then(res => {
             if (!res.ok) return [];
             return res.json();
         }).catch(err => {
-            console.warn(`Failed to fetch arrivals for merged ID ${id}:`, err);
+            console.warn(`Failed to fetch arrivals for equivalent ID ${id}:`, err);
             return [];
         })
     );
@@ -2884,11 +3062,8 @@ async function getV3Schedule(routeShortName, stopId) {
             }
 
             // 2. Find Pattern containing Stop
-            let potentialIds = [String(stopId)];
-            if (typeof mergeSourcesMap !== 'undefined' && mergeSourcesMap.has(stopId)) {
-                const subIds = mergeSourcesMap.get(stopId) || [];
-                potentialIds.push(...subIds.map(String));
-            }
+            let potentialIds = Array.from(getEquivalentStops(stopId)); // Use hub equivalents
+            potentialIds.push(...Array.from(mergeSourcesMap.get(stopId) || [])); // Also check merged sources
 
             const stopEntry = patterns.find(p => {
                 const pId = String(p.stop.id);
@@ -2979,7 +3154,8 @@ async function getV3Schedule(routeShortName, stopId) {
                 // Helper to find next time in a specific day's schedule
                 const findNextTime = (sched, minTimeMinutes) => {
                     if (!sched) return null;
-                    const stop = sched.stops.find(s => s.id === stopEntry.stop.id);
+                    // Check against all equivalent stop IDs
+                    const stop = sched.stops.find(s => potentialIds.includes(String(s.id)));
                     if (!stop) return null;
 
                     const times = stop.arrivalTimes.split(',');
@@ -3107,10 +3283,16 @@ function renderArrivals(arrivals, currentStopId = null) {
 
     // 1. Identify "Missing" Routes
     let extraRoutes = [];
-    if (stopId && stopToRoutesMap.has(stopId)) {
-        const servingRoutes = stopToRoutesMap.get(stopId) || [];
+    if (stopId) {
+        const equivalentIds = getEquivalentStops(stopId);
+        const servingRoutes = new Set();
+        equivalentIds.forEach(eqId => {
+            const routes = stopToRoutesMap.get(eqId) || [];
+            routes.forEach(r => servingRoutes.add(r));
+        });
+
         const arrivalRouteShortNames = new Set(arrivals.map(a => String(a.shortName)));
-        extraRoutes = servingRoutes.filter(r => !arrivalRouteShortNames.has(String(r.shortName)));
+        extraRoutes = Array.from(servingRoutes).filter(r => !arrivalRouteShortNames.has(String(r.shortName)));
     }
 
     // 2. Filter Logic
@@ -3270,35 +3452,210 @@ function renderArrivals(arrivals, currentStopId = null) {
     });
 }
 
+// --- REUSABLE: Refresh Stops Logic (Apply Overrides/Merges) ---
+async function refreshStopsLayer(useLocalConfig = false) {
+    if (!rawStops || rawStops.length === 0) return;
+
+    let stopsConfigToUse;
+
+    if (useLocalConfig && window.stopsConfig) {
+        // Use the in-memory config (already updated by EditTools)
+        stopsConfigToUse = window.stopsConfig;
+        console.log('[Main] Refreshing with LOCAL stops config...');
+    } else {
+        // Reload from file (Standard Load)
+        if (import.meta.env.DEV) {
+            try {
+                const configUrl = new URL('./data/stops_config.json', import.meta.url).href;
+                const res = await fetch(configUrl + '?t=' + Date.now());
+                stopsConfigToUse = await res.json();
+                console.log('[Main] Loaded Fresh Stops Config (Dev Mode)');
+            } catch (e) {
+                console.error('[Main] Failed to load stops config:', e);
+                stopsConfigToUse = { overrides: {}, merges: {}, hubs: {} };
+            }
+        } else {
+            try {
+                const module = await import('./data/stops_config.json');
+                stopsConfigToUse = module.default;
+            } catch (e) {
+                console.error('[Main] Failed to load stops config:', e);
+                stopsConfigToUse = { overrides: {}, merges: {}, hubs: {} };
+            }
+        }
+    }
+
+    // Update Global Ref
+    window.stopsConfig = stopsConfigToUse;
+
+    // Reset Maps
+    redirectMap.clear();
+    mergeSourcesMap.clear();
+    hubMap.clear();
+    hubSourcesMap.clear();
+
+    const overrides = stopsConfigToUse?.overrides || {};
+    const merges = stopsConfigToUse?.merges || {};
+    const hubs = stopsConfigToUse?.hubs || {};
+
+    // Build merge mappings
+    Object.keys(merges).forEach(source => {
+        const target = merges[source];
+        redirectMap.set(source, target);
+        if (!mergeSourcesMap.has(target)) mergeSourcesMap.set(target, []);
+        mergeSourcesMap.get(target).push(source);
+    });
+
+    // Build Hub mappings
+    Object.keys(hubs).forEach(hubId => {
+        const members = hubs[hubId];
+        if (Array.isArray(members)) {
+            members.forEach(memberId => {
+                hubMap.set(memberId, hubId);
+            });
+            hubSourcesMap.set(hubId, members);
+        }
+    });
+
+    // Filter and Override
+    const stops = [];
+    const seenCoords = new Set();
+
+    // Deep Clone Raw Stops to avoid mutating the source-of-truth indefinitely?
+    // Actually, rawStops objects are mutated in the original loop.
+    // Better to clone or reset. Since rawStops is fetching fresh, 
+    // we should probably re-clone from a "really raw" source if we mutate property 'lat'/'lon'.
+    // `Object.assign(stop, ...)` MUTATES `stop`.
+    // If rawStops elements are mutated, subsequent refreshes stack.
+    // FIX: Map rawStops to NEW objects.
+    const freshStops = rawStops.map(s => ({ ...s }));
+
+    const busStops = [];
+    const metroStops = [];
+
+    // Helper to identify Metro
+    const isMetroStop = (s) =>
+        (s.vehicleMode === 'SUBWAY') ||
+        (s.name && s.name.includes('Metro Station')) ||
+        (s.id && typeof s.id === 'string' && s.id.startsWith('M:'));
+
+    freshStops.forEach(stop => {
+        // If this stop is merged INTO another, skip adding it to map list
+        if (merges[stop.id]) return;
+
+        // Apply Default Bearings (Standard Config)
+        if (stop.bearing === undefined) {
+            stop.bearing = stopBearings[stop.id] || 0;
+        }
+
+        // Apply Override if exists
+        if (overrides[stop.id]) {
+            Object.assign(stop, overrides[stop.id]);
+        }
+
+        // Deduplicate
+        const coordKey = `${stop.lat.toFixed(6)},${stop.lon.toFixed(6)}`;
+        if (seenCoords.has(coordKey)) return;
+        seenCoords.add(coordKey);
+
+        if (isMetroStop(stop)) {
+            metroStops.push(stop);
+        } else {
+            busStops.push(stop);
+        }
+        stops.push(stop); // allStops keeps everything for search
+    });
+
+    console.log(`[Refresh] Processed Stops: ${freshStops.length} -> ${stops.length} (Bus: ${busStops.length}, Metro: ${metroStops.length})`);
+    allStops = stops;
+    window.allStops = allStops;
+
+    // UPDATE MAP SOURCES
+    if (map.getSource('stops')) {
+        map.getSource('stops').setData({
+            type: 'FeatureCollection',
+            features: busStops.map(stop => ({
+                type: 'Feature',
+                geometry: {
+                    type: 'Point',
+                    coordinates: [stop.lon, stop.lat]
+                },
+                properties: {
+                    id: stop.id,
+                    name: stop.name,
+                    lat: stop.lat,
+                    lon: stop.lon,
+                    bearing: stop.bearing,
+                    mode: stop.mode
+                }
+            }))
+        });
+        console.log('[Main] Map source "stops" updated (Bus).');
+    }
+
+    if (map.getSource('metro-stops')) {
+        map.getSource('metro-stops').setData({
+            type: 'FeatureCollection',
+            features: metroStops.map(stop => ({
+                type: 'Feature',
+                geometry: {
+                    type: 'Point',
+                    coordinates: [stop.lon, stop.lat]
+                },
+                properties: {
+                    id: stop.id,
+                    name: stop.name
+                }
+            }))
+        });
+        console.log('[Main] Map source "metro-stops" updated.');
+    }
+}
 // Search Logic
 function setupSearch() {
     const input = document.getElementById('search-input');
     const suggestions = document.getElementById('search-suggestions');
+    const clearBtn = document.getElementById('search-clear');
     let debounceTimeout;
+
+    // DEBUG: Log clicks in suggestions to diagnose blocking
+    suggestions.addEventListener('click', (e) => {
+        console.log('[UI Debug] Suggestions Clicked:', e.target.tagName, e.target.className);
+    });
+
+    function updateClearBtn() {
+        if (input.value.length > 0) {
+            clearBtn.classList.remove('hidden');
+        } else {
+            clearBtn.classList.add('hidden');
+        }
+    }
+
+    clearBtn.addEventListener('click', () => {
+        input.value = '';
+        input.focus();
+        updateClearBtn();
+        renderFullHistory();
+    });
 
     // Show history on focus if empty
     input.addEventListener('focus', () => {
         if (input.value.trim() === '') {
-            const history = getSearchHistory();
-            if (history.length > 0) {
-                renderHistorySuggestions(history);
-            }
+            renderFullHistory();
         }
     });
 
     input.addEventListener('input', (e) => {
         const query = e.target.value.toLowerCase();
+        updateClearBtn();
 
         clearTimeout(debounceTimeout);
         debounceTimeout = setTimeout(async () => {
 
             if (query.length < 2) {
                 if (query.length === 0) {
-                    const history = getSearchHistory();
-                    if (history.length > 0) {
-                        renderHistorySuggestions(history);
-                        return;
-                    }
+                    renderFullHistory();
+                    return;
                 }
                 suggestions.classList.add('hidden');
                 return;
@@ -3321,7 +3678,8 @@ function setupSearch() {
             // 2. Remote Search (Mapbox Geocoding) - Addresses in Georgia
             let matchedPlaces = [];
             try {
-                const geocodingUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${mapboxgl.accessToken}&country=ge&types=place,address,poi&limit=5`;
+                // Force English language for addresses
+                const geocodingUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${mapboxgl.accessToken}&country=ge&language=en&types=place,address,poi&limit=5`;
                 const res = await fetch(geocodingUrl);
                 if (res.ok) {
                     const data = await res.json();
@@ -3346,46 +3704,198 @@ function setupSearch() {
     });
 }
 
-function renderHistorySuggestions(historyItems) {
+function renderFullHistory(expanded = false) {
     const container = document.getElementById('search-suggestions');
-    container.innerHTML = '<div class="suggestion-header" style="padding: 8px 16px; font-size: 0.75rem; color: #6b7280; font-weight: 600;">RECENT</div>';
 
-    historyItems.forEach(item => {
-        const div = document.createElement('div');
-        div.className = 'suggestion-item';
+    // Get Data
+    const searchLimit = expanded ? 15 : 5;
+    const recentSearches = historyManager.getRecentSearches(searchLimit);
+    const recentCards = historyManager.getRecentCards(10); // Always 10
 
-        if (item.type === 'route') {
-            const route = item.data;
-            div.innerHTML = `
-        <div class="suggestion-icon route" style="background: #f3f4f6; color: #6b7280;">🕒</div>
-        <div class="suggestion-text">
-          <div>Route ${route.shortName}</div>
-          <div class="suggestion-subtext">${route.longName}</div>
-        </div>
-      `;
-            div.addEventListener('click', () => {
-                showRouteOnMap(route);
-                container.classList.add('hidden');
+    // --- 1. Recently Searched ---
+
+    container.innerHTML = '';
+
+    // --- 1. Recently Searched ---
+    if (recentSearches.length > 0) {
+        // Create Header with Clear Button
+        const header = document.createElement('div');
+        header.className = 'suggestion-header';
+        header.style.cssText = 'padding: 12px 16px 4px; font-size: 0.75rem; color: var(--text-light); font-weight: 600; background: #fff; display: flex; justify-content: space-between; align-items: center;';
+
+        const title = document.createElement('span');
+        title.innerText = 'RECENTLY SEARCHED';
+        header.appendChild(title);
+
+        const clearBtn = document.createElement('span');
+        clearBtn.innerText = 'CLEAR ALL';
+        clearBtn.style.cssText = 'font-size: 0.65rem; color: #ef4444; cursor: pointer; letter-spacing: 0.5px;';
+        clearBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (confirm('Clear search history?')) {
+                historyManager.clearSearchHistory();
+                renderFullHistory();
+            }
+        });
+        header.appendChild(clearBtn);
+
+        container.appendChild(header);
+
+        recentSearches.forEach(item => {
+            const div = createSuggestionElement(item, 'search');
+            container.appendChild(div);
+        });
+
+        // "Show More" Button
+        if (!expanded && historyManager.getRecentSearches(15).length > 5) {
+            const moreBtn = document.createElement('div');
+            moreBtn.className = 'suggestion-item show-more-btn'; // Added class
+            moreBtn.style.color = 'var(--primary)';
+            moreBtn.style.fontWeight = '600';
+            moreBtn.style.justifyContent = 'center';
+            moreBtn.innerHTML = 'Show more...';
+            moreBtn.addEventListener('click', (e) => {
+                e.stopPropagation(); // Prevent closing
+                renderFullHistory(true); // Re-render expanded
             });
-        } else {
-            const stop = item.data;
-            div.innerHTML = `
-        <div class="suggestion-icon stop" style="background: #f3f4f6; color: #6b7280;">🕒</div>
-        <div class="suggestion-text">
-          <div>${stop.name}</div>
-          <div class="suggestion-subtext">Code: ${stop.code}</div>
-        </div>
-      `;
-            div.addEventListener('click', () => {
-                map.flyTo({ center: [stop.lon, stop.lat], zoom: 16 });
-                showStopInfo(stop);
-                container.classList.add('hidden');
-            });
+            container.appendChild(moreBtn);
         }
-        container.appendChild(div);
-    });
+    }
+
+    // --- 2. Recent Cards ---
+    // Only show if not expanded? User said "after this first section show 10 recent cards, dont put a show more button there"
+    // I assume show it always.
+    if (recentCards.length > 0) {
+        container.innerHTML += '<div class="suggestion-header" style="padding: 12px 16px 4px; font-size: 0.75rem; color: var(--text-light); font-weight: 600; background: #fff; border-top: 1px solid #f3f4f6; margin-top: 4px;">RECENT CARDS</div>';
+
+        recentCards.forEach(item => {
+            // Deduplicate? If it's in Recent Searches, maybe don't show here?
+            // "recent cards" might overlap. I'll just show them raw as requested.
+            const div = createSuggestionElement(item, 'card');
+            container.appendChild(div);
+        });
+    }
+
+    // Empty State
+    if (recentSearches.length === 0 && recentCards.length === 0) {
+        container.innerHTML = `
+            <div style="padding: 20px; text-align: center; color: var(--text-light); font-size: 0.9rem;">
+                <div style="font-size: 1.5rem; margin-bottom: 8px;">🔍</div>
+                <div>Type to search for stops,<br>routes, or addresses</div>
+            </div>
+        `;
+    }
+
     container.classList.remove('hidden');
 }
+
+function createSuggestionElement(item, historyType = null) {
+    const div = document.createElement('div');
+    div.className = 'suggestion-item';
+
+    // Data extraction
+    // item.data might be the object, or item might be the object if passed directly?
+    // HistoryManager stores { type, id, data: fullObject }
+    const type = item.type || (item.geometry ? 'place' : (item.stops ? 'route' : 'stop')); // Fallback inference
+    const data = item.data || item;
+    const isHistory = !!historyType;
+
+    let iconHTML = '';
+    let textHTML = '';
+
+    if (type === 'route') {
+        const route = data;
+        iconHTML = `<div class="suggestion-icon route" style="background: ${isHistory ? '#f3f4f6' : '#dcfce7'}; color: ${isHistory ? '#6b7280' : '#16a34a'};">${isHistory ? '🕒' : '🚌'}</div>`;
+        textHTML = `
+            <div style="font-weight:600;">Route ${route.shortName}</div>
+            <div class="suggestion-subtext">${route.longName}</div>
+        `;
+    } else if (type === 'stop') {
+        const stop = data;
+        iconHTML = `<div class="suggestion-icon stop" style="background: ${isHistory ? '#f3f4f6' : '#e0f2fe'}; color: ${isHistory ? '#6b7280' : '#0284c7'};">${isHistory ? '🕒' : '🚏'}</div>`;
+        textHTML = `
+            <div style="font-weight:600;">${stop.name}</div>
+            <div class="suggestion-subtext">Code: ${stop.code || 'N/A'}</div>
+        `;
+    } else if (type === 'place') {
+        iconHTML = `<div class="suggestion-icon place" style="background: ${isHistory ? '#f3f4f6' : '#eef2ff'}; color: ${isHistory ? '#6b7280' : '#4f46e5'};">${isHistory ? '🕒' : '📍'}</div>`;
+        textHTML = `
+            <div style="font-weight:600;">${data.text}</div>
+            <div class="suggestion-subtext">${data.place_name}</div>
+        `;
+    }
+
+    div.innerHTML = `
+        ${iconHTML}
+        <div class="suggestion-text">
+            ${textHTML}
+        </div>
+    `;
+
+    // Click Action
+    div.addEventListener('click', () => {
+        if (!isHistory) {
+            // Ensure ID is captured correctly based on type
+            let id = data.id;
+            if (type === 'stop') id = data.id || data.stopId || data.code;
+            if (type === 'route') id = data.id || data.routeId || data.shortName; // Fallback to shortName if needed
+
+            historyManager.addSearch({ type, id, data });
+        }
+
+        if (type === 'route') showRouteOnMap(data);
+        else if (type === 'stop') {
+            map.flyTo({ center: [data.lon, data.lat], zoom: 16 });
+            showStopInfo(data);
+        } else if (type === 'place') {
+            const coords = data.center;
+            map.flyTo({ center: coords, zoom: 16 });
+            new mapboxgl.Marker().setLngLat(coords).addTo(map);
+        }
+        document.getElementById('search-suggestions').classList.add('hidden');
+    });
+
+    // Delete Button (if history)
+    if (isHistory) {
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'suggestion-delete-btn';
+        deleteBtn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        `;
+        deleteBtn.title = "Remove from history";
+        deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation(); // Stop click from triggering item selection
+            console.log('[UI] Delete button clicked for', item.type, item.id);
+
+            // Check expansion state BEFORE removing (simple heuristic: if "Show more" is absent but we have >5, likely expanded)
+            // Or just check if the list currently has > 6 items?
+            // Let's assume collapsed unless we see > 5 Search items visible?
+            const searchItemsVisible = document.querySelectorAll('.suggestion-icon.stop, .suggestion-icon.route, .suggestion-icon.place').length;
+            // This counts everything.
+            // Better: Check if `.show-more-btn` exists.
+            const showMoreExists = !!document.querySelector('.show-more-btn');
+            const wasExpanded = !showMoreExists;
+
+            if (historyType === 'search') {
+                historyManager.removeSearch(item);
+            } else if (historyType === 'card') {
+                historyManager.removeCard(item);
+            }
+
+            renderFullHistory(wasExpanded);
+        });
+        div.appendChild(deleteBtn);
+    }
+
+    return div;
+}
+
+// Helper to keep old function signature working or replaced
+// renderSuggestions calls this internal Logic? No, renderSuggestions handles new search results.
+// We need to update renderSuggestions to use createSuggestionElement key logic or similar.
 
 function renderSuggestions(stops, routes, places = []) {
     const container = document.getElementById('search-suggestions');
@@ -3398,63 +3908,19 @@ function renderSuggestions(stops, routes, places = []) {
 
     // Render Routes
     routes.forEach(route => {
-        const div = document.createElement('div');
-        div.className = 'suggestion-item';
-        div.innerHTML = `
-      <div class="suggestion-icon route">BUS</div>
-      <div class="suggestion-text">
-        <div>Route ${route.shortName}</div>
-        <div class="suggestion-subtext">${route.longName}</div>
-      </div>
-    `;
-        div.addEventListener('click', () => {
-            showRouteOnMap(route);
-            container.classList.add('hidden');
-        });
+        const div = createSuggestionElement({ type: 'route', data: route }, null);
         container.appendChild(div);
     });
 
     // Render Stops
     stops.forEach(stop => {
-        const div = document.createElement('div');
-        div.className = 'suggestion-item';
-        div.innerHTML = `
-      <div class="suggestion-icon stop">STOP</div>
-      <div class="suggestion-text">
-        <div>${stop.name}</div>
-        <div class="suggestion-subtext">Code: ${stop.code}</div>
-      </div>
-    `;
-        div.addEventListener('click', () => {
-            map.flyTo({ center: [stop.lon, stop.lat], zoom: 16 });
-            showStopInfo(stop);
-            container.classList.add('hidden');
-        });
+        const div = createSuggestionElement({ type: 'stop', data: stop }, null);
         container.appendChild(div);
     });
 
     // Render Places
     places.forEach(place => {
-        const div = document.createElement('div');
-        div.className = 'suggestion-item';
-        div.innerHTML = `
-      <div class="suggestion-icon place">📍</div>
-      <div class="suggestion-text">
-        <div>${place.text}</div>
-        <div class="suggestion-subtext">${place.place_name}</div>
-      </div>
-    `;
-        div.addEventListener('click', () => {
-            const [lon, lat] = place.center;
-            map.flyTo({ center: [lon, lat], zoom: 16 });
-
-            // Optional: Add a temporary marker
-            new mapboxgl.Marker({ color: '#4f46e5' })
-                .setLngLat([lon, lat])
-                .addTo(map);
-
-            container.classList.add('hidden');
-        });
+        const div = createSuggestionElement({ type: 'place', data: place }, null);
         container.appendChild(div);
     });
 
@@ -3565,7 +4031,8 @@ async function updateRouteView(route, options = {}) {
                     return data && data.stops.some(s => {
                         const sId = String(s.id || s.stopId);
                         const normId = redirectMap.get(sId) || sId;
-                        return normId === options.fromStopId;
+                        // Check against all equivalent stops of fromStopId
+                        return getEquivalentStops(options.fromStopId).has(normId);
                     });
                 });
 
@@ -3820,7 +4287,7 @@ function setSheetState(panel, state) {
 
     // For desktop compatibility
     // We WANT these states to persist now, so we can support the half/full/collapsed logic on desktop too.
-    // The CSS media queries should handle the sizing (width), but the height/y-transform is controlled by these classes/JS.
+    // The CSS handles the centering and width constraints for desktop.
 
     // Previous logic forced it to just removed 'hidden' on desktop. 
     // We'll keep the classes. The CSS for desktop needs to respect them if we want this behavior.
@@ -3829,16 +4296,6 @@ function setSheetState(panel, state) {
     // Wait, the design IS a sidebar on desktop? 
     // The user said "Desktop (narrow window)". 
     // If it's a Sidebar, vertical sliding makes no sense.
-    // BUT the user asked for: "on desktop (narrow window) i expect this behaviour: the card opens halfway..."
-
-    // If window is narrow (<768px), it's mobile layout anyway.
-    // If window is >768px but "narrow"? 
-    // Usually >768 is treated as tablet/desktop in my CSS.
-
-    // If the user wants this behavior on "Desktop (narrow window)", they likely mean when they resize the browser to be mobile-like.
-    // OR they mean the sidebar itself should have states?
-    // "the card opens halfway... scrolling collapses the card". This implies vertical movement.
-    // Vertical movement implies Bottom Sheet.
     // Sidebars typically don't "collapse down".
 
     // If the app switches to Sidebar on Desktop, this whole "Slide Up/Down" logic logic is moot unless we are in Mobile Mode.
@@ -3996,6 +4453,7 @@ function triggerMapClickLock() {
 }
 
 // Close panel
+// Close panel
 document.getElementById('close-panel').addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
@@ -4003,6 +4461,10 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
 
     console.log('[Debug] Close panel clicked');
     const panel = document.getElementById('info-panel');
+
+    // Close Edit Mode (and persist state)
+    if (typeof stopEditing === 'function') stopEditing(true);
+
     setSheetState(panel, 'hidden');
 
     try {
@@ -4022,11 +4484,12 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
         console.error('Error during close cleanup', err);
     } finally {
         clearHistory(); // Clear history on close
-        Router.update(null);
-        map.flyTo({ pitch: 0, zoom: Math.min(map.getZoom(), 14) });
+        Router.update(null, false, [], getMapHash());
+        map.flyTo({ pitch: 0 }); // REMOVED ZOOM
     }
 });
 
+// Close Route Info
 // Close Route Info
 document.getElementById('close-route-info').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -4038,8 +4501,8 @@ document.getElementById('close-route-info').addEventListener('click', (e) => {
     clearRoute(); // Helper to clear route layers (modified to also reset focus)
 
     // Also reset URL when closing route info
-    Router.update(null);
-    map.flyTo({ pitch: 0, zoom: Math.min(map.getZoom(), 14) });
+    Router.update(null, false, [], getMapHash());
+    map.flyTo({ pitch: 0 }); // REMOVED ZOOM
 });
 
 function clearRoute() {
@@ -4106,7 +4569,33 @@ function loadImages(map) {
     const baseUrl = import.meta.env.BASE_URL || '/';
 
     // Load SVG Icons (Rasterized)
-    loadSvgImage(map, 'stop-icon', `${baseUrl}stop.svg`, 64, 64);
+    // loadSvgImage(map, 'stop-icon', `${baseUrl}stop.svg`, 64, 64);
+
+    // UNIFIED CIRCLE (0 degree stops): Match stop-selected.svg style (Black, r=24.5, stroke=4)
+    const circleSize = 53; // Width of the SVG is 53
+    const circleCanvas = document.createElement('canvas');
+    circleCanvas.width = circleSize * 2; // Retina
+    circleCanvas.height = circleSize * 2;
+    const cCtx = circleCanvas.getContext('2d');
+
+    // Scale for retina
+    cCtx.scale(2, 2);
+
+    // Center logic (53/2 = 26.5)
+    const cx = 26.5;
+    const cy = 26.5;
+    const r = 24.5;
+
+    cCtx.fillStyle = '#000000';
+    cCtx.strokeStyle = '#ffffff';
+    cCtx.lineWidth = 4;
+
+    cCtx.beginPath();
+    cCtx.arc(cx, cy, r, 0, Math.PI * 2);
+    cCtx.fill();
+    cCtx.stroke();
+
+    map.addImage('stop-icon', cCtx.getImageData(0, 0, circleSize * 2, circleSize * 2), { pixelRatio: 2 });
     // STOPS FAR AWAY: Simple Circle (Programmatic)
     const farSize = 24; // Small canvas
     const farCanvas = document.createElement('canvas');
@@ -4121,10 +4610,38 @@ function loadImages(map) {
 
     map.addImage('stop-far-away-icon', farCtx.getImageData(0, 0, farSize, farSize), { pixelRatio: 2 });
 
-    // Use correct aspect ratio for these (Original: 43x66 -> 2x: 86x132)
-    loadSvgImage(map, 'stop-close-up-icon', `${baseUrl}stop-close-up.svg`, 86, 132);
-    // (Original: 53x76 -> 2x: 106x152)
-    loadSvgImage(map, 'stop-selected-icon', `${baseUrl}stop-selected.svg`, 106, 152);
+    // Unified Design: Use 'stop-selected.svg' (Circle + Arrow, Black) for ALL close-up stops
+    // Pivot Issue: The visual center (circle) is at Y=49.35, but image height is 76 (Center 38).
+    // Mapbox rotates around 38. We need it to rotate around 49.35.
+    // Solution: Pad the image bottom so Center Y = 49.35. Total Height = 49.35 * 2 = 98.7.
+
+    const svgUrl = `${baseUrl}stop-selected.svg`;
+    const imgIco = new Image();
+    imgIco.crossOrigin = 'Anonymous';
+    imgIco.onload = () => {
+        // Source Logical Size: 53 x 76
+        // Target Pixel Size (2x): 106 x 152
+        // Pivot Y (Logical): 49.35
+        // New Logical Height: 49.35 * 2 = 98.7
+        // New Pixel Height (2x): 197.4 -> 198
+
+        const padCanvas = document.createElement('canvas');
+        padCanvas.width = 106; // 53 * 2
+        padCanvas.height = 198; // 99 * 2 (Pivot at 99)
+        const pCtx = padCanvas.getContext('2d');
+
+        // Draw image at Top (0,0) so Pivot (49.35 * 2 = 98.7) aligns with Center (198 / 2 = 99)
+        // Wait, if I draw at 0, Pivot is at 98.7. Center is 99. Close enough.
+        pCtx.drawImage(imgIco, 0, 0, 106, 152);
+
+        const imageData = pCtx.getImageData(0, 0, 106, 198);
+
+        // Add both icons using this centered image
+        map.addImage('stop-close-up-icon', imageData, { pixelRatio: 2 });
+        map.addImage('stop-selected-icon', imageData, { pixelRatio: 2 });
+    };
+    imgIco.onerror = (e) => console.error('Failed to load stop-selected.svg for padding', e);
+    imgIco.src = svgUrl;
 
     // Create an SDF Arrow Icon programmatically
     const width = 48;
@@ -4183,7 +4700,13 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
         if (!targetStop) return;
 
         // Find connecting routes
-        const originRoutes = stopToRoutesMap.get(originId) || [];
+        const originEq = getEquivalentStops(originId);
+        const originRoutesSet = new Set();
+        originEq.forEach(oid => {
+            const routes = stopToRoutesMap.get(oid) || [];
+            routes.forEach(r => originRoutesSet.add(r));
+        });
+        const originRoutes = Array.from(originRoutesSet);
 
         // Group Routes by Path Signature
         const pathGroups = new Map(); // signature -> { routes: [], patternStops: [], pattern: patternObj }
@@ -4194,39 +4717,77 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             let segmentStops = null;
             let matchedPattern = null;
 
+            const targetEq = getEquivalentStops(targetId);
+
             if (r._details && r._details.patterns) {
                 r._details.patterns.some(p => {
                     if (!p.stops) return false;
-                    const idxO = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === originId);
-                    const idxT = p.stops.findIndex(s => (redirectMap.get(s.id) || s.id) === targetId);
-                    if (idxO !== -1 && idxT !== -1 && idxO < idxT) {
-                        segmentStops = p.stops.slice(idxO, idxT + 1);
+
+                    // Iterate once to find first O followed by first T
+                    let foundO = -1;
+                    let foundT = -1;
+
+                    for (let i = 0; i < p.stops.length; i++) {
+                        const sId = p.stops[i].id;
+                        const normId = redirectMap.get(sId) || sId;
+
+                        if (foundO === -1 && originEq.has(normId)) {
+                            foundO = i;
+                        } else if (foundO !== -1 && targetEq.has(normId)) {
+                            foundT = i;
+                            break; // Found first T after O, stop.
+                        }
+                    }
+
+                    if (foundO !== -1 && foundT !== -1) {
+                        segmentStops = p.stops.slice(foundO, foundT + 1).map(s => {
+                            const normId = redirectMap.get(s.id) || s.id;
+                            // Hydrate with overridden coordinates from allStops if available
+                            const refStop = allStops.find(as => as.id === normId);
+                            // Ensure we use the stop object ID but potentially override coords
+                            return refStop ? { ...s, id: normId, lat: refStop.lat, lon: refStop.lon } : { ...s, id: normId };
+                        });
                         matchedPattern = p;
                         return true;
                     }
                     return false;
                 });
             } else if (r.stops) {
-                // Fallback geometry (just origin+target or full list subset)
+                // Fallback
                 const stops = r.stops;
-                // r.stops is just IDs usually. Need fetching? 
-                // We likely only have IDs in r.stops if details missing.
-                // We can't easily build signature from IDs only if we don't have coords for intermediate?
-                // Actually we can enable signature by ID sequence.
-                const idxO = stops.findIndex(sid => (redirectMap.get(sid) || sid) === originId);
-                const idxT = stops.findIndex(sid => (redirectMap.get(sid) || sid) === targetId);
+                let foundO = -1;
+                let foundT = -1;
 
-                if (idxO !== -1 && idxT !== -1 && idxO < idxT) {
-                    // We need actual stop objects for geometry, but for grouping IDs are enough.
-                    // But to draw, we need coords.
-                    // Let's rely on 'allStops' to hydrate.
-                    segmentStops = stops.slice(idxO, idxT + 1).map(sid => allStops.find(s => s.id === (redirectMap.get(sid) || sid))).filter(Boolean);
+                for (let i = 0; i < stops.length; i++) {
+                    const sId = stops[i];
+                    const normId = redirectMap.get(sId) || sId;
+                    if (foundO === -1 && originEq.has(normId)) {
+                        foundO = i;
+                    } else if (foundO !== -1 && targetEq.has(normId)) {
+                        foundT = i;
+                        break;
+                    }
+                }
+
+                if (foundO !== -1 && foundT !== -1) {
+                    segmentStops = stops.slice(foundO, foundT + 1).map(sid => {
+                        const normId = redirectMap.get(sid) || sid;
+                        return allStops.find(s => s.id === normId);
+                    }).filter(Boolean);
                 }
             }
 
             if (segmentStops && segmentStops.length >= 2) {
                 // Generate Signature
-                const ids = segmentStops.map(s => s.id || s).join('|');
+                // HUB COLOR LOGIC: Use HUB PARENT IDs for generating color signature
+                // This ensures all routes going to the same "Hub" get the same color.
+                const ids = segmentStops
+                    .map(s => {
+                        const id = s.id || s;
+                        return hubMap.get(id) || id; // Normalize to HUB
+                    })
+                    .filter((id, i, arr) => i === 0 || id !== arr[i - 1]) // Dedup adjacent
+                    .join('|');
 
                 if (!pathGroups.has(ids)) {
                     pathGroups.set(ids, {
@@ -4361,6 +4922,12 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             // If awaiting fetch, simple. If fetched, accurate.
 
             const activeCoords = finalCoordinates || simpleCoordinates;
+
+            // Safety: Ensure color is never null
+            if (!color) {
+                console.warn('[Debug] Color was null/undefined for signature:', signature, 'Using fallback.');
+                color = '#888888';
+            }
 
             features.push({
                 type: 'Feature',
@@ -4565,4 +5132,777 @@ async function fetchAndCacheGeometry(route, pattern) {
     } finally {
         pattern._fetchingPolyline = false;
     }
+}
+// --- Edit Tools Integration ---
+
+let isEditing = false;
+let editState = {
+    stopId: null,
+    overrides: {}, // { lat, lon, bearing }
+    merges: []     // [id1, id2...]
+};
+const editSessionCache = {}; // Cache for unapplied drafts: { stopId: { overrides, parent, unmerges } }
+
+// Map Markers for Editing
+let editLocMarker = null;
+let editRotMarker = null;
+let editRotLine = null; // GeoJSON source for line between center and rotation handle
+
+function initEditTools() {
+    const editBtn = document.getElementById('btn-edit-stop');
+    const editBlock = document.getElementById('stop-edit-block');
+    const applyBtn = document.getElementById('edit-btn-apply');
+
+    const toggleLoc = document.getElementById('edit-toggle-loc');
+    const toggleRot = document.getElementById('edit-toggle-rot');
+    const toggleMerge = document.getElementById('edit-toggle-merge');
+
+    if (!editBtn || !editBlock) return;
+
+    // Toggle Edit Mode
+    editBtn.addEventListener('click', () => {
+        isEditing = !isEditing;
+        editBtn.classList.toggle('active', isEditing);
+
+        // Reset toggles when closing/opening
+        if (isEditing) {
+            editBlock.classList.remove('hidden');
+            editBlock.style.display = 'flex';
+            // Initialize State
+            startEditing(window.currentStopId);
+        } else {
+            editBlock.classList.add('hidden');
+            editBlock.style.display = 'none';
+            stopEditing(true);
+        }
+    });
+
+    // Toggles
+    toggleLoc.addEventListener('click', () => {
+        toggleLoc.classList.toggle('active');
+        if (!toggleLoc.classList.contains('active') && editState.overrides) {
+            delete editState.overrides.lat;
+            delete editState.overrides.lon;
+        }
+        updateEditMap();
+        checkDirtyState();
+    });
+
+    toggleRot.addEventListener('click', () => {
+        toggleRot.classList.toggle('active');
+        if (!toggleRot.classList.contains('active') && editState.overrides) {
+            delete editState.overrides.bearing;
+        }
+        updateEditMap();
+        checkDirtyState();
+    });
+
+    toggleMerge.addEventListener('click', () => {
+        const wasActive = toggleMerge.classList.contains('active');
+        const nowActive = !wasActive;
+        toggleMerge.classList.toggle('active', nowActive);
+
+        // Disable Hub if Merge active
+        if (nowActive) {
+            document.getElementById('edit-toggle-hub').classList.remove('active');
+            setEditPickMode('merge');
+        } else {
+            setEditPickMode(null);
+        }
+    });
+
+    const toggleHub = document.getElementById('edit-toggle-hub');
+    toggleHub.addEventListener('click', () => {
+        const wasActive = toggleHub.classList.contains('active');
+        const nowActive = !wasActive;
+        toggleHub.classList.toggle('active', nowActive);
+
+        // Disable Merge if Hub active
+        if (nowActive) {
+            toggleMerge.classList.remove('active');
+            setEditPickMode('hub');
+        } else {
+            // Turning off defaults to null (no picker)
+            setEditPickMode(null);
+        }
+    });
+
+    // Apply
+    applyBtn.addEventListener('click', async () => {
+        await saveEditChanges();
+        // Don't close, just update state.
+    });
+}
+
+function startEditing(stopId) {
+    if (!stopId) return;
+    const stop = allStops.find(s => s.id === stopId);
+    if (!stop) return;
+
+    if (editSessionCache[stopId]) {
+        console.log('[EditTools] Restoring draft for:', stopId);
+        editState = {
+            stopId: stopId,
+            overrides: { ...editSessionCache[stopId].overrides },
+            mergeParent: editSessionCache[stopId].mergeParent,
+            unmerges: [...(editSessionCache[stopId].unmerges || [])],
+            hubTarget: editSessionCache[stopId].hubTarget,
+            unhubs: [...(editSessionCache[stopId].unhubs || [])]
+        };
+    } else {
+        // 2. Load from Config
+        editState = {
+            stopId: stopId,
+            overrides: {},
+            mergeParent: null,
+            unmerges: [],
+            hubTarget: null,
+            unhubs: []
+        };
+
+        if (stopsConfig?.overrides?.[stopId]) {
+            editState.overrides = { ...stopsConfig.overrides[stopId] };
+        }
+
+        // Existing Hub?
+        if (stopsConfig?.hubs?.[stopId]) {
+            editState.hubTarget = stopsConfig.hubs[stopId];
+        } else {
+            // Check reverse (hubSourcesMap) to see if this stop is the Leader?
+            // If I am Leader, I don't point to anyone. `hubTarget` is null.
+            // But I might want to link TO someone else.
+            editState.hubTarget = null;
+        }
+    }
+
+    // Set toggle state based on overrides (Active = Has Override)
+    const toggleLoc = document.getElementById('edit-toggle-loc');
+    const toggleRot = document.getElementById('edit-toggle-rot');
+
+    if (editState.overrides.lat || editState.overrides.lon) {
+        toggleLoc.classList.add('active');
+    } else {
+        toggleLoc.classList.remove('active');
+    }
+
+    if (editState.overrides.bearing !== undefined) {
+        toggleRot.classList.add('active');
+    } else {
+        toggleRot.classList.remove('active');
+    }
+
+    updateEditMergedList();
+    updateEditMap();
+    checkDirtyState();
+}
+
+function stopEditing(persist = false) {
+    try {
+        // Persist State if requested
+        if (persist && editState.stopId) {
+            editSessionCache[editState.stopId] = {
+                overrides: { ...editState.overrides },
+                mergeParent: editState.mergeParent,
+                unmerges: editState.unmerges,
+                hubTarget: editState.hubTarget,
+                unhubs: editState.unhubs
+            };
+            console.log('[EditTools] Persisted draft for:', editState.stopId);
+        } else if (!persist && editState.stopId) {
+            delete editSessionCache[editState.stopId];
+        }
+    } catch (e) {
+        console.error('[EditTools] Error persisting state:', e);
+    }
+
+    // Always Reset UI
+    const editBtn = document.getElementById('btn-edit-stop');
+    if (editBtn) editBtn.classList.remove('active');
+
+    const editBlock = document.getElementById('stop-edit-block');
+    if (editBlock) {
+        editBlock.classList.add('hidden');
+        editBlock.style.display = 'none';
+    }
+
+    isEditing = false;
+
+    // Clear Markers
+    if (editLocMarker) { editLocMarker.remove(); editLocMarker = null; }
+    if (editRotMarker) { editRotMarker.remove(); editRotMarker = null; }
+
+    if (map.getSource('edit-rot-line')) {
+        map.removeLayer('edit-rot-line-layer');
+        map.removeSource('edit-rot-line');
+    }
+
+    // Reset Toggles
+    document.querySelectorAll('.edit-chip').forEach(el => el.classList.remove('active'));
+    setEditPickMode(null); // Use null to turn off
+}
+
+// Rotation Handler Global Reference (need to remove listeners on cleanup)
+let rotateMouseHandler = null;
+let rotateUpHandler = null;
+
+function updateEditMap() {
+    const stopId = editState.stopId;
+    const stopFeature = map.querySourceFeatures('stops', { filter: ['==', ['get', 'id'], stopId] })[0];
+    const stop = stopFeature ? stopFeature.properties : allStops.find(s => s.id === stopId);
+
+    if (!stop) return;
+
+    let lat, lon;
+    if (editState.overrides.lat) lat = parseFloat(editState.overrides.lat);
+    if (editState.overrides.lon) lon = parseFloat(editState.overrides.lon);
+
+    if ((isNaN(lat) || isNaN(lon)) && stopFeature && stopFeature.geometry) {
+        lon = stopFeature.geometry.coordinates[0];
+        lat = stopFeature.geometry.coordinates[1];
+    }
+    if (isNaN(lat) || isNaN(lon)) {
+        lat = parseFloat(stop.lat);
+        lon = parseFloat(stop.lon);
+    }
+    if (isNaN(lat) || isNaN(lon)) return;
+
+    const bearing = editState.overrides.bearing !== undefined ? editState.overrides.bearing : (stop.bearing || 0);
+
+    const toggleLoc = document.getElementById('edit-toggle-loc');
+    const toggleRot = document.getElementById('edit-toggle-rot');
+
+    // Always show the unified marker in Edit Mode
+    let el;
+    if (!editLocMarker) {
+        el = document.createElement('div');
+        el.className = 'edit-stop-marker';
+        el.innerHTML = `
+            <svg width="53" height="76" viewBox="0 0 53 76" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="26.5" cy="49.3533" r="24.5" fill="black" stroke="white" stroke-width="4"/>
+                <path d="M22.1698 4.5C24.0943 1.1667 28.9054 1.16675 30.83 4.5L35.9657 13.3945C37.8902 16.7278 35.4845 20.8944 31.6356 20.8945H21.3651C17.5161 20.8945 15.1096 16.7279 17.0341 13.3945L22.1698 4.5Z" fill="black" stroke="white" stroke-width="4"/>
+            </svg>
+            <div class="edit-arrow-zone" title="Drag to Rotate"></div>
+            <div class="edit-body-zone" title="Drag to Move"></div>
+        `;
+
+        // Marker
+        editLocMarker = new mapboxgl.Marker({
+            element: el,
+            draggable: true,
+        })
+            .setLngLat([lon, lat])
+            .setRotation(bearing) // Native rotation of the DIV
+            .setRotationAlignment('map') // Align to map (North) or 'viewport'? 'map' means 0 is North.
+            .addTo(map);
+
+        const arrowZone = el.querySelector('.edit-arrow-zone');
+
+        // --- Rotation Logic ---
+        arrowZone.addEventListener('mousedown', (e) => {
+            e.stopPropagation(); // Prevent Drag Start (Movement)
+            e.preventDefault();
+
+            el.classList.add('rotating');
+            map.dragPan.disable(); // Prevent map panning while rotating
+
+            // Center of the marker in pixels
+            const pos = map.project([lon, lat]);
+
+            const onMouseMove = (moveEvent) => {
+                const dx = moveEvent.clientX - pos.x;
+                const dy = moveEvent.clientY - pos.y;
+                /*
+                   Mapbox Bearing: 0 = North (Up), 90 = East (Right).
+                   Math.atan2(y, x): 0 = Right, -PI/2 = Up.
+                   Angle differences:
+                   Math 0deg = Mapbox 90
+                   Math -90deg = Mapbox 0
+                   Math 180deg = Mapbox 270 (-90)
+                   Math 90deg = Mapbox 180
+ 
+                   Formula: Mapbox = 90 + (Math * 180 / PI)
+                */
+
+                let rad = Math.atan2(dy, dx);
+                let deg = rad * (180 / Math.PI);
+
+                // Convert to Bearing (0 North, CW)
+                // atan2(0, 1) [Right] -> 0 deg. Mapbox expect 90.
+                // atan2(-1, 0) [Up] -> -90 deg. Mapbox expect 0.
+
+                let newBearing = 90 + deg;
+                if (newBearing < 0) newBearing += 360;
+                if (newBearing >= 360) newBearing -= 360;
+
+                // Snap to 15 degrees? No, smooth.
+                newBearing = Math.round(newBearing);
+
+                // Update State
+                editState.overrides.bearing = newBearing;
+
+                // LIGHT UP BUTTON
+                if (toggleRot) toggleRot.classList.add('active');
+
+                // Update Marker Visual (Immediate)
+                editLocMarker.setRotation(newBearing);
+
+                // Update Toggles Check
+                checkDirtyState();
+            };
+
+            const onMouseUp = () => {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+                el.classList.remove('rotating');
+                map.dragPan.enable();
+            };
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+
+        // --- Drag Logic (Body) ---
+        editLocMarker.on('drag', () => {
+            const lngLat = editLocMarker.getLngLat();
+            editState.overrides.lon = parseFloat(lngLat.lng.toFixed(5));
+            editState.overrides.lat = parseFloat(lngLat.lat.toFixed(5));
+
+            // LIGHT UP BUTTON
+            if (toggleLoc) toggleLoc.classList.add('active');
+
+            // Keep state consistent
+            lon = lngLat.lng;
+            lat = lngLat.lat;
+
+            checkDirtyState();
+        });
+
+    } else {
+        // Update Position & Rotation if it already exists
+        editLocMarker.setLngLat([lon, lat]);
+        editLocMarker.setRotation(bearing);
+    }
+
+    // Cleanup old artifacts if they exist (legacy safety)
+    if (editRotMarker) { editRotMarker.remove(); editRotMarker = null; }
+    if (map.getSource('edit-rot-line')) {
+        map.removeLayer('edit-rot-line-layer');
+        map.removeSource('edit-rot-line');
+    }
+}
+
+function updateEditStateFromMap() {
+    // Sync state if needed
+}
+
+let editPickHandler = null;
+
+function setEditPickMode(mode) {
+    // Turning off if mode is null (or falsy)
+    if (!mode) {
+        window.isPickModeActive = false;
+        window.editPickModeType = null;
+        const existing = document.getElementById('edit-pick-banner');
+        if (existing) existing.remove();
+        document.body.style.cursor = 'default';
+        if (editPickHandler) map.off('click', 'stops-layer', editPickHandler);
+        return;
+    }
+
+    // Turning on
+    window.isPickModeActive = true;
+    window.editPickModeType = mode; // 'merge' or 'hub'
+
+    const banner = document.createElement('div');
+    banner.id = 'edit-pick-banner';
+    banner.style.cssText = `
+        position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+        background: ${mode === 'hub' ? '#2563eb' : '#ef4444'}; color: white; padding: 12px 24px; border-radius: 50px;
+        font-weight: 600; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        z-index: 999999; cursor: pointer; display: flex; align-items: center; gap: 12px;
+    `;
+    const label = mode === 'hub' ? 'Select a stop to Hub with...' : 'Select a stop to merge into...';
+
+    banner.innerHTML = `
+        <span>${label}</span>
+        <span style="font-size:18px; line-height:1; background:rgba(255,255,255,0.25); width:24px; height:24px; display:flex; align-items:center; justify-content:center; border-radius:50%; flex-shrink:0">×</span>
+    `;
+
+    // Remove existing
+    const existing = document.getElementById('edit-pick-banner');
+
+    // If toggling OFF (mode is null)
+    if (mode === null) {
+        // If we were in Hub mode, we might need cleanup specific to it
+        if (window.editPickModeType === 'hub') {
+            // Cleanup Hub Listeners
+            if (editPickHandler) map.off('click', 'stops-layer', editPickHandler);
+        }
+
+        // General Cleanup
+        window.isPickModeActive = false;
+        window.editPickModeType = null;
+        if (existing) existing.remove();
+        document.body.style.cursor = 'default';
+        if (editPickHandler) map.off('click', 'stops-layer', editPickHandler); // Redundant but safe
+
+        // Re-open panel fully
+        setSheetState(document.getElementById('info-panel'), 'half');
+        return;
+    }
+
+    // Normal ON Logic
+    window.isPickModeActive = true;
+    window.editPickModeType = mode; // 'merge' or 'hub'
+
+    const bannerEl = document.createElement('div');
+    bannerEl.id = 'edit-pick-banner';
+    bannerEl.style.cssText = `
+        position: fixed; top: 0; left: 0; width: 100%; height: 60px;
+        background: #3b82f6; color: white; display: flex; align-items: center; justify-content: center;
+        font-weight: bold; z-index: 9999; box-shadow: 0 2px 10px rgba(0,0,0,0.2); cursor: pointer;
+    `;
+    bannerEl.innerHTML = mode === 'merge' ?
+        'Tap a stop to MERGE this one into...' :
+        'Tap stops to HUB with (Click banner to finish)';
+
+    if (existing) existing.remove();
+    document.body.appendChild(bannerEl);
+    document.body.style.cursor = 'crosshair';
+
+    // Close Panel to see map
+    setSheetState(document.getElementById('info-panel'), 'collapsed');
+
+    // Click Handler
+    if (editPickHandler) map.off('click', 'stops-layer', editPickHandler);
+
+    editPickHandler = (e) => {
+        const targetFeature = e.features[0];
+        if (!targetFeature) return;
+        const targetId = targetFeature.properties.id;
+
+        if (targetId === editState.stopId) {
+            // alert("Cannot pick itself!"); // Annoying in multi-pick?
+            return;
+        }
+
+        if (window.editPickModeType === 'merge') {
+            editState.mergeParent = targetId;
+            // Merge is single-shot
+            setEditPickMode(null);
+            document.getElementById('edit-toggle-merge').classList.remove('active');
+            updateEditMergedList();
+            checkDirtyState();
+            setSheetState(document.getElementById('info-panel'), 'half');
+        }
+        else if (window.editPickModeType === 'hub') {
+            // Hub is Multi-Shot Toggle
+            if (!editState.hubAdds) editState.hubAdds = [];
+
+            // Toggle logic: If already added, remove?
+            // Or if already in unhubs, remove from unhubs?
+
+            // 1. If in 'unhubs', remove it from unhubs (Re-adding existing sibling)
+            if (editState.unhubs && editState.unhubs.includes(targetId)) {
+                editState.unhubs = editState.unhubs.filter(id => id !== targetId);
+            }
+            // 2. Else check if already in hubAdds
+            else if (editState.hubAdds.includes(targetId)) {
+                // Remove from adds (Toggle off new selection)
+                editState.hubAdds = editState.hubAdds.filter(id => id !== targetId);
+            }
+            // 3. Else Add
+            else {
+                editState.hubAdds.push(targetId);
+            }
+
+            updateEditMergedList();
+            checkDirtyState();
+            // Do NOT close panel or mode
+        }
+    };
+
+    map.on('click', 'stops-layer', editPickHandler);
+
+    bannerEl.addEventListener('click', () => {
+        // Finishing Selection
+        setEditPickMode(null);
+        document.getElementById('edit-toggle-merge').classList.remove('active');
+        document.getElementById('edit-toggle-hub').classList.remove('active');
+        setSheetState(document.getElementById('info-panel'), 'half');
+    });
+}
+
+function updateEditMergedList() {
+    // Show Children
+    const container = document.getElementById('edit-merged-list');
+    container.innerHTML = '';
+
+    // 1. Merged Children (I am the target, these are hidden into me)
+    const mergedChildren = mergeSourcesMap.get(editState.stopId) || [];
+    mergedChildren.forEach(childId => {
+        const span = document.createElement('span');
+        span.className = 'merge-chip';
+        span.style.cssText = 'background:#e5e7eb; padding:2px 6px; border-radius:12px; display:inline-flex; align-items:center; gap:4px';
+        span.innerHTML = `#${childId} <span class="del-btn" style="cursor:pointer; font-weight:bold">×</span>`;
+
+        span.querySelector('.del-btn').addEventListener('click', () => {
+            // Un-merge this child
+            if (!editState.unmerges) editState.unmerges = [];
+            editState.unmerges.push(childId);
+            span.remove();
+            checkDirtyState();
+        });
+        container.appendChild(span);
+    });
+
+    // 2. Hub Siblings (We are in the same Hub Group)
+    // We combine:
+    //  - Existing Siblings (Global Config) (Minus 'unhubs')
+    //  - New Siblings (editState.hubAdds)
+
+    const myHubId = hubMap.get(editState.stopId);
+    let currentSiblings = [];
+
+    if (myHubId) {
+        const allMembers = hubSourcesMap.get(myHubId) || [];
+        currentSiblings = allMembers.filter(id => id !== editState.stopId);
+    }
+
+    // Filter out unhubs
+    if (editState.unhubs) {
+        currentSiblings = currentSiblings.filter(id => !editState.unhubs.includes(id));
+    }
+
+    // Add new adds
+    if (editState.hubAdds) {
+        editState.hubAdds.forEach(id => {
+            if (!currentSiblings.includes(id) && id !== editState.stopId) {
+                currentSiblings.push(id);
+            }
+        });
+    }
+
+
+    if (currentSiblings.length > 0) {
+        const label = document.createElement('div');
+        label.style.cssText = 'font-size: 0.75rem; color: #666; margin-top: 4px; width:100%;';
+        label.textContent = 'Hub Siblings:';
+        container.appendChild(label);
+    }
+
+    currentSiblings.forEach(siblingId => {
+        const span = document.createElement('span');
+        span.style.cssText = 'background:#dbeafe; color:#1e40af; padding:2px 6px; border-radius:12px; display:inline-flex; align-items:center; gap:4px';
+        const isNew = editState.hubAdds && editState.hubAdds.includes(siblingId);
+        span.innerHTML = `${siblingId} ${isNew ? '<span style="font-size:0.7em; opacity:0.7">(new)</span>' : ''} <span class="del-btn" style="cursor:pointer; font-weight:bold">×</span>`;
+
+        span.querySelector('.del-btn').addEventListener('click', () => {
+            // If it was a 'hubAdd', just remove from hubAdd
+            if (editState.hubAdds && editState.hubAdds.includes(siblingId)) {
+                editState.hubAdds = editState.hubAdds.filter(id => id !== siblingId);
+            } else {
+                // It's an existing sibling, add to unhubs
+                if (!editState.unhubs) editState.unhubs = [];
+                editState.unhubs.push(siblingId);
+            }
+            // Refresh UI
+            updateEditMergedList(); // Visual refresh only?
+            // Need to actually remove element or re-render
+            // Re-render is safer
+            span.remove();
+            // Actually, re-render whole list to be safe?
+            // Since we manually removed span, let's just check dirty state.
+            checkDirtyState();
+        });
+        container.appendChild(span);
+    });
+
+    // Show Pending Parent (Merge)
+    if (editState.mergeParent) {
+        const span = document.createElement('span');
+        span.style.cssText = 'background:#fee2e2; color:#b91c1c; padding:2px 6px; border-radius:12px; display:inline-flex; align-items:center; gap:4px';
+        span.innerHTML = `→ ${editState.mergeParent} <span class="del-btn" style="cursor:pointer; font-weight:bold">×</span>`;
+        span.querySelector('.del-btn').addEventListener('click', () => {
+            editState.mergeParent = null;
+            span.remove();
+            checkDirtyState();
+        });
+        container.appendChild(span);
+    }
+}
+
+async function saveEditChanges() {
+    if (!editState.stopId) return;
+
+    const applyBtn = document.getElementById('edit-btn-apply');
+    applyBtn.disabled = true;
+    applyBtn.textContent = 'Saving...';
+
+    // 1. Update Global Config PRE-SAVE (so we send the new state)
+    if (!stopsConfig.overrides) stopsConfig.overrides = {};
+    stopsConfig.overrides[editState.stopId] = { ...editState.overrides };
+
+    if (!stopsConfig.merges) stopsConfig.merges = {};
+    if (editState.mergeParent) {
+        stopsConfig.merges[editState.stopId] = editState.mergeParent;
+    } else {
+        delete stopsConfig.merges[editState.stopId];
+    }
+
+    // Process Unmerges (Children removed from this parent)
+    if (editState.unmerges && editState.unmerges.length > 0) {
+        editState.unmerges.forEach(childId => {
+            if (stopsConfig.merges[childId] === editState.stopId) {
+                delete stopsConfig.merges[childId];
+            }
+        });
+    }
+
+    // Process Hubs (New Array Logic)
+    if (!stopsConfig.hubs) stopsConfig.hubs = {};
+
+    // A. Joining/Adding Hubs (editState.hubAdds)
+    if (editState.hubAdds && editState.hubAdds.length > 0) {
+        const sourceId = editState.stopId;
+
+        // Iterate through all added targets
+        editState.hubAdds.forEach(targetId => {
+            // Helper to find Hub ID in current config
+            const findHub = (id) => Object.keys(stopsConfig.hubs).find(k => stopsConfig.hubs[k].includes(id));
+
+            const currentSourceHub = findHub(sourceId);
+            const currentTargetHub = findHub(targetId);
+
+            if (currentSourceHub && currentTargetHub) {
+                // Merge Two Hubs
+                if (currentSourceHub !== currentTargetHub) {
+                    // Move target members to source
+                    stopsConfig.hubs[currentTargetHub].forEach(m => {
+                        if (!stopsConfig.hubs[currentSourceHub].includes(m)) {
+                            stopsConfig.hubs[currentSourceHub].push(m);
+                        }
+                    });
+                    delete stopsConfig.hubs[currentTargetHub];
+                }
+            } else if (currentSourceHub) {
+                // Add target to source
+                if (!stopsConfig.hubs[currentSourceHub].includes(targetId)) {
+                    stopsConfig.hubs[currentSourceHub].push(targetId);
+                }
+            } else if (currentTargetHub) {
+                // Add source to target
+                if (!stopsConfig.hubs[currentTargetHub].includes(sourceId)) {
+                    stopsConfig.hubs[currentTargetHub].push(sourceId);
+                }
+            } else {
+                // New Hub
+                const newHubId = `HUB_${sourceId.replace(/:/g, '_')}`;
+                stopsConfig.hubs[newHubId] = [sourceId, targetId];
+            }
+        });
+    }
+
+    // B. Unhubs (Removing Sibling from My Hub) (editState.unhubs)
+    // My Hub ID:
+    const myHubId = hubMap.get(editState.stopId);
+    if (myHubId && editState.unhubs && editState.unhubs.length > 0) {
+        editState.unhubs.forEach(childId => {
+            if (stopsConfig.hubs[myHubId]) {
+                stopsConfig.hubs[myHubId] = stopsConfig.hubs[myHubId].filter(id => id !== childId);
+                // Cleanup empty hubs?
+                if (stopsConfig.hubs[myHubId].length <= 1) {
+                    // Start dissolving? Or keep 1? 
+                    // Keeping 1 is fine, effectively standard stop.
+                    // Or delete key if empty.
+                }
+            }
+        });
+    }
+
+    // 2. Send to Server
+    try {
+        const res = await fetch('/api/save-stops-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(stopsConfig, null, 2)
+        });
+
+        if (!res.ok) throw new Error('Save failed');
+
+        // Success UI
+        applyBtn.textContent = 'Saved';
+        applyBtn.classList.add('success');
+        applyBtn.classList.remove('active');
+
+        // Clear Draft
+        if (editSessionCache[editState.stopId]) delete editSessionCache[editState.stopId];
+
+        // Persist "Clean" state
+        stopEditing(true);
+
+        // REFRESH MAP LAYER with new config
+        // Pass true to use the local window.stopsConfig (which we just updated)
+        // rather than fetching from server (which might race)
+        await refreshStopsLayer(true);
+
+        setTimeout(() => {
+            applyBtn.classList.remove('success');
+            applyBtn.textContent = 'Apply';
+            applyBtn.disabled = true;
+            checkDirtyState();
+        }, 1500);
+
+    } catch (err) {
+        console.error('Save error:', err);
+        alert('Failed to save changes: ' + err.message);
+        applyBtn.disabled = false;
+        applyBtn.textContent = 'Apply';
+    }
+}
+
+// Check if current edit state differs from saved config
+function checkDirtyState() {
+    const applyBtn = document.getElementById('edit-btn-apply');
+    if (!applyBtn || !editState.stopId) return;
+
+    const savedOverrides = stopsConfig?.overrides?.[editState.stopId] || {};
+
+    const currentParent = editState.mergeParent || null;
+    const savedParent = stopsConfig?.merges?.[editState.stopId] || null;
+
+    const getVal = (v) => v === undefined || v === null ? '' : v.toString();
+
+    // Compare loosely (string) to avoid float precision issues or type mismatches
+    const latDirty = getVal(editState.overrides.lat) !== getVal(savedOverrides.lat);
+    const lonDirty = getVal(editState.overrides.lon) !== getVal(savedOverrides.lon);
+    const bearDirty = getVal(editState.overrides.bearing) !== getVal(savedOverrides.bearing);
+
+    const mergeDirty = currentParent !== savedParent;
+    const unmergeDirty = editState.unmerges && editState.unmerges.length > 0;
+
+    const currentHub = editState.hubTarget || null;
+    const savedHub = stopsConfig?.hubs?.[editState.stopId] || null;
+    const hubDirty = currentHub !== savedHub;
+
+    const unhubDirty = editState.unhubs && editState.unhubs.length > 0;
+    const hubAddDirty = editState.hubAdds && editState.hubAdds.length > 0;
+
+    const isDirty = latDirty || lonDirty || bearDirty || mergeDirty || unmergeDirty || unhubDirty || hubAddDirty;
+
+    applyBtn.disabled = !isDirty;
+    if (isDirty) {
+        applyBtn.classList.add('active');
+    } else {
+        applyBtn.classList.remove('active');
+    }
+}
+
+// Initialize on Load
+initEditTools();
+
+// Global Hook to open edit
+window.selectDevStop = (id) => {
+    // If dev tools (old) requested strict selection, we can just highlight it.
+    // But since we are integrating, we ignore the old panel logic for now.
 }

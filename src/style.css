@@ -136,13 +136,18 @@ body {
   position: absolute;
   top: max(16px, env(safe-area-inset-top) + 16px);
   /* Respect Notch */
-  left: 16px;
-  right: 16px;
-  z-index: 10;
+  left: 0;
+  /* Ensure it sits above map controls and panels */
+  top: 16px;
+  left: 0;
+  right: 0;
+  z-index: 3000;
   pointer-events: none;
   /* Let clicks pass through around the search box */
   display: flex;
   justify-content: center;
+  padding: 0 16px;
+  /* Ensure padding on mobile */
 }
 
 .search-container {
@@ -153,8 +158,8 @@ body {
   box-shadow: var(--shadow);
   padding: 8px 12px;
   width: 100%;
-  max-width: 400px;
-  /* Desktop width */
+  max-width: 450px;
+  /* Match Desktop Panel Width */
   display: flex;
   align-items: center;
   gap: 10px;
@@ -187,7 +192,7 @@ body {
   box-shadow: var(--shadow);
   max-height: 300px;
   overflow-y: auto;
-  z-index: 100;
+  z-index: 2000;
 }
 
 .suggestions.hidden {
@@ -244,6 +249,59 @@ body {
 .suggestion-subtext {
   font-size: 0.75rem;
   color: var(--text-light);
+}
+
+/* Clear Buttons */
+.clear-input-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-light);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+
+.clear-input-btn:hover {
+  background: #f3f4f6;
+  color: var(--text);
+}
+
+.clear-input-btn.hidden {
+  display: none;
+}
+
+.suggestion-delete-btn {
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  /* Light grey */
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  margin-left: 4px;
+  opacity: 1;
+  /* Always visible on mobile, maybe hover on desktop? User said "all recent items", implies visible. */
+  transition: all 0.2s;
+  position: relative;
+  z-index: 50;
+  /* Ensure above list item */
+}
+
+.suggestion-delete-btn:hover {
+  background: #f3f4f6;
+  color: var(--text);
+}
+
+.suggestion-header {
+  position: relative;
+  z-index: 50;
 }
 
 /* --- Panels (Bottom Sheet / Sidebar) --- */
@@ -325,14 +383,7 @@ body {
 
 /* Desktop Styles (Sidebar) */
 @media (min-width: 769px) {
-  .search-wrapper {
-    left: 50%;
-    margin-left: -225px;
-    width: 450px;
-    right: auto;
-    top: max(16px, env(safe-area-inset-top) + 16px);
-    transform: none;
-  }
+  /* Search wrapper is now handled globally with flex center and max-width on container */
 
   .panel {
     /* Unify with mobile: Centered Bottom Sheet */
@@ -518,7 +569,8 @@ body {
 /* Panel Controls (Back & Close) - Inline with title */
 .panel-controls {
   display: flex;
-  gap: 8px;
+  gap: 4px;
+  /* Tighter spacing */
   flex-shrink: 0;
 }
 
@@ -600,6 +652,7 @@ body {
   border-left: 4px solid var(--primary);
   cursor: pointer;
   transition: background 0.2s;
+  flex-shrink: 0;
 }
 
 .arrival-item:hover {
@@ -1073,13 +1126,215 @@ body.panel-open .controls {
   color: #000000;
   font-weight: 600;
 }
+
 /* Shake Animation for Filter Button */
 @keyframes shake-horizontal {
-    0%, 100% { transform: translateX(0); }
-    10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
-    20%, 40%, 60%, 80% { transform: translateX(4px); }
+
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  10%,
+  30%,
+  50%,
+  70%,
+  90% {
+    transform: translateX(-4px);
+  }
+
+  20%,
+  40%,
+  60%,
+  80% {
+    transform: translateX(4px);
+  }
 }
 
 .shake {
-    animation: shake-horizontal 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  animation: shake-horizontal 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+/* --- Edit Toolbar --- */
+.edit-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  flex-wrap: wrap;
+  align-items: center;
+  transition: all 0.2s ease;
+  margin-bottom: 16px;
+}
+
+.edit-toolbar.hidden {
+  display: none !important;
+}
+
+.edit-chip {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  color: #374151;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.edit-chip:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.edit-chip.active {
+  background: #111827;
+  /* Black */
+  color: white;
+  border-color: #111827;
+  padding-right: 8px;
+  /* Adjustment for x-mark */
+}
+
+/* Pseudo-element for the x-mark when active */
+.edit-chip.active:not(.apply-btn)::after {
+  content: "×";
+  font-size: 16px;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.25);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+}
+
+.edit-chip.apply-btn {
+  background: transparent;
+  color: #333;
+  border: 1px solid #ddd;
+  font-weight: 500;
+  opacity: 0.6;
+  /* Match default state of other buttons */
+}
+
+.edit-chip.apply-btn:hover {
+  background: #f3f4f6;
+  opacity: 1;
+}
+
+.edit-chip.apply-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  border-color: #eee;
+  background: transparent;
+}
+
+.edit-chip.apply-btn.active {
+  /* When changes exist (DIRTY) - Green? Or kept grey until clicked? 
+     User said: "make apply button same color as the close button" (grey).
+     "make apply button greyed out if nothing was changed" (disabled).
+     So if changed -> Enabled (Standard Grey/Black).
+  */
+  opacity: 1;
+  border-color: #999;
+  color: #000;
+}
+
+.edit-chip.apply-btn.success {
+  background: #22c55e !important;
+  /* Green */
+  color: white !important;
+  border-color: #22c55e !important;
+  opacity: 1 !important;
+}
+
+/* Edit Button in Header */
+#btn-edit-stop {
+  opacity: 0.4;
+  display: flex !important;
+  /* Force show */
+}
+
+#btn-edit-stop:hover {
+  opacity: 0.8;
+}
+
+#btn-edit-stop.active {
+  background: transparent;
+  /* No background circle */
+  opacity: 1;
+  /* Fully black */
+  border-radius: 0;
+}
+
+#btn-edit-stop.active img {
+  filter: none;
+  /* Keep it black (or whatever native color is) */
+}
+
+/* --- Interactive Edit Marker --- */
+.edit-stop-marker {
+  position: relative;
+  width: 53px;
+  /* Pivot Strategy: Match Map Icon Padding. 
+     Circle Center is at Y=49.35. 
+     To make this the geometric center, Total Height = 49.35 * 2 = 98.7 -> 99px.
+  */
+  height: 99px;
+  /* transform-origin: center; (Default) */
+  cursor: grab;
+  z-index: 1000;
+  pointer-events: auto;
+}
+
+.edit-stop-marker svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 76px;
+  /* Original SVG Height */
+  display: block;
+  pointer-events: none;
+}
+
+/* Hitboxes for Interaction */
+.edit-arrow-zone {
+  position: absolute;
+  top: 0;
+  left: 5px;
+  right: 5px;
+  height: 25px;
+  /* background: rgba(255, 0, 0, 0.3); */
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>') 12 12, alias;
+  z-index: 10;
+}
+
+.edit-body-zone {
+  position: absolute;
+  /* Circle is at bottom of the SVG (76px). 
+     Circle Radius ~24.5px. Diameter ~49px.
+     Bottom of SVG is 76px.
+     Top of Circle ~ 76 - 49 = 27px?
+     Circle Center 49.35. Top = 49.35 - 24.5 = 24.85px.
+  */
+  top: 25px;
+  left: 0;
+  width: 53px;
+  height: 53px;
+  /* background: rgba(0, 255, 0, 0.3); */
+  border-radius: 50%;
+  z-index: 5;
+}
+
+.edit-stop-marker.rotating {
+  cursor: grabbing;
 }

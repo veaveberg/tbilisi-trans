@@ -83,10 +83,10 @@ export const Router = {
     /**
      * Update URL based on state
      */
-    update(stopId, filterActive, targetIds) {
+    update(stopId, filterActive, targetIds, mapHash = '') {
         if (!stopId) {
-            // Reset to Home
-            const url = this.base;
+            // Reset to Home (with optional hash)
+            const url = this.base + mapHash;
             history.pushState(null, '', url);
             return;
         }
@@ -104,5 +104,20 @@ export const Router = {
 
         console.log('[Router] Push State:', url);
         history.pushState({ stopId, filterActive, targetIds }, '', url);
+    },
+
+    /**
+     * Update only the map location hash (used during panning)
+     * Uses replaceState to avoid history pollution
+     */
+    updateMapLocation(hash) {
+        // Only update if we are at base (no stop selected)
+        // Check if current path matches base (ignoring trailing slash differences if any)
+        const currentPath = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
+        const basePath = this.base.endsWith('/') ? this.base : this.base + '/';
+
+        if (currentPath === basePath) {
+            history.replaceState(null, '', this.base + hash);
+        }
     }
 };

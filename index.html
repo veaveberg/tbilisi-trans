@@ -85,6 +85,13 @@
           </svg>
         </div>
         <input type="text" id="search-input" placeholder="Search stops or routes..." />
+        <button id="search-clear" class="clear-input-btn hidden" title="Clear">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
         <div id="search-suggestions" class="suggestions hidden"></div>
       </div>
       <div id="filter-instruction" class="filter-instruction hidden" style="display: none;"></div>
@@ -97,12 +104,31 @@
         <h2 id="stop-name">Select a stop</h2>
         <div class="panel-controls">
           <button id="back-panel" class="icon-btn hidden" title="Back">
-            <img src="/tbilisi-trans/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+            <img src="./chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
           </button>
+
+          <button id="btn-edit-stop" class="icon-btn" title="Edit Stop">
+            <img src="./pencil.circle.fill.svg" alt="Edit" width="28" height="28">
+          </button>
+
           <button id="close-panel" class="icon-btn" title="Close">
-            <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+            <img src="./xmark.circle.fill.svg" alt="Close" width="28" height="28">
           </button>
         </div>
+      </div>
+
+      <!-- Edit Toolbar (Hidden by default) -->
+      <div id="stop-edit-block" class="edit-toolbar hidden" style="display: none;">
+        <button id="edit-toggle-loc" class="edit-chip">Location</button>
+        <button id="edit-toggle-rot" class="edit-chip">Rotation</button>
+        <button id="edit-toggle-merge" class="edit-chip">Merge into...</button>
+        <button id="edit-toggle-hub" class="edit-chip">Hub with...</button>
+
+        <div id="edit-merged-list"
+          style="display: flex; gap: 4px; font-size: 12px; color: #6b7280; align-items: center;"></div>
+
+        <div style="flex:1"></div>
+        <button id="edit-btn-apply" class="edit-chip apply-btn" disabled>Apply</button>
       </div>
       <!-- Filter Toggle Row -->
       <button id="filter-routes-toggle" class="filter-toggle-row">
@@ -127,10 +153,10 @@
           </div>
           <div class="panel-controls">
             <button id="back-route-info" class="icon-btn hidden" title="Back">
-              <img src="/tbilisi-trans/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+              <img src="./chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
             </button>
             <button id="close-route-info" class="icon-btn" title="Close">
-              <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+              <img src="./xmark.circle.fill.svg" alt="Close" width="28" height="28">
             </button>
           </div>
         </div>
