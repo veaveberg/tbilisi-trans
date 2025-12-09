@@ -1201,7 +1201,7 @@ function getCircleRadiusExpression(scale = 1) {
 }
 
 const GREEN_LINE_STOPS = [
-    'State University', 'University', 'Univercity', 'Vazha-Pshavela', 'Vazha Pshavela', 'Delisi', 'Medical University', 'Technical University', 'Tsereteli', 'Station Square 2'
+    'State University', 'Vazha-Pshavela', 'Vazha Pshavela', 'Delisi', 'Medical University', 'Technical University', 'Tsereteli', 'Station Square 2'
 ];
 
 function addStopsToMap(stops) {
