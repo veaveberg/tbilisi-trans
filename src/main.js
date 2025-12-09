@@ -53,8 +53,43 @@ function getMapHash() {
     return `#${zoom.toFixed(2)}/${center.lat.toFixed(5)}/${center.lng.toFixed(5)}`;
 }
 
+// Initial Router State Handling
+Router.init();
+const initialState = Router.parse();
+
+// We need to wait for map load + route data fetching before we can fully restore state
+// But we can start fetching immediately.
+fetchRoutes().then(() => {
+    // Determine what to show based on initial state
+    if (initialState.type === 'route' && initialState.shortName) {
+        // Find route by shortName
+        // We need to wait for map logic a bit or use a ready check?
+        map.once('load', () => {
+            fetchV3Routes().then(() => {
+                // Find route ID from v3 map or fallback to allRoutes
+                const routeId = v3RoutesMap ? v3RoutesMap.get(initialState.shortName) : null;
+                const routeObj = allRoutes.find(r => String(r.shortName) === String(initialState.shortName));
+
+                if (routeObj) {
+                    showRouteOnMap(routeObj, true, {
+                        initialDirectionIndex: initialState.direction
+                    });
+                } else {
+                    console.warn('[Router] Route not found:', initialState.shortName);
+                }
+            });
+        });
+    } else if (initialState.stopId) {
+        window.currentStopId = initialState.stopId;
+        // Filter restoration is complex, needs data.
+        // Let's rely on map moveend or explicit fetch?
+        // Existing logic relies on map events mostly.
+    }
+});
+
 map.on('moveend', () => {
-    if (!window.currentStopId) {
+    // Only update hash if no specialized view is active (Stop or Route)
+    if (!window.currentStopId && !window.currentRoute) {
         Router.updateMapLocation(getMapHash());
     }
 });
@@ -749,7 +784,7 @@ function refreshRouteFilter() {
     updateConnectionLine(filterState.originId, filterState.targetIds, false);
 
     // Sync URL (Router)
-    Router.update(filterState.originId, true, Array.from(filterState.targetIds));
+    Router.updateStop(filterState.originId, true, Array.from(filterState.targetIds));
 
     // Refresh Panel List if we are still viewing the origin stop
     // RE-RENDER TO APPLY COLORS
@@ -2229,8 +2264,10 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
 
     // Sync URL (Router)
     // Only update if it's a new stop or first load, and updateURL is true
+    // Sync URL (Router)
+    // Only update if it's a new stop or first load, and updateURL is true
     if (updateURL) {
-        Router.update(stop.id, filterState.active, Array.from(filterState.targetIds));
+        Router.updateStop(stop.id, filterState.active, Array.from(filterState.targetIds));
     }
 
     // Explicitly clean up any route layers when showing a stop
@@ -2339,7 +2376,8 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     // Toggle Edit Button Visibility
     const editBtn = document.getElementById('btn-edit-stop');
     if (editBtn) {
-        if (isMetro) {
+        const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        if (isMetro || !isLocalhost) {
             editBtn.classList.add('hidden');
             editBtn.style.display = 'none';
         } else {
@@ -2347,6 +2385,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
             editBtn.style.display = ''; // Reset to default (flex/block)
         }
     }
+
 
     if (isMetro) {
         panel.classList.add('metro-mode');
@@ -2656,11 +2695,14 @@ function renderAllRoutes(routesInput, arrivals) {
     // Deduplicate Routes (Prioritize Parent aka first fetched)
     const uniqueRoutesMap = new Map();
 
-    routesInput.forEach(r => {
-        if (!uniqueRoutesMap.has(r.shortName)) {
-            uniqueRoutesMap.set(r.shortName, r);
-        }
-    });
+    if (routesInput && Array.isArray(routesInput)) {
+        routesInput.forEach(r => {
+            if (r && r.shortName && !uniqueRoutesMap.has(r.shortName)) {
+                uniqueRoutesMap.set(r.shortName, r);
+            }
+        });
+    }
+
 
     // Merge with arrivals for robustness
     if (arrivals && arrivals.length > 0) {
@@ -3947,6 +3989,9 @@ async function showRouteOnMap(route, addToStack = true, options = {}) {
     currentRoute = route;
     currentPatternIndex = 0; // Reset to default
     await updateRouteView(route, options);
+
+    // Update URL
+    Router.updateRoute(route.shortName, currentPatternIndex);
 }
 
 async function updateRouteView(route, options = {}) {
@@ -4000,9 +4045,16 @@ async function updateRouteView(route, options = {}) {
         const patterns = routeDetails.patterns;
 
         // Auto-Direction Logic:
-        // 1. Try to match by Headsign (most accurate for specific arrival clicks)
         let directionFound = false;
-        if (options.targetHeadsign && patterns.length > 0) {
+
+        // 1. Initial State override (from URL)
+        if (options.initialDirectionIndex !== undefined && patterns[options.initialDirectionIndex]) {
+            currentPatternIndex = options.initialDirectionIndex;
+            directionFound = true;
+            console.log(`[Router] Restoring direction index: ${currentPatternIndex}`);
+        }
+        // 2. Try to match by Headsign (most accurate for specific arrival clicks)
+        else if (options.targetHeadsign && patterns.length > 0) {
             const normalizedTarget = options.targetHeadsign.toLowerCase().trim();
             const matchedIndex = patterns.findIndex(p =>
                 p.headsign && p.headsign.toLowerCase().trim() === normalizedTarget
@@ -4061,6 +4113,7 @@ async function updateRouteView(route, options = {}) {
             switchBtn.onclick = () => {
                 currentPatternIndex = (currentPatternIndex + 1) % patterns.length;
                 updateRouteView(route, { preserveBounds: true }); // Keep bounds when switching directions
+                Router.updateRoute(route.shortName, currentPatternIndex);
             };
 
             document.getElementById('route-info-text').innerHTML = `

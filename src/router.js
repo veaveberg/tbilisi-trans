@@ -36,8 +36,20 @@ export const Router = {
 
         const parts = path.split('/');
 
-        // Default State
+        // Route Parsing
+        if (parts.length > 0 && parts[0].startsWith('route')) {
+            const shortName = parts[0].substring(5); // Remove 'route'
+            const params = new URLSearchParams(location.search);
+            const direction = params.get('dir') ? parseInt(params.get('dir')) : 0;
+            return {
+                type: 'route',
+                shortName: shortName,
+                direction: direction
+            };
+        }
+
         const state = {
+            type: 'stop',
             stopId: null,
             filterActive: false,
             targetIds: []
@@ -84,6 +96,13 @@ export const Router = {
      * Update URL based on state
      */
     update(stopId, filterActive, targetIds, mapHash = '') {
+        // Legacy Support for update(stopId...) calls
+        // We really should use dedicated methods, but keeping this for backward compat if needed.
+        // Or better: Redirect to updateStop logic.
+        this.updateStop(stopId, filterActive, targetIds, mapHash);
+    },
+
+    updateStop(stopId, filterActive, targetIds, mapHash = '') {
         if (!stopId) {
             // Reset to Home (with optional hash)
             const url = this.base + mapHash;
@@ -102,8 +121,15 @@ export const Router = {
             url += `/filtered/destinations${sortedIds.join('-')}`;
         }
 
-        console.log('[Router] Push State:', url);
-        history.pushState({ stopId, filterActive, targetIds }, '', url);
+        console.log('[Router] Push State (Stop):', url);
+        history.pushState({ type: 'stop', stopId, filterActive, targetIds }, '', url);
+    },
+
+    updateRoute(shortName, direction = 0) {
+        if (!shortName) return;
+        let url = `${this.base}route${shortName}?dir=${direction}`;
+        console.log('[Router] Push State (Route):', url);
+        history.pushState({ type: 'route', shortName, direction }, '', url);
     },
 
     /**
