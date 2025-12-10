@@ -101,32 +101,49 @@ export class HistoryManager {
             list = list.slice(0, limit);
         }
 
-        localStorage.setItem(key, JSON.stringify(list));
+        try {
+            localStorage.setItem(key, JSON.stringify(list));
+        } catch (e) {
+            console.error('[History] Storage quota exceeded. Clearing old items.', e);
+            if (e.name === 'QuotaExceededError' || e.code === 22) {
+                // Emergency Cleanup: Halve the list and try again
+                list = list.slice(0, Math.ceil(limit / 2));
+                try {
+                    localStorage.setItem(key, JSON.stringify(list));
+                } catch (retryErr) {
+                    console.error('[History] Failed to save history even after cleanup.', retryErr);
+                }
+            }
+        }
     }
 
     _remove(key, item) {
         let list = this._get(key);
         const initialLength = list.length;
+
         list = list.filter(i => {
-            if (i.type !== item.type) return true; // Different types -> keep
+            // Keep if types differ
+            if (i.type !== item.type) return true;
 
-            // Check ID
-            if (i.id != item.id) {
-                // IDs don't match. 
-                // Fallback: Check deep equality of data if IDs are missing/null
-                // to handle legacy/corrupt items.
-                try {
-                    if (JSON.stringify(i.data) === JSON.stringify(item.data)) {
-                        return false; // Remove (Data matches exact)
-                    }
-                } catch (e) { }
+            // Strict String Comparison for IDs (handles 123 vs "123")
+            // Check if BOTH have IDs (allow 0 or empty string)
+            const iId = i.id;
+            const tId = item.id;
 
-                return true; // Keep
+            if (iId !== undefined && iId !== null && tId !== undefined && tId !== null) {
+                return String(iId) !== String(tId);
             }
 
-            // IDs Match -> Remove
-            return false;
+            // Fallback: Deep comparison
+            try {
+                // exclude wrapper properties if needed, but usually full object match is safe for same-session removal
+                return JSON.stringify(i) !== JSON.stringify(item);
+            } catch (e) {
+                console.warn('History remove comparison error', e);
+                return true;
+            }
         });
+
         console.log(`[History] Removing ${item.type}:${item.id} from ${key}. Count: ${initialLength} -> ${list.length}`);
         localStorage.setItem(key, JSON.stringify(list));
     }

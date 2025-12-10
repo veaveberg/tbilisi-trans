@@ -36,16 +36,61 @@ export const Router = {
 
         const parts = path.split('/');
 
-        // Route Parsing
-        if (parts.length > 0 && parts[0].startsWith('route')) {
-            const shortName = parts[0].substring(5); // Remove 'route'
-            const params = new URLSearchParams(location.search);
-            const direction = params.get('dir') ? parseInt(params.get('dir')) : 0;
-            return {
-                type: 'route',
-                shortName: shortName,
-                direction: direction
-            };
+        // Route Parsing (Simplified /bus306a)
+        // Check for Nested: /stopXXX/busXXXa or /busXXXa
+
+        let busPart = null;
+        let busIndex = -1;
+
+        // Find "busXXX" part
+        parts.forEach((p, i) => {
+            if (p.startsWith('bus')) {
+                busPart = p;
+                busIndex = i;
+            }
+        });
+
+        if (busPart) {
+            const rawShortName = busPart.substring(3); // remove 'bus'
+            // Check suffix
+            let direction = 0;
+            let shortName = rawShortName;
+
+            if (rawShortName.endsWith('a')) {
+                direction = 0;
+                shortName = rawShortName.slice(0, -1);
+            } else if (rawShortName.endsWith('b')) {
+                direction = 1;
+                shortName = rawShortName.slice(0, -1);
+            }
+
+            // Check if nested (preceded by stop)
+            let stopId = null;
+            if (busIndex > 0) {
+                // Try to find stop part before it
+                const stopPart = parts[0]; // Assuming structure /stopXXX/busXXX
+                if (stopPart && stopPart.startsWith('stop')) {
+                    stopId = stopPart.substring(4);
+                } else if (stopPart && !stopPart.includes('filtered')) {
+                    stopId = stopPart;
+                }
+                if (stopId && !stopId.includes(':')) stopId = `1:${stopId}`;
+            }
+
+            if (stopId) {
+                return {
+                    type: 'nested',
+                    stopId: stopId,
+                    shortName: shortName,
+                    direction: direction
+                };
+            } else {
+                return {
+                    type: 'route',
+                    shortName: shortName,
+                    direction: direction
+                };
+            }
         }
 
         const state = {
@@ -127,9 +172,22 @@ export const Router = {
 
     updateRoute(shortName, direction = 0) {
         if (!shortName) return;
-        let url = `${this.base}route${shortName}?dir=${direction}`;
+        const suffix = direction === 1 ? 'b' : 'a';
+        let url = `${this.base}bus${shortName}${suffix}`;
         console.log('[Router] Push State (Route):', url);
         history.pushState({ type: 'route', shortName, direction }, '', url);
+    },
+
+    updateNested(stopId, shortName, direction = 0) {
+        if (!stopId || !shortName) return;
+        // Clean ID
+        const cleanStopId = String(stopId).replace(/^1:/, '');
+        const suffix = direction === 1 ? 'b' : 'a';
+
+        let url = `${this.base}stop${cleanStopId}/bus${shortName}${suffix}`;
+        console.log('[Router] Push State (Nested):', url);
+        // We push state that looks like a route state but implies background stop
+        history.pushState({ type: 'nested', stopId, shortName, direction }, '', url);
     },
 
     /**

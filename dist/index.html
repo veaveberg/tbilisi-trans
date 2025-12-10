@@ -3,12 +3,51 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Tbilisi Transit</title>
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" sizes="32x32" href="/tbilisi-trans/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/tbilisi-trans/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/tbilisi-trans/apple-touch-icon.png">
+  <link rel="manifest" href="/tbilisi-trans/manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: dark)">
+  <script>
+    // Single Page Apps for GitHub Pages
+    // MIT License
+    // https://github.com/rafrex/spa-github-pages
+    // This script checks to see if a redirect is present in the query string,
+    // converts it back into the correct url and adds it to the
+    // browser's history using window.history.replaceState(...),
+    // which won't cause the browser to attempt to load the new url.
+    // When the single page app is loaded further down in this file,
+    // the correct url will be waiting in the browser's history for
+    // the single page app to route accordingly.
+    (function (l) {
+      if (l.search[1] === '/') {
+        var decoded = l.search.slice(1).split('&').map(function (s) {
+          return s.replace(/~and~/g, '&')
+        }).join('?');
+        window.history.replaceState(null, null,
+          l.pathname.slice(0, -1) + decoded + l.hash
+        );
+      } else if (l.search.startsWith('?p=')) {
+        var decoded = l.search.slice(3).split('&').map(function (s) {
+          return s.replace(/~and~/g, '&')
+        }).join('?');
+        window.history.replaceState(null, null,
+          l.pathname.slice(0, -1) + decoded + l.hash
+        );
+      }
+    }(window.location))
+  </script>
   <style>
     /* Critical CSS to prevent FOUC */
     .hidden {
@@ -20,9 +59,7 @@
     }
 
     /* Initially hide until CSS loads */
-    #search-suggestions {
-      display: none;
-    }
+    /* Initially hide until CSS loads - handled by class 'hidden' on element now */
 
     /* Hide UI overlays while loading to prevent unstyled flash */
     body.loading .search-wrapper,
@@ -31,8 +68,8 @@
       display: none !important;
     }
   </style>
-  <script type="module" crossorigin src="./assets/index-CuE6JtNA.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-D5nhF6wl.css">
+  <script type="module" crossorigin src="/tbilisi-trans/assets/index-Br_84RmI.js"></script>
+  <link rel="stylesheet" crossorigin href="/tbilisi-trans/assets/index-CW0KSpgU.css">
 </head>
 
 <body class="loading">
@@ -50,8 +87,16 @@
           </svg>
         </div>
         <input type="text" id="search-input" placeholder="Search stops or routes..." />
+        <button id="search-clear" class="clear-input-btn hidden" title="Clear">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
         <div id="search-suggestions" class="suggestions hidden"></div>
       </div>
+      <div id="filter-instruction" class="filter-instruction hidden" style="display: none;"></div>
     </div>
 
     <!-- Stop Info Panel (Bottom Sheet) -->
@@ -61,17 +106,46 @@
         <h2 id="stop-name">Select a stop</h2>
         <div class="panel-controls">
           <button id="back-panel" class="icon-btn hidden" title="Back">
-            <img src="./chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+            <img src="/tbilisi-trans/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
           </button>
+
+          <button id="btn-edit-stop" class="icon-btn" title="Edit Stop">
+            <img src="/tbilisi-trans/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
+          </button>
+
           <button id="close-panel" class="icon-btn" title="Close">
-            <img src="./xmark.circle.fill.svg" alt="Close" width="28" height="28">
+            <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
           </button>
         </div>
       </div>
-      <div id="arrivals-list" class="arrivals-list">
+
+      <!-- Edit Toolbar (Hidden by default) -->
+      <div id="stop-edit-block" class="edit-toolbar hidden" style="display: none;">
+        <button id="edit-toggle-loc" class="edit-chip">Location</button>
+        <button id="edit-toggle-rot" class="edit-chip">Rotation</button>
+        <button id="edit-toggle-merge" class="edit-chip">Merge into...</button>
+        <button id="edit-toggle-hub" class="edit-chip">Hub with...</button>
+
+        <div id="edit-merged-list"
+          style="display: flex; gap: 4px; font-size: 12px; color: #6b7280; align-items: center;"></div>
+
+        <div style="flex:1"></div>
+        <button id="edit-btn-apply" class="edit-chip apply-btn" disabled>Apply</button>
+      </div>
+      <!-- Filter Toggle Row -->
+      <button id="filter-routes-toggle" class="filter-toggle-row">
+        <img class="filter-icon" src="/tbilisi-trans/line.3.horizontal.decrease.circle.svg" alt="Filter" width="24" height="24">
+        <span class="filter-text">Filter routes...</span>
+      </button>
+
+      <div id="header-extension"></div> <!-- Container for All Routes, Metro badge etc. -->
+
+      <div id="arrivals-list" class="arrivals-list panel-body">
         <!-- Arrivals will be injected here -->
       </div>
-    </div>
+      <div id="stop-id-display" class="stop-id-footer"></div>
+
+    </div> <!-- Close info-panel -->
 
     <!-- Route Info Panel (Bottom Sheet) -->
     <div id="route-info" class="panel hidden route-panel">
@@ -83,10 +157,10 @@
         </div>
         <div class="panel-controls">
           <button id="back-route-info" class="icon-btn hidden" title="Back">
-            <img src="./chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+            <img src="/tbilisi-trans/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
           </button>
           <button id="close-route-info" class="icon-btn" title="Close">
-            <img src="./xmark.circle.fill.svg" alt="Close" width="28" height="28">
+            <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
           </button>
         </div>
       </div>
@@ -102,7 +176,9 @@
           Switch Direction
         </button>
       </div>
+      <div id="route-info-body" class="panel-body"></div>
     </div>
+
 
     <button id="reset-view" class="reset-view-btn hidden">
       <span>📍</span> Return to Tbilisi
@@ -131,7 +207,7 @@
         </button>
       </div>
     </div>
-  </div>
+  </div> <!-- Close app -->
 </body>
 
 </html>

@@ -1285,10 +1285,11 @@ body.panel-open .controls {
   position: relative;
   width: 53px;
   /* Pivot Strategy: Match Map Icon Padding. 
-     Circle Center is at Y=49.35. 
-     To make this the geometric center, Total Height = 49.35 * 2 = 98.7 -> 99px.
+     Original: 53px * 1.2 = 63.6px Width.
+     Original Total Height: 99px * 1.2 = 118.8px.
   */
-  height: 99px;
+  width: 63.6px;
+  height: 118.8px;
   /* transform-origin: center; (Default) */
   cursor: grab;
   z-index: 1000;
@@ -1300,8 +1301,8 @@ body.panel-open .controls {
   top: 0;
   left: 0;
   width: 100%;
-  height: 76px;
-  /* Original SVG Height */
+  height: 91.2px;
+  /* Original 76px * 1.2 = 91.2px */
   display: block;
   pointer-events: none;
 }
@@ -1310,26 +1311,29 @@ body.panel-open .controls {
 .edit-arrow-zone {
   position: absolute;
   top: 0;
-  left: 5px;
-  right: 5px;
-  height: 25px;
+  left: 6px;
+  right: 6px;
+  height: 30px;
+  /* Original 25px * 1.2 = 30px */
   /* background: rgba(255, 0, 0, 0.3); */
   cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>') 12 12, alias;
   z-index: 10;
 }
 
+/* Circle is at bottom of the SVG (91.2px). 
+     Original Body 53px. New Body 63.6px.
+     Top Offset: 25px * 1.2 = 30px.
+  */
+/* Circle is at bottom of the SVG (91.2px). 
+   Original Body 53px. New Body 63.6px.
+   Top Offset: 30px.
+*/
 .edit-body-zone {
   position: absolute;
-  /* Circle is at bottom of the SVG (76px). 
-     Circle Radius ~24.5px. Diameter ~49px.
-     Bottom of SVG is 76px.
-     Top of Circle ~ 76 - 49 = 27px?
-     Circle Center 49.35. Top = 49.35 - 24.5 = 24.85px.
-  */
-  top: 25px;
+  top: 30px;
   left: 0;
-  width: 53px;
-  height: 53px;
+  width: 63.6px;
+  height: 63.6px;
   /* background: rgba(0, 255, 0, 0.3); */
   border-radius: 50%;
   z-index: 5;
@@ -1337,4 +1341,120 @@ body.panel-open .controls {
 
 .edit-stop-marker.rotating {
   cursor: grabbing;
+}
+
+/* --- Map Menu Popup --- */
+.map-menu-popup {
+  position: absolute;
+  bottom: max(100px, 100px + env(safe-area-inset-bottom));
+  right: 80px;
+  /* Left of controls (16px + 48px + 16px gap) */
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  padding: 8px;
+  z-index: 2100;
+  min-width: 220px;
+  transform-origin: bottom right;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.map-menu-popup.hidden {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.9);
+  /* Need visible: hidden or display: none to prevent clicking? display:none is safer */
+}
+
+@media (max-width: 600px) {
+  .map-menu-popup {
+    bottom: 45vh;
+  }
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+  user-select: none;
+}
+
+.menu-item:hover {
+  background: #f3f4f6;
+}
+
+.menu-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  width: 24px;
+  height: 24px;
+}
+
+.menu-label {
+  flex: 1;
+  font-weight: 500;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #e5e7eb;
+  transition: .3s;
+  border-radius: 34px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 20px;
+  width: 20px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  transition: .3s cubic-bezier(0.4, 0.0, 0.2, 1);
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+input:checked+.slider {
+  background-color: var(--primary);
+}
+
+input:focus+.slider {
+  box-shadow: 0 0 1px var(--primary);
+}
+
+input:checked+.slider:before {
+  transform: translateX(20px);
 }

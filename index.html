@@ -10,10 +10,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="icon" type="image/png" sizes="32x32" href="/tbilisi-trans/favicon-32x32.png">
-  <link rel="icon" type="image/png" sizes="16x16" href="/tbilisi-trans/favicon-16x16.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="/tbilisi-trans/apple-touch-icon.png">
-  <link rel="manifest" href="/tbilisi-trans/manifest.json">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.json">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -104,15 +104,15 @@
         <h2 id="stop-name">Select a stop</h2>
         <div class="panel-controls">
           <button id="back-panel" class="icon-btn hidden" title="Back">
-            <img src="./chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+            <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
           </button>
 
           <button id="btn-edit-stop" class="icon-btn" title="Edit Stop">
-            <img src="./pencil.circle.fill.svg" alt="Edit" width="28" height="28">
+            <img src="/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
           </button>
 
           <button id="close-panel" class="icon-btn" title="Close">
-            <img src="./xmark.circle.fill.svg" alt="Close" width="28" height="28">
+            <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
           </button>
         </div>
       </div>
@@ -132,7 +132,7 @@
       </div>
       <!-- Filter Toggle Row -->
       <button id="filter-routes-toggle" class="filter-toggle-row">
-        <img class="filter-icon" alt="Filter" width="24" height="24">
+        <img class="filter-icon" src="/line.3.horizontal.decrease.circle.svg" alt="Filter" width="24" height="24">
         <span class="filter-text">Filter routes...</span>
       </button>
 
@@ -155,10 +155,10 @@
         </div>
         <div class="panel-controls">
           <button id="back-route-info" class="icon-btn hidden" title="Back">
-            <img src="./chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+            <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
           </button>
           <button id="close-route-info" class="icon-btn" title="Close">
-            <img src="./xmark.circle.fill.svg" alt="Close" width="28" height="28">
+            <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
           </button>
         </div>
       </div>
@@ -181,6 +181,47 @@
     <button id="reset-view" class="reset-view-btn hidden">
       <span>📍</span> Return to Tbilisi
     </button>
+    <div id="map-menu-popup" class="map-menu-popup hidden">
+      <div class="menu-item" id="menu-simplify-toggle-row">
+        <div class="menu-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <text x="12" y="16" text-anchor="middle" font-size="10" font-family="sans-serif" font-weight="bold"
+              fill="currentColor" stroke="none">3××</text>
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+          </svg>
+        </div>
+        <span class="menu-label">Simple numbers</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="simplify-switch">
+          <span class="slider round"></span>
+        </label>
+      </div>
+      <div class="menu-item" id="menu-minibus-toggle-row">
+        <div class="menu-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- Ford Transit Silhouette -->
+            <!-- Hood sloped up, Windshield angled back, High roof, Flat back -->
+            <path d="M21 16V8C21 8 19 6 15 6H9C6 6 4 9 2 11V16H21Z" stroke="currentColor" stroke-width="2"
+              stroke-linejoin="round" />
+            <path d="M2 13H5L4 10" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+            <!-- Headlight/Front detail -->
+            <path d="M2 16H21" stroke="currentColor" stroke-width="2" /> <!-- Bottom Frame -->
+            <circle cx="6.5" cy="16" r="2.5" fill="none" stroke="currentColor" stroke-width="2" /> <!-- Front Wheel -->
+            <circle cx="17.5" cy="16" r="2.5" fill="none" stroke="currentColor" stroke-width="2" /> <!-- Rear Wheel -->
+            <!-- Windows -->
+            <path d="M9 8H14V11H8L9 8Z" fill="currentColor" fill-opacity="0.3" />
+            <path d="M15 8H19V11H15V8Z" fill="currentColor" fill-opacity="0.3" />
+          </svg>
+        </div>
+        <span class="menu-label">Show minibuses</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="minibus-switch">
+          <span class="slider round"></span>
+        </label>
+      </div>
+    </div>
+
     <!-- Map Controls (Zoom & Location) -->
     <div id="map-controls">
       <button id="locate-me" class="control-btn" aria-label="Locate Me">
@@ -204,9 +245,17 @@
           </svg>
         </button>
       </div>
+      <button id="menu-btn" class="control-btn" aria-label="Menu" style="margin-top: 0px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="12" x2="20" y2="12"></line>
+          <line x1="4" y1="6" x2="20" y2="6"></line>
+          <line x1="4" y1="18" x2="20" y2="18"></line>
+        </svg>
+      </button>
     </div>
   </div> <!-- Close app -->
-  <script type="module" src="src/main.js"></script>
+  <script type="module" src="/src/main.js"></script>
 </body>
 
 </html>
