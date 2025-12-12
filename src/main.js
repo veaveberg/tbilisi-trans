@@ -1498,9 +1498,12 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
 
         // Bus Stop Logic
         const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        // Write access is only available in Dev Server mode (active middleware)
+        const hasWriteAccess = isLocalhost && import.meta.env.DEV;
+
         if (editBtn) {
-            editBtn.style.display = isLocalhost ? '' : 'none';
-            editBtn.classList.toggle('hidden', !isLocalhost);
+            editBtn.style.display = hasWriteAccess ? '' : 'none';
+            editBtn.classList.toggle('hidden', !hasWriteAccess);
         }
         if (filterBtn) {
             filterBtn.style.display = ''; // Restore flex/block
