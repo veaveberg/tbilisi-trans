@@ -39,7 +39,9 @@ async function fetchAndSave(endpoint, filename) {
         const res = await fetch(url, {
             headers: {
                 'x-api-key': API_KEY,
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Origin': 'https://transit.ttc.com.ge',
+                'Referer': 'https://transit.ttc.com.ge/'
             }
         });
         if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
@@ -65,7 +67,9 @@ async function main() {
         const res = await fetch(`${API_BASE_URL}/routes`, {
             headers: {
                 'x-api-key': API_KEY,
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Origin': 'https://transit.ttc.com.ge',
+                'Referer': 'https://transit.ttc.com.ge/'
             }
         });
         if (!res.ok) throw new Error('Failed to fetch routes');
@@ -89,7 +93,9 @@ async function main() {
 
             const headers = {
                 'x-api-key': API_KEY,
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Origin': 'https://transit.ttc.com.ge',
+                'Referer': 'https://transit.ttc.com.ge/'
             };
 
             const detailsRes = await fetchWithRetry(detailsUrl, { headers });
