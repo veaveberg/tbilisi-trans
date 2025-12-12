@@ -5,14 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "prefetch": "node scripts/prefetch-data.js",
+    "build": "npm run prefetch && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "mapbox-gl": "^3.1.2",
-    "date-fns": "^3.3.1"
+    "date-fns": "^3.3.1",
+    "mapbox-gl": "^3.1.2"
   },
   "devDependencies": {
-    "vite": "^5.1.4"
+    "vite": "^5.1.4",
+    "vite-plugin-pwa": "^1.2.0"
   }
 }

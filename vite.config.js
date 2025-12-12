@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { VitePWA } from 'vite-plugin-pwa';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,7 +41,50 @@ const saveStopsPlugin = () => ({
 });
 
 export default defineConfig({
-    plugins: [saveStopsPlugin()],
+    plugins: [
+        saveStopsPlugin(),
+        VitePWA({
+            registerType: 'autoUpdate',
+            includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg', 'data/*.json'], // Include fallback data!
+            workbox: {
+                globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'], // Cache everything
+                runtimeCaching: [
+                    {
+                        urlPattern: ({ url }) => url.pathname.startsWith('/pis-gateway/api/'),
+                        handler: 'StaleWhileRevalidate',
+                        options: {
+                            cacheName: 'api-cache',
+                            expiration: {
+                                maxEntries: 100,
+                                maxAgeSeconds: 60 * 60 * 24 * 30 // 30 Days
+                            },
+                            cacheableResponse: {
+                                statuses: [0, 200]
+                            }
+                        }
+                    }
+                ]
+            },
+            manifest: {
+                name: 'Tbilisi Transit',
+                short_name: 'TTC',
+                description: 'Real-time Tbilisi Transport',
+                theme_color: '#ffffff',
+                icons: [
+                    {
+                        src: 'pwa-192x192.png',
+                        sizes: '192x192',
+                        type: 'image/png'
+                    },
+                    {
+                        src: 'pwa-512x512.png',
+                        sizes: '512x512',
+                        type: 'image/png'
+                    }
+                ]
+            }
+        })
+    ],
     base: '/tbilisi-trans/', // For GitHub Pages
     server: {
         watch: {

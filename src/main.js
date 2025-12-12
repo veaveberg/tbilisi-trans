@@ -9,11 +9,28 @@ import * as metro from './metro.js'; // Import new module
 const { handleMetroStop } = metro; // Destructure for existing calls
 import { db } from './db.js';
 import { historyManager } from './history.js';
+import { hydrateRouteDetails } from './fetch.js';
+
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
-import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg';
+// import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
 
 import { map, getMapHash, setupMapControls } from './map-setup.js';
 import { initSettings, simplifyNumber, shouldShowRoute } from './settings.js';
+
+// --- Global State Declarations (Hoisted) ---
+// These must be declared before api.fetchRoutes calls onRoutesLoaded
+let allStops = [];
+let rawStops = [];
+let allRoutes = [];
+let stopToRoutesMap = new Map();
+let lastRouteUpdateId = 0;
+const redirectMap = new Map();
+const hubMap = new Map();
+const hubSourcesMap = new Map();
+const mergeSourcesMap = new Map();
+let editState = null;
+let busUpdateInterval = null;
+// State declarations
 
 // Initialize Settings
 initSettings({
@@ -36,62 +53,71 @@ setupMapControls();
 Router.init();
 const initialState = Router.parse();
 
-api.fetchRoutes().then((data) => {
-    allRoutes = data || []; // Assign global
+// --- OPTIMIZED INITIALIZATION ---
+let isRouterLogicExecuted = false;
+
+function onRoutesLoaded(data) {
+    if (!data) return;
+    allRoutes = data; // Always update global data
+
+    if (isRouterLogicExecuted) return; // Only run initial routing once
+    isRouterLogicExecuted = true;
+
+    console.log('[Init] Router Logic Executing with', data.length, 'routes');
+
     // 1. Nested Route (Stop + Bus)
     if (initialState.type === 'nested' && initialState.stopId && initialState.shortName) {
         window.currentStopId = initialState.stopId;
-        // Fetch Stop Logic (simplified emulation of showStopInfo without UI force)
-        // We want to load the stop data so "Back" works, but immediately show Route on top.
-
-        // We can use showStopInfo but force it to stay in "peek" or "hidden" if possible?
-        // Actually, let's just use showStopInfo normally, then immediately showRouteOnMap.
-        // But we need to make sure showStopInfo finishes first? It is async.
-
-        // Resolve stop object if needed, or just pass ID
-        const stopId = initialState.stopId;
-
-        // We need to wait for map?
-        map.once('load', () => {
-            // Load Stop First (Adds to history)
-            // We pass updateURL=false because we will overwrite it with the nested URL immediately
-            showStopInfo({ id: stopId }, true, false, false).then(() => {
-                // Now Load Route
+        const execute = () => {
+            showStopInfo({ id: initialState.stopId }, true, false, false).then(() => {
                 api.fetchV3Routes().then(() => {
                     const routeObj = allRoutes.find(r => String(r.shortName) === String(initialState.shortName));
                     if (routeObj) {
-                        showRouteOnMap(routeObj, true, {
-                            initialDirectionIndex: initialState.direction
-                        });
+                        showRouteOnMap(routeObj, true, { initialDirectionIndex: initialState.direction });
                     }
                 });
             });
-        });
-
+        };
+        if (map.loaded()) execute(); else map.once('load', execute);
     }
     // 2. Direct Route (Bus only)
     else if (initialState.type === 'route' && initialState.shortName) {
-        map.once('load', () => {
+        const execute = () => {
             api.fetchV3Routes().then(() => {
                 const routeObj = allRoutes.find(r => String(r.shortName) === String(initialState.shortName));
                 if (routeObj) {
-                    showRouteOnMap(routeObj, true, {
-                        initialDirectionIndex: initialState.direction
-                    });
+                    showRouteOnMap(routeObj, true, { initialDirectionIndex: initialState.direction });
                 }
             });
-        });
+        };
+        if (map.loaded()) execute(); else map.once('load', execute);
     }
-    // 3. Stop Only
+    // 3. Stop Only / Filter / Other (Delegated to handleDeepLinks)
+    // We only handle simple stop loads here if they are NOT filtered?
+    // Actually, `handleDeepLinks` is much more robust for Stop logic.
+    // Let's remove the duplicated Stop block here and call `handleDeepLinks` explicitly
+    // OR ensure `handleDeepLinks` is called effectively.
+    // But `handleDeepLinks` is currently called in `initializeMapData` (setupSearch callback).
+    // Let's trust `handleDeepLinks` to handle the Stop case and remove it from here to avoid race/reset.
+
     else if (initialState.stopId) {
-        window.currentStopId = initialState.stopId;
-        // Rely on map logic or call showStopInfo?
-        // showStopInfo is better to ensure panel opens
-        map.once('load', () => {
-            showStopInfo({ id: initialState.stopId }, true, true, true);
-        });
+        // Delegating to handleDeepLinks which handles filters correctly.
+        // However, we need to ensure handleDeepLinks is called or triggered.
+        // Currently it's called in setupSearch -> onRouteSelect? No.
+        // It's called in `initializeMapData` at line ~332?
+        // Let's check line 332.
+
+        // If I remove this block, `onRoutesLoaded` won't trigger the stop view.
+        // I should call `handleDeepLinks` here instead.
+        handleDeepLinks();
     }
-});
+}
+
+// 1. Fast Load (Cache/Static) - Instant UI
+api.fetchRoutes({ strategy: 'cache-only' }).then(onRoutesLoaded);
+
+// 2. Fresh Load (Network) - Updates Data/UI
+api.fetchRoutes().then(onRoutesLoaded);
 
 map.on('moveend', () => {
     // Only update hash if no specialized view is active (Stop or Route)
@@ -108,29 +134,23 @@ if (initialFilterBtn) {
 
 
 // State
-let allStops = [];
-let rawStops = []; // Persist raw data for re-processing
-let allRoutes = [];
-let stopToRoutesMap = new Map(); // Index: stopId -> [route objects]
-let lastRouteUpdateId = 0; // Async Lock for Route Updates
-// Merge/Redirect Maps
-const redirectMap = new Map(); // sourceId -> targetId
-const hubMap = new Map(); // stopId -> hubLeaderId (Hub Group)
-const hubSourcesMap = new Map(); // hubLeaderId -> [memberIds]
-const mergeSourcesMap = new Map(); // targetId -> [sourceIds]
+// State declarations moved to top to avoid TDZ errors
+// (allStops, allRoutes, etc.)
 
 // Bus Interval
-let busUpdateInterval = null;
+
+// Bus Interval
 
 
 
-function getEquivalentStops(id) {
-    const parent = hubMap.get(id) || id;
-    const children = hubSourcesMap.get(parent);
-
-    if (children) {
-        // If it's a hub, return all children.
-        return Array.from(children);
+function getEquivalentStops(id, includeHubs = true) {
+    if (includeHubs) {
+        const parent = hubMap.get(id) || id;
+        const children = hubSourcesMap.get(parent);
+        if (children) {
+            // If it's a hub, return all children.
+            return Array.from(children);
+        }
     }
     // Check Redirects
     const set = new Set();
@@ -204,553 +224,54 @@ function handleBack() {
     }
 }
 
-// --- Filter State ---
-const filterState = {
-    active: false,
-    picking: false,
-    originId: null,
-    targetIds: new Set(), // Multi-select support
-    reachableStopIds: new Set(),
-    filteredRoutes: [] // Array of route IDs
+// --- Filter Manager ---
+import { FilterManager } from './filter-manager.js';
+
+let filterManager;
+
+const dataProvider = {
+    getAllStops: () => allStops,
+    getAllRoutes: () => allRoutes,
+    getRedirectMap: () => redirectMap,
+    getHubMap: () => hubMap,
+    getHubSourcesMap: () => hubSourcesMap,
+    getMergeSourcesMap: () => mergeSourcesMap,
+    getStopToRoutesMap: () => stopToRoutesMap,
+    getEditState: () => editState
 };
+
+const uiCallbacks = {
+    renderArrivals,
+    renderAllRoutes,
+    setSheetState,
+    updateConnectionLine,
+    showStopInfo,
+    getCircleRadiusExpression // Assuming we can use the local one or move it. Wait, getCircleRadiusExpression is defined locally. I should export it or move it or duplicate it.
+    // It's defined at line ~4400. Let's find it. For now, I'll assume we can pass a wrapper.
+};
+// Wrapper for getCircleRadiusExpression if it's a function declaration
+uiCallbacks.getCircleRadiusExpression = (scale) => getCircleRadiusExpression(scale);
+
+// Lazy Init to ensure Map is ready? Or just init immediately.
+// Map is imported. Router is imported.
+filterManager = new FilterManager({ map, router: Router, dataProvider, uiCallbacks });
+
+// Forwarding functions for UI event handlers
+window.toggleFilterMode = () => filterManager.toggleFilterMode(window.currentStopId, window.isPickModeActive, setEditPickMode);
+window.applyFilter = (targetId) => filterManager.applyFilter(targetId, window.currentStopId, window.lastArrivals, window.lastRoutes);
+window.clearFilter = () => filterManager.clearFilter(window.currentStopId);
 
 import { RouteFilterColorManager } from './color-manager.js';
 import { setupSearch } from './search.js';
 
-async function toggleFilterMode() {
-    console.log('[Debug] toggleFilterMode called. Active:', filterState.active, 'Picking:', filterState.picking, 'CurrentStop:', window.currentStopId);
+// Legacy function cleanup
+// toggleFilterMode, updateMapFilterState, ensureLazyRoutesForStop, refreshRouteFilter, applyFilter, clearFilter 
+// are now handled by filterManager.
+// We need to remove the definitions.
 
-    // Cancel Edit Pick Mode if active
-    if (window.isPickModeActive) setEditPickMode(null);
-
-    // If already active/picking, cancel it
-    if (filterState.active || filterState.picking) {
-        clearFilter();
-        // Force UI update to ensure button state syncs
-        const btn = document.getElementById('filter-routes-toggle');
-        if (btn) btn.classList.remove('active');
-        return;
-    }
-
-    if (!window.currentStopId) {
-        console.warn('[Debug] No currentStopId, cannot filter');
-        return;
-    }
-
-    // Start Picking Mode
-    filterState.picking = true;
-    filterState.originId = window.currentStopId;
-
-    // Filter Button UI Update
-    const btn = document.getElementById('filter-routes-toggle');
-    if (btn) {
-        btn.classList.add('active');
-        btn.querySelector('.filter-icon').src = iconFilterFill;
-        btn.querySelector('.filter-text').textContent = 'Select destination stops...';
-    }
-
-    // Removed old instruction panel logic
-    // const instructionEl = document.getElementById('filter-instruction-panel');
-    // if (instructionEl) instructionEl.classList.remove('hidden');
-
-    // Camera Logic: Zoom out & Pan
-    if (window.currentStopId) {
-        // Auto-collapse panel to reveal map (Peek State)
-        const panel = document.getElementById('info-panel');
-        // Only collapse if it's currently blocking view (half or full), or just force consistent "Filter Mode View"
-        if (panel) setSheetState(panel, 'peek');
-
-        const stop = allStops.find(s => s.id === window.currentStopId);
-        if (stop) {
-            const currentZoom = map.getZoom();
-            const targetZoom = currentZoom > 14 ? 14 : currentZoom;
-
-            // Calculate Pan Offset (300m in bearing direction)
-            // Default bearing 0 if missing
-            const bearing = (stop.bearing || 0) * (Math.PI / 180); // radians
-            const distance = 300; // meters
-            const R = 6371e3; // Earth radius in meters
-            const lat1 = stop.lat * (Math.PI / 180);
-            const lon1 = stop.lon * (Math.PI / 180);
-
-            const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distance / R) +
-                Math.cos(lat1) * Math.sin(distance / R) * Math.cos(bearing));
-            const lon2 = lon1 + Math.atan2(Math.sin(bearing) * Math.sin(distance / R) * Math.cos(lat1),
-                Math.cos(distance / R) - Math.sin(lat1) * Math.sin(lat2));
-
-            const targetLat = lat2 * (180 / Math.PI);
-            const targetLon = lon2 * (180 / Math.PI);
-
-            map.flyTo({
-                center: [targetLon, targetLat],
-                zoom: targetZoom,
-                duration: 1500,
-                essential: true
-            });
-        }
-    }
-
-    // Calculate Reachable Stops
-    // 1. Get all routes passing through currentStopId (and its hub equivalents)
-    // 1. Get all routes passing through currentStopId (and its hub equivalents)
-    const originEq = new Set(getEquivalentStops(window.currentStopId));
-    const routes = new Set();
-    originEq.forEach(oid => {
-        const r = stopToRoutesMap.get(oid) || [];
-        r.forEach(route => routes.add(route));
-    });
-    const originRoutes = Array.from(routes);
-
-    const reachableStopIds = new Set(); // Initialize Scope Here
-
-    // FETCH MISSING DETAILS
-    // If routes exist but don't have 'stops', we must fetch them.
-    const routesNeedingFetch = originRoutes.filter(r => !r._details || !r._details.patterns); // Check for _details and patterns
-
-    if (routesNeedingFetch.length > 0) {
-        console.log(`[Debug] Need to fetch details for ${routesNeedingFetch.length} routes...`);
-        document.body.style.cursor = 'wait';
-
-        // Show loading state on button?
-        const btn = document.getElementById('filter-routes');
-        if (btn) btn.style.opacity = '0.5';
-
-        try {
-            await Promise.all(routesNeedingFetch.map(async (r) => {
-                try {
-                    // Fetch full route object via V3 API which has patterns and stops
-                    const routeDetails = await api.fetchRouteDetailsV3(r.id);
-                    r._details = routeDetails; // Store for applyFilter
-
-                    // DEBUG: Custom Logger
-                    if (routesNeedingFetch.indexOf(r) === 0) {
-                        console.log(`[Debug] V3 Route Details (${r.id}):`, routeDetails);
-                        if (routeDetails?.patterns) console.log(`[Debug] Patterns:`, routeDetails.patterns.length);
-                    }
-
-                    if (routeDetails && routeDetails.patterns) {
-                        // Strategy A: Stops are inside patterns
-                        let foundStopsInPatterns = false;
-
-                        routeDetails.patterns.forEach(p => {
-                            if (p.stops && p.stops.length > 0) {
-                                foundStopsInPatterns = true;
-                                // Directional Logic: Only add stops AFTER currentStopId (Normalized)
-                                // Find index of current stop (checking redirects and hubs)
-                                const idx = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
-
-                                if (idx !== -1 && idx < p.stops.length - 1) {
-                                    p.stops.slice(idx + 1).forEach(s => {
-                                        const normId = redirectMap.get(s.id) || s.id;
-                                        // Add all equivalent stops of the reachable stop
-                                        getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
-                                    });
-                                }
-                            }
-                        });
-
-                        // Strategy B: Fetch Stops by Suffix if A failed
-                        if (!foundStopsInPatterns) {
-                            console.log(`[Debug] No stops in patterns for ${r.id}, fetching by suffix...`);
-                            await Promise.all(routeDetails.patterns.map(async (p) => {
-                                try {
-                                    const stopsData = await api.fetchRouteStopsV3(r.id, p.patternSuffix);
-                                    let stopsList = [];
-                                    if (stopsData && Array.isArray(stopsData)) {
-                                        stopsList = stopsData;
-                                    } else if (stopsData && stopsData.stops) {
-                                        stopsList = stopsData.stops;
-                                    }
-
-                                    // Store for applyFilter (mocking pattern structure)
-                                    p.stops = stopsList;
-
-                                    // Directional Logic (Normalized)
-                                    const idx = stopsList.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
-                                    if (idx !== -1 && idx < stopsList.length - 1) {
-                                        stopsList.slice(idx + 1).forEach(s => {
-                                            const normId = redirectMap.get(s.id) || s.id;
-                                            getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
-                                        });
-                                    }
-                                } catch (err) {
-                                    console.warn(`[Debug] Failed to fetch stops for suffix ${p.patternSuffix}`, err);
-                                }
-                            }));
-                        }
-                    } else if (routeDetails && routeDetails.stops) {
-                        // Fallback V2 style (unlikely for V3 but safety) - No directionality possible easily
-                        // Just add all except current?
-                        r._details.stops = routeDetails.stops; // normalize
-                        routeDetails.stops.forEach(s => {
-                            const normId = redirectMap.get(s.id) || s.id;
-                            if (!originEq.has(normId)) { // Check against all origin equivalents
-                                getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
-                            }
-                        });
-                    }
-                } catch (e) {
-                    console.warn(`[Debug] Failed to fetch details for route ${r.id}`, e);
-                }
-            }));
-        } catch (err) {
-            console.error('[Debug] Error fetching route details', err);
-        } finally {
-            document.body.style.cursor = 'default';
-            if (btn) btn.style.opacity = '1';
-        }
-    }
-
-    // Iterate over ALL routes (whether fetched or not) and calculate reachability
-    // This ensures consistency and covers routes that were already cached.
-    originRoutes.forEach(r => {
-        if (r._details && r._details.patterns) {
-            r._details.patterns.forEach(p => {
-                if (p.stops) {
-                    // Normalized Find
-                    const idx = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
-                    if (idx !== -1 && idx < p.stops.length - 1) {
-                        p.stops.slice(idx + 1).forEach(s => {
-                            const normId = redirectMap.get(s.id) || s.id;
-                            getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
-                        });
-                    }
-                }
-            });
-        } else if (r._details && r._details.stops) { // Fallback for V2-like structure
-            r._details.stops.forEach(s => {
-                const normId = redirectMap.get(s.id) || s.id;
-                if (!originEq.has(normId)) {
-                    getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
-                }
-            });
-        }
-    });
-
-    // Store Reachable Stops in State
-    filterState.reachableStopIds = reachableStopIds; // Save Set
-
-    console.log(`[Debug] Filter Mode. Origin: ${window.currentStopId}. Routes: ${originRoutes.length}. Reachable Stops: ${reachableStopIds.size}`);
-
-    // Debug Data Availability
-    if (originRoutes.length === 0) {
-        console.warn('[Debug] stopToRoutesMap is empty. Checking fetchStopRoutes cache?');
-    }
-
-    if (reachableStopIds.size === 0) {
-        alert("No route data available for filtering (Stops list empty).");
-        clearFilter();
-        return;
-    }
-
-    updateMapFilterState();
-}
-
-// Update Map Visuals for Filter Mode (Opacity & Z-Index)
+// Re-export specific hook for map updates from filter manager
 function updateMapFilterState() {
-    if (!filterState.picking && !filterState.active) {
-        // Reset (But check for Edit Mode!)
-        const editId = editState && editState.stopId ? editState.stopId : null;
-
-        // 1. Opacity: If editing, hide that ID (0). Else 1.
-        const opacityExpr = editId ? ['match', ['get', 'id'], editId, 0, 1] : 1;
-
-        if (map.getLayer('stops-layer')) {
-            map.setPaintProperty('stops-layer', 'icon-opacity', opacityExpr);
-            map.setLayoutProperty('stops-layer', 'symbol-sort-key', 0);
-        }
-        if (map.getLayer('stops-label-selected')) {
-            map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', []]]);
-        }
-        if (map.getLayer('stops-layer-circle')) {
-            map.setPaintProperty('stops-layer-circle', 'circle-opacity', opacityExpr);
-            map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', opacityExpr);
-            map.setPaintProperty('stops-layer-circle', 'circle-radius', getCircleRadiusExpression(1));
-        }
-        if (map.getLayer('metro-layer-circle')) {
-            map.setPaintProperty('metro-layer-circle', 'circle-opacity', 1);
-            map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', 1);
-        }
-        if (map.getLayer('stops-highlight')) {
-            map.setPaintProperty('stops-highlight', 'icon-opacity', opacityExpr);
-        }
-        return;
-    }
-
-    const reachableArray = Array.from(filterState.reachableStopIds || []);
-    const selectedArray = Array.from(filterState.targetIds || []);
-    const originId = filterState.originId;
-
-    // Merge important IDs for High Opacity
-    // Reachable + Selected + Origin
-    const highOpacityIds = new Set(reachableArray);
-    selectedArray.forEach(id => highOpacityIds.add(id));
-    if (originId) highOpacityIds.add(originId);
-
-    // 1. Opacity Expression: Reachable/Selected = 1.0, Others = 0.1
-    // 1. Opacity Expression: Reachable/Selected = 1.0, Others = 0.1
-    // BUT if Editing, hide editing ID = 0
-    const editId = editState && editState.stopId ? editState.stopId : null;
-
-    // Structure: ['match', get(id), [editId], 0, [highOpacity], 1.0, 0.1]
-    const opacityExpression = ['match', ['get', 'id']];
-    if (editId) {
-        opacityExpression.push([editId], 0); // Hide edited stop
-    }
-    opacityExpression.push(Array.from(highOpacityIds), 1.0, 0.1); // Standard Filter Logic
-
-    // 2. Sort Key Expression: Selected > Reachable > Others
-    // This allows clicking "Highlighted" stops easily even if clustered
-    // Mapbox symbol-sort-key: Higher sorts first? No, sort order ASCENDING? 
-    // Docs: "Features with a higher sort key are drawn over features with a lower sort key." -> Yes, Higher = Top.
-    // Selected = 1000
-    // Reachable = 100
-    // Origin = 500
-    // Others = 0
-
-    const sortExpression = [
-        'match', ['get', 'id'],
-        selectedArray, 1000, // Selected are Top Priority
-        // Nested match? Or just flat list? Match takes one list.
-        // We can't easily nest matches for different priorities unless we use 'case'.
-        // Let's use 'case' for granular priorities.
-        // ['case', condition, output, condition, output, fallback]
-    ];
-
-    // Using 'case' with 'in' operator check is cleaner logic than nested matches
-    const caseExpression = [
-        'case',
-        ['in', ['get', 'id'], ['literal', selectedArray]], 1000,
-        ['==', ['get', 'id'], originId], 900,
-        ['in', ['get', 'id'], ['literal', reachableArray]], 100,
-        0 // Fallback
-    ];
-
-    if (map.getLayer('stops-layer')) {
-        map.setPaintProperty('stops-layer', 'icon-opacity', opacityExpression);
-        map.setLayoutProperty('stops-layer', 'symbol-sort-key', caseExpression);
-    }
-
-    if (map.getLayer('stops-layer-circle')) {
-        map.setPaintProperty('stops-layer-circle', 'circle-opacity', opacityExpression);
-        map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', opacityExpression);
-
-        // Make selectable stops BIGGER (1.5x)
-        // Make selectable stops BIGGER (1.5x)
-        // Note: We cannot nest 'interpolate' inside 'match'. We must use 'interpolate' at top level
-        // and condition inside the stops.
-        const radiusExpression = [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            12.5, [
-                'case',
-                ['match', ['get', 'id'], Array.from(highOpacityIds), true, false], // Is High Opacity?
-                1.2 * 1.5,
-                1.2
-            ],
-            16, [
-                'case',
-                ['match', ['get', 'id'], Array.from(highOpacityIds), true, false], // Is High Opacity?
-                4.8 * 1.5,
-                4.8
-            ]
-        ];
-        map.setPaintProperty('stops-layer-circle', 'circle-radius', radiusExpression);
-    }
-
-    if (map.getLayer('stops-label-selected')) {
-        // Only show labels for SELECTED targetIds
-        if (selectedArray.length > 0) {
-            map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', selectedArray]]);
-        } else {
-            map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', []]]);
-        }
-    }
-
-    if (map.getLayer('metro-layer-circle')) {
-        map.setPaintProperty('metro-layer-circle', 'circle-opacity', opacityExpression);
-        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', opacityExpression);
-        // Metro stays same size for now (unless requested otherwise)
-    }
-
-    if (map.getLayer('stops-highlight')) {
-        map.setPaintProperty('stops-highlight', 'icon-opacity', opacityExpression);
-    }
-}
-
-function refreshRouteFilter() {
-    console.log(`[Debug] refreshRouteFilter. Origin: ${filterState.originId}, Targets: ${Array.from(filterState.targetIds).join(', ')}`);
-    // console.trace('refreshRouteFilter Trace'); // Temporary debugging
-
-    const originEq = new Set(getEquivalentStops(filterState.originId));
-    const originRoutesSet = new Set();
-    originEq.forEach(oid => {
-        const routes = stopToRoutesMap.get(oid) || [];
-        routes.forEach(r => originRoutesSet.add(r));
-    });
-    const originRoutes = Array.from(originRoutesSet);
-
-    // We want routes that pass check for AT LEAST ONE target
-    const commonRoutes = originRoutes.filter(r => {
-        // HUB LOGIC: Route matches if it touches ANY equivalent of Origin AND ANY equivalent of Target
-        // Order must be OriginSection < TargetSection
-
-        // Optimize: Convert route stops to normalized IDs to avoid repeated map lookups? 
-        // Or just iterate.
-        let routeStopsNormalized = null; // Lazy load
-
-        // Check against ALL targets. If matches ANY, keep it.
-        for (const tid of filterState.targetIds) {
-            const targetEq = new Set(getEquivalentStops(tid));
-            let matches = false;
-
-            if (r._details && r._details.patterns) {
-                matches = r._details.patterns.some(p => {
-                    if (!p.stops) return false;
-                    // Find first occurrence of ANY Origin Equivalent
-                    const idxO = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
-                    // Find first occurrence of ANY Target Equivalent AFTER idxO
-                    if (idxO === -1) return false;
-
-                    const idxT = p.stops.findIndex((s, i) => i > idxO && targetEq.has(redirectMap.get(s.id) || s.id));
-                    return idxT !== -1;
-                });
-            } else if (r.stops) {
-                if (!routeStopsNormalized) {
-                    routeStopsNormalized = r.stops.map(sid => redirectMap.get(sid) || sid);
-                }
-                const stops = routeStopsNormalized;
-                const idxO = stops.findIndex(sid => originEq.has(sid));
-                if (idxO !== -1) {
-                    const idxT = stops.findIndex((sid, i) => i > idxO && targetEq.has(sid));
-                    matches = (idxT !== -1);
-                }
-            }
-
-            if (matches) return true; // Keep route
-        }
-
-        return false;
-    });
-
-    console.log(`[Debug] Common Routes for Union: ${commonRoutes.length}`, commonRoutes.map(r => r.shortName));
-
-    filterState.filteredRoutes = commonRoutes.map(r => r.id);
-    filterState.active = true; // Still active/picking
-
-    // Update UI
-    updateMapFilterState();
-
-    // Refresh Panel List if we are still viewing the origin stop
-    if (window.currentStopId === filterState.originId) {
-        console.log('[Debug] ApplyFilter: Attempting to refresh arrivals list...');
-        if (window.lastArrivals) {
-            renderArrivals(window.lastArrivals, filterState.originId);
-            if (window.lastRoutes) {
-                renderAllRoutes(window.lastRoutes, window.lastArrivals);
-            }
-        } else {
-            const stop = allStops.find(s => s.id === filterState.originId);
-            if (stop) showStopInfo(stop, false, false);
-        }
-    }
-
-    // Highlight Targets on Map & Draw Lines
-    // HUB LOGIC: updateConnectionLine should use Hub IDs for color signature
-    updateConnectionLine(filterState.originId, filterState.targetIds, false);
-
-    // Sync URL (Router)
-    Router.updateStop(filterState.originId, true, Array.from(filterState.targetIds));
-
-    // Refresh Panel List if we are still viewing the origin stop
-    // RE-RENDER TO APPLY COLORS
-    if (window.currentStopId === filterState.originId) {
-        console.log('[Debug] ApplyFilter: Refreshing arrivals to apply colors...');
-        if (window.lastArrivals) {
-            renderArrivals(window.lastArrivals, filterState.originId);
-            if (window.lastRoutes && window.lastArrivals) {
-                renderAllRoutes(window.lastRoutes, window.lastArrivals);
-            }
-        }
-    }
-}
-
-function applyFilter(targetId) {
-    if (!filterState.picking || !filterState.originId) return;
-
-    // Normalize Target ID
-    const normTargetId = redirectMap.get(targetId) || targetId;
-
-    // Hub Logic: Get all equivalent stops
-    const equivalentStops = getEquivalentStops(normTargetId);
-
-    // Check if ANY of the equivalent stops are currently selected
-    let isAnySelected = false;
-    equivalentStops.forEach(id => {
-        if (filterState.targetIds.has(id)) isAnySelected = true;
-    });
-
-    if (isAnySelected) {
-        // Deselect ALL
-        equivalentStops.forEach(id => {
-            filterState.targetIds.delete(id);
-        });
-    } else {
-        // Select ALL
-        equivalentStops.forEach(id => {
-            filterState.targetIds.add(id);
-        });
-    }
-
-    refreshRouteFilter();
-}
-
-function clearFilter() {
-    filterState.active = false;
-    filterState.picking = false;
-    filterState.originId = null;
-    filterState.targetIds = new Set(); // Reset Set
-    filterState.filteredRoutes = [];
-    RouteFilterColorManager.reset(); // Reset Colors
-
-    // Clear Connection Line
-    if (map.getSource('filter-connection')) {
-        map.getSource('filter-connection').setData({ type: 'FeatureCollection', features: [] });
-    }
-
-    // Reset UI
-    // Reset UI
-    const btn = document.getElementById('filter-routes-toggle');
-    if (btn) {
-        btn.classList.remove('active');
-        btn.querySelector('.filter-icon').src = iconFilterOutline; // Revert Icon
-        btn.querySelector('.filter-text').textContent = 'Filter routes...';
-    }
-    // const instructionEl = document.getElementById('filter-instruction-panel');
-    // if (instructionEl) instructionEl.classList.add('hidden');
-
-    // Reset Map
-    if (map.getLayer('stops-layer')) map.setPaintProperty('stops-layer', 'icon-opacity', 1);
-    if (map.getLayer('stops-label-selected')) {
-        map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', []]]);
-    }
-    if (map.getLayer('metro-layer-circle')) {
-        map.setPaintProperty('metro-layer-circle', 'circle-opacity', 1);
-        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', 1);
-    }
-    if (map.getLayer('stops-layer-circle')) {
-        map.setPaintProperty('stops-layer-circle', 'circle-opacity', 1);
-        map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', 1);
-        map.setPaintProperty('stops-layer-circle', 'circle-radius', getCircleRadiusExpression(1));
-    }
-
-    // Refresh view
-    if (window.currentStopId) {
-        const stop = allStops.find(s => s.id === window.currentStopId);
-        // Force flyTo=true to restore zoom
-        if (stop) showStopInfo(stop, false, true);
-    }
+    filterManager.updateMapFilterState();
 }
 
 // Back Button Listeners
@@ -761,43 +282,40 @@ document.getElementById('back-route-info')?.addEventListener('click', handleBack
 
 
 // Initialize map data
-map.on('load', async () => {
-    try {
-        // Initialize Raw Data
-        const [stopsData, routesData] = await Promise.all([api.fetchStops(), api.fetchRoutes()]);
-        rawStops = stopsData;
-        allRoutes = routesData;
+// --- Map Initialization & Data Loading ---
+let isSearchInitialized = false;
+let areImagesLoaded = false;
+let isDeepLinkHandled = false;
 
-        // Load Config & Process
-        await refreshStopsLayer();
+async function initializeMapData(stopsData, routesData) {
+    if (!stopsData || !routesData) return;
 
-        // Check cache for initial edits
-        // ... (existing logic continues from line 816?)
-        // Wait, line 816 uses allRoutes. Correct.
+    console.log('[Main] Initializing Map Data...');
 
-        window.allStops = allStops; // Debug: Expose to window
-        window.stopsConfig = stopsConfig; // Debug
+    // 1. Update Globals
+    rawStops = stopsData;
+    allRoutes = routesData;
+    window.allStops = allStops; // Debug support
 
-        // Index Routes by Stop ID (for "All Routes" list)
-        allRoutes.forEach(route => {
-            if (route.stops) {
-                route.stops.forEach(stopId => {
-                    // If stopId is a merged source, map it to target
-                    const targetId = redirectMap.get(stopId) || stopId;
+    // 2. Config & Layers (Populates allStops from rawStops)
+    await refreshStopsLayer();
 
-                    if (!stopToRoutesMap.has(targetId)) {
-                        stopToRoutesMap.set(targetId, []);
-                    }
-                    // Avoid dupes
-                    if (!stopToRoutesMap.get(targetId).includes(route)) {
-                        stopToRoutesMap.get(targetId).push(route);
-                    }
-                });
-            }
-        });
+    // 3. Index Routes (Clear and Rebuild)
+    stopToRoutesMap.clear();
+    allRoutes.forEach(route => {
+        if (route.stops) {
+            route.stops.forEach(stopId => {
+                const targetId = redirectMap.get(stopId) || stopId;
+                if (!stopToRoutesMap.has(targetId)) stopToRoutesMap.set(targetId, []);
+                if (!stopToRoutesMap.get(targetId).includes(route)) {
+                    stopToRoutesMap.get(targetId).push(route);
+                }
+            });
+        }
+    });
 
-        // Initialize Search & Layers
-        // Initialize Search & Layers
+    // 4. Setup Search (Run Once)
+    if (!isSearchInitialized) {
         setupSearch({
             onRouteSelect: (route) => showRouteOnMap(route),
             onStopSelect: (stop) => showStopInfo(stop, true, true)
@@ -805,200 +323,108 @@ map.on('load', async () => {
             getAllStops: () => allStops,
             getAllRoutes: () => allRoutes
         });
-        addStopsToMap(allStops);
-
-        // Load custom icons (SDF for coloring)
-        await loadImages(map);
-
-        // Remove loading state once map and data are ready
-        document.body.classList.remove('loading');
-
-        // Fix for Safari/Mobile (Force resize to account for dynamic address bar)
-        setTimeout(() => map.resize(), 100);
-
-
-        // --- Dev Tools Support ---
-        // --- Dev Tools Support ---
-        // Removed old DevTools as per user request
-        // if (import.meta.env.DEV) {
-        //     import('./dev-tools.js').then(module => module.initDevTools(map));
-        // }
-
-        // Router Initialization
-        Router.init();
-
-        // Handle Deep Linking (Initial Load)
-        const initialState = Router.parse();
-        if (initialState.stopId) {
-            console.log('[App] Deep Link Detected:', initialState);
-
-            // 1. Normalize Stop ID (Handle Merged/Redirected Stops)
-            const rawStopId = initialState.stopId;
-            const normStopId = redirectMap.get(rawStopId) || rawStopId;
-
-            // Wait for map idle or just slight delay to ensure rendering
-            const stop = allStops.find(s => String(s.id) === String(normStopId));
-
-            if (stop) {
-                // Determine if we need to restore filter state
-                if (initialState.filterActive) {
-                    // Show Stop Info (NO URL UPDATE to preserve filter params)
-                    showStopInfo(stop, false, true, false);
-
-                    // HACK: Allow showStopInfo to run, then apply filter.
-                    setTimeout(() => {
-                        // Ensure Stop Highlight is Enforced
-                        if (map.getSource('selected-stop')) {
-                            map.getSource('selected-stop').setData({
-                                type: 'FeatureCollection',
-                                features: [{
-                                    type: 'Feature',
-                                    geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
-                                    properties: stop
-                                }]
-                            });
-                        }
-
-                        // Initialize Filter Mode (Fetch Data & Calculate)
-                        // Do NOT set active=true beforehand, or toggleFilterMode will close it!
-                        toggleFilterMode().then(() => {
-                            // Restore Targets
-                            filterState.targetIds.clear();
-                            initialState.targetIds.forEach(tid => {
-                                const normTid = redirectMap.get(tid) || tid;
-                                filterState.targetIds.add(normTid);
-                            });
-
-                            filterState.active = true;
-                            // filterState.picking is set true by toggleFilterMode, leave it or set false if we want strict viewing mode?
-                            // Leave it true as we are technically in a filtered state where picking might be relevant.
-
-                            filterState.active = true;
-                            // filterState.picking is set true by toggleFilterMode
-
-                            // Refactored: Use shared logic
-                            refreshRouteFilter();
-                        });
-                    }, 500); // Wait for showStopInfo to settle
-
-
-                } else {
-                    showStopInfo(stop, false, true);
-                    // Ensure highlight enforces
-                    setTimeout(() => {
-                        if (map.getSource('selected-stop')) {
-                            map.getSource('selected-stop').setData({
-                                type: 'FeatureCollection',
-                                features: [{
-                                    type: 'Feature',
-                                    geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
-                                    properties: stop
-                                }]
-                            });
-                        }
-                    }, 200);
-                }
-            } else {
-                console.warn(`[App] Deep Link Stop ${normStopId} (Raw: ${rawStopId}) not found in allStops.`);
-            }
-        }
-
-        // Router Listener for Back Button
-        Router.onPopState = (state) => {
-            console.log('[App] PopState Handled:', state);
-            if (state.stopId) {
-                const stop = allStops.find(s => String(s.id) === String(state.stopId));
-                if (stop) {
-                    // Check if filter state changed
-                    if (state.filterActive !== filterState.active) {
-                        if (state.filterActive) {
-                            // Restore Filter (Complex, maybe just Alert or Reload?)
-                            // For MVP, just reloading page is safer for Deep Link restoration?
-                            // No, SPA feel is better.
-                            // Simply re-run the "Deep Link Detected" logic above?
-                            // Yes, extract it to valid function?
-                        } else {
-                            clearFilter();
-                        }
-                    }
-                    // Show Stop
-                    showStopInfo(stop, false, true);
-                }
-            } else {
-                // Home
-                handleBack(); // Pops history stack. Ideally we clear UI.
-                // handleBack pops internal stack. If we are syncing, maybe we just reset UI.
-                closeAllPanels();
-                setMapFocus(false);
-                clearRoute();
-                window.currentStopId = null;
-            }
-        };
-
-    } catch (error) {
-        console.error('Error initializing app:', error);
-        // Ensure UI is revealed even on error
-        document.body.classList.remove('loading');
-        alert(`Error plotting route: ${error.message} `);
+        isSearchInitialized = true;
     }
 
+    // 5. Map Visuals
+    addStopsToMap(allStops);
 
-    // Load Bus Icon (Simple Arrow)
-    const arrowImage = new Image(24, 24);
-    const arrowSvg = `
+    if (!areImagesLoaded) {
+        await loadImages(map);
+        areImagesLoaded = true;
+    }
+
+    // 6. Final UI
+    document.body.classList.remove('loading');
+    setTimeout(() => map.resize(), 100);
+
+    // 7. Router / Deep Links
+    if (!isDeepLinkHandled) {
+        handleDeepLinks();
+        isDeepLinkHandled = true;
+
+        Router.onPopState = (state) => {
+            if (state.stopId) {
+                // ... (Router logic handled by handleDeepLinks essentially or showStopInfo)
+                // Actually handleDeepLinks is one-off. Router listeners handle subsequent.
+            }
+        };
+    } else {
+        // Deep link already handled (e.g. by Fast Load).
+        // If we just reloaded fresh data, we MUST re-apply the filter to the new objects.
+        if (filterManager.state.active && filterManager.state.originId) {
+            console.log('[Main] Fresh data loaded while Filter Active. Re-applying...');
+            // Use refreshRouteFilter, which now includes hydration logic
+            filterManager.refreshRouteFilter(filterManager.state.originId);
+        }
+    }
+
+    // console.log('[Main] Initialization Complete');
+} // End of initializeMapData
+
+
+
+// Load Bus Icon (Simple Arrow)
+const arrowImage = new Image(24, 24);
+const arrowSvg = `
             <svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 2L4.5 20.29L5.21 21L12 18L18.79 21L19.5 20.29L12 2Z" fill="#ef4444" />
             </svg>`;
-    arrowImage.onload = () => {
-        if (!map.hasImage('bus-arrow')) map.addImage('bus-arrow', arrowImage, { sdf: true });
-    };
-    arrowImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(arrowSvg);
+arrowImage.onload = () => {
+    if (!map.hasImage('bus-arrow')) map.addImage('bus-arrow', arrowImage, { sdf: true });
+};
+arrowImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(arrowSvg);
 
-    // Load Transfer Station Icon (Half Red / Half Green)
-    const transferSvg = `
+// Load Transfer Station Icon (Half Red / Half Green)
+const transferSvg = `
         <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
         <circle cx="16" cy="16" r="14" fill="#ef4444" /> <!--Red Base-->
         <path d="M16 2 A14 14 0 0 1 16 30 L16 2 Z" fill="#22c55e" /> <!--Green Right Half-->
         <circle cx="16" cy="16" r="14" fill="none" stroke="white" stroke-width="4"/> <!--White border to match others-->
     </svg > `;
-    const transferImage = new Image(32, 32);
-    transferImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(transferSvg);
-    transferImage.onload = () => {
-        if (!map.hasImage('station-transfer')) map.addImage('station-transfer', transferImage);
-    };
+const transferImage = new Image(32, 32);
+transferImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(transferSvg);
+transferImage.onload = () => {
+    if (!map.hasImage('station-transfer')) map.addImage('station-transfer', transferImage);
+};
 
+map.on('load', () => {
     // Selected Stop Source
-    map.addSource('selected-stop', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] }
-    });
+    if (!map.getSource('selected-stop')) {
+        map.addSource('selected-stop', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+    }
 
     // Stop Selection State Layer (more prominent)
-    map.addLayer({
-        id: 'stops-highlight',
-        type: 'symbol',
-        source: 'selected-stop',
-        // filter: ['!=', 'mode', 'SUBWAY'], // Removed to ensure ALL stops highlight
-        layout: {
-            'icon-image': [
-                'case',
-                ['>', ['get', 'bearing'], 0], 'stop-selected-icon', // Arrow
-                'stop-icon' // Circle fallback
-            ],
-            'icon-size': [
-                'case',
-                ['==', ['get', 'mode'], 'SUBWAY'], 1.5, // Keep Metro Big
-                1.2 // Unified size for Bus (Arrow or Circle) matches visual weight
-            ],
-            'icon-allow-overlap': true,
-            'icon-ignore-placement': true,
-            'icon-rotate': ['coalesce', ['get', 'bearing'], 0],
-            'icon-rotation-alignment': 'map'
-        },
-        paint: {
-            'icon-opacity': 1
-        }
-    });
+    if (!map.getLayer('stops-highlight')) {
+        map.addLayer({
+            id: 'stops-highlight',
+            type: 'symbol',
+            source: 'selected-stop',
+            // filter: ['!=', 'mode', 'SUBWAY'], // Removed to ensure ALL stops highlight
+            layout: {
+                'icon-image': [
+                    'case',
+                    ['>', ['get', 'bearing'], 0], 'stop-selected-icon', // Arrow
+                    'stop-icon' // Circle fallback
+                ],
+                'icon-size': [
+                    'case',
+                    ['==', ['get', 'mode'], 'SUBWAY'], 1.5,
+                    1.2
+                ],
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true,
+                'icon-rotate': ['coalesce', ['get', 'bearing'], 0],
+                'icon-rotation-alignment': 'map'
+            },
+            paint: {
+                'icon-opacity': 1
+            }
+        });
+    }
 });
 
 // Removed pendingRequests (moved to api.js)
@@ -1006,6 +432,46 @@ map.on('load', async () => {
 
 
 // ... (keep this replacement near imports later)
+
+// --- Map Initialization ---
+map.on('load', async () => {
+    // A. FAST PATH (Cache/Static) - Instant Load
+    const loadFast = async () => {
+        try {
+            console.log('[Fast Load] Attempting...');
+            const [stops, routes] = await Promise.all([
+                api.fetchStops({ strategy: 'cache-only' }),
+                api.fetchRoutes({ strategy: 'cache-only' })
+            ]);
+            console.log(`[Fast Load] Result - Stops: ${stops ? stops.length : 'MISSING'}, Routes: ${routes ? routes.length : 'MISSING'}`);
+
+            if (stops && routes) {
+                console.log('[Map] Loading FAST data...');
+                await initializeMapData(stops, routes);
+            } else {
+                console.log('[Fast Load] Skipped - missing complete data.');
+            }
+        } catch (e) { console.warn('Fast Load Failed', e); }
+    };
+
+    // B. FRESH PATH (Network) - Updates over time
+    const loadFresh = async () => {
+        try {
+            console.log('[Fresh Load] Starting...');
+            const [stops, routes] = await Promise.all([
+                api.fetchStops(),
+                api.fetchRoutes()
+            ]);
+            console.log(`[Fresh Load] Result - Stops: ${stops ? stops.length : 'MISSING'}, Routes: ${routes ? routes.length : 'MISSING'}`);
+
+            console.log('[Map] Loading FRESH data...');
+            await initializeMapData(stops, routes);
+        } catch (e) { console.error('Fresh Load Failed', e); }
+    };
+
+    await loadFast();
+    loadFresh();
+});
 
 // Modify fetchWithCache to use db
 // API Functions Moved to api.js
@@ -1028,9 +494,60 @@ const GREEN_LINE_STOPS = [
     'State University', 'Vazha-Pshavela', 'Vazha Pshavela', 'Delisi', 'Medical University', 'Technical University', 'Tsereteli', 'Station Square 2'
 ];
 
+// Handle Initial URL State (Deep Links)
+async function handleDeepLinks() {
+    const state = Router.parse();
+    if (state.stopId) {
+        const rawStopId = state.stopId;
+        const normStopId = redirectMap.get(rawStopId) || rawStopId;
+        const stop = allStops.find(s => String(s.id) === String(normStopId));
+
+        console.log(`[DeepLink] Processing Stop: ${rawStopId} -> ${normStopId}. Found=${!!stop}`);
+        if (stop) {
+            // Check for Filtered State
+            if (state.filterActive && state.targetIds && state.targetIds.length > 0) {
+                console.log('[DeepLink] Applying Filter:', state.targetIds);
+
+                // 2. Show Stop (Suppress URL update, NO FlyTo to avoid conflict with Filter flyTo)
+                await showStopInfo(stop, false, false, false);
+
+                // 3. Apply Filter Logic
+                // We need to trigger the filter mode fully
+                await filterManager.toggleFilterMode(normStopId);
+
+                // Then apply specific targets if any
+                if (state.targetIds && state.targetIds.length > 0) {
+                    state.targetIds.forEach(tid => {
+                        // Normalize Target ID (e.g. '930' -> '1:930')
+                        const normTid = redirectMap.get(tid) || tid;
+                        filterManager.state.targetIds.add(normTid);
+                    });
+                    // Trigger refresh to apply
+                    await filterManager.refreshRouteFilter(normStopId);
+                }
+
+                // 4. Update UI Button State
+                const filterBtn = document.getElementById('filter-routes-toggle');
+                if (filterBtn) filterBtn.classList.add('active');
+                if (filterBtn) filterBtn.classList.add('active');
+            } else {
+                // Standard Stop View
+                // Pass updateURL=false because the URL is already correct (deep link)
+                // Wait, if it's a deep link /stop123, showing it won't change URL?
+                // But showStopInfo might try to pushState. 
+                // We typically want to respect the current URL.
+                showStopInfo(stop, false, true, false);
+            }
+        } else {
+            console.warn(`[DeepLink] Stop ${state.stopId} not found in data.`);
+        }
+    }
+    // Note: Route deep links are handled by onRoutesLoaded logic
+}
+
 function addStopsToMap(stops) {
     // Cleanup existing layers/sources if they exist (idempotency)
-    const layers = ['metro-layer-label', 'metro-layer-circle', 'metro-transfer-layer', 'metro-lines-layer', 'stops-layer', 'stops-layer-circle'];
+    const layers = ['metro-layer-label', 'metro-layer-circle', 'metro-transfer-layer', 'metro-lines-layer', 'stops-layer', 'stops-layer-circle', 'stops-label-selected'];
     const sources = ['metro-stops', 'metro-lines-manual', 'stops'];
 
     layers.forEach(id => {
@@ -1145,7 +662,7 @@ function addStopsToMap(stops) {
     const hoverLayers = ['stops-layer', 'stops-layer-circle'];
     hoverLayers.forEach(layerId => {
         map.on('mousemove', layerId, (e) => {
-            if (filterState.picking) {
+            if (filterManager.state.picking) {
                 let selectedFeature = null;
 
                 // Loop through ALL features at this point to find a selectable one (handle z-overlap)
@@ -1156,7 +673,7 @@ function addStopsToMap(stops) {
                     // Exclude Origin, but allow any reachable/highlighted
                     // Actually hover effect logic: we want to draw line to POTENTIAL target.
                     // Usually we only draw to reachable stops.
-                    if (filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId)) {
+                    if (filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId)) {
                         selectedFeature = f;
                         break;
                     }
@@ -1164,16 +681,16 @@ function addStopsToMap(stops) {
 
                 if (selectedFeature) {
                     // Pass Current Selection + Hover ID
-                    updateConnectionLine(filterState.originId, filterState.targetIds, true, selectedFeature.properties.id);
+                    updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, true, selectedFeature.properties.id);
                 }
             }
         });
 
         map.on('mouseleave', layerId, () => {
-            if (filterState.picking) {
+            if (filterManager.state.picking) {
                 // Revert to just the selected lines (remove hover line)
                 // Pass false for isHover
-                updateConnectionLine(filterState.originId, filterState.targetIds, false);
+                updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
             }
         });
     });
@@ -1229,7 +746,7 @@ map.on('click', 'stops-layer', async (e) => {
     const props = e.features[0].properties;
 
     // FILTER PICKING MODE
-    if (filterState.picking) {
+    if (filterManager.state.picking) {
         let selectedFeature = null;
 
         // Loop through ALL features at this point to find a selectable one (handle z-overlap)
@@ -1237,7 +754,7 @@ map.on('click', 'stops-layer', async (e) => {
             const p = f.properties;
             const normId = redirectMap.get(p.id) || p.id;
             // Exclude originId from being selectable in filter mode
-            const isSelectable = filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId);
+            const isSelectable = filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId);
             if (isSelectable) {
                 selectedFeature = f;
                 break;
@@ -1254,7 +771,7 @@ map.on('click', 'stops-layer', async (e) => {
 
     // Prevent Bus click if Metro is top-most (UNLESS in Filter Picking Mode)
     const metroFeatures = map.queryRenderedFeatures(e.point, { layers: ['metro-layer-circle', 'metro-layer-label', 'metro-transfer-layer'] });
-    if (metroFeatures.length > 0 && !filterState.picking) {
+    if (metroFeatures.length > 0 && !filterManager.state.picking) {
         console.log('[Debug] Click hit Bus Stop but Metro is present. Ignoring Bus handler.');
         return;
     }
@@ -1269,29 +786,10 @@ map.on('click', 'stops-layer', async (e) => {
     const currentZoom = map.getZoom();
     const targetZoom = currentZoom > 16 ? currentZoom : 16;
 
-    map.flyTo({
-        center: coordinates,
-        zoom: targetZoom
-    });
-
-    // Fix Bearing Error: Ensure bearing is numeric
-    const safeProps = { ...props, bearing: (props.bearing !== undefined && props.bearing !== null) ? props.bearing : 0 };
-
-    // Set selected stop data
-    const feature = {
-        type: 'Feature',
-        geometry: e.features[0].geometry,
-        properties: safeProps
-    };
-    map.getSource('selected-stop').setData({
-        type: 'FeatureCollection',
-        features: [feature]
-    });
-
     // Inject coordinates into props for History/Back navigation usage
-    const stopData = { ...safeProps, lat: coordinates[1], lon: coordinates[0] };
+    const stopData = { ...props, lat: coordinates[1], lon: coordinates[0] };
 
-    showStopInfo(stopData, true, false); // Don't fly again inside showStopInfo
+    showStopInfo(stopData, true, true); // Use centralized flyTo with offset
 });
 
 // Reuse same click logic for stops-layer-circle
@@ -1303,19 +801,19 @@ map.on('click', 'stops-layer-circle', async (e) => {
 
     // Prevent Bus click if Metro is top-most (UNLESS in Filter Picking Mode)
     const metroFeatures = map.queryRenderedFeatures(e.point, { layers: ['metro-layer-circle', 'metro-layer-label', 'metro-transfer-layer'] });
-    if (metroFeatures.length > 0 && !filterState.picking) {
+    if (metroFeatures.length > 0 && !filterManager.state.picking) {
         return;
     }
 
     const props = e.features[0].properties;
 
     // FILTER PICKING MODE
-    if (filterState.picking) {
+    if (filterManager.state.picking) {
         let selectedFeature = null;
         for (const f of e.features) {
             const p = f.properties;
             const normId = redirectMap.get(p.id) || p.id;
-            const isSelectable = filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId);
+            const isSelectable = filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId);
             if (isSelectable) {
                 selectedFeature = f;
                 break;
@@ -1338,26 +836,8 @@ map.on('click', 'stops-layer-circle', async (e) => {
     const currentZoom = map.getZoom();
     const targetZoom = currentZoom > 16 ? currentZoom : 16;
 
-    map.flyTo({
-        center: coordinates,
-        zoom: targetZoom
-    });
-
-    // Fix Bearing Error
-    const safeProps = { ...props, bearing: (props.bearing !== undefined && props.bearing !== null) ? props.bearing : 0 };
-
-    const feature = {
-        type: 'Feature',
-        geometry: e.features[0].geometry,
-        properties: safeProps
-    };
-    map.getSource('selected-stop').setData({
-        type: 'FeatureCollection',
-        features: [feature]
-    });
-
-    const stopData = { ...safeProps, lat: coordinates[1], lon: coordinates[0] };
-    showStopInfo(stopData, true, false);
+    const stopData = { ...props, lat: coordinates[1], lon: coordinates[0] };
+    showStopInfo(stopData, true, true);
 });
 
 // Metro Click Handlers (Same logic as stops-layer)
@@ -1367,7 +847,7 @@ metroLayers.forEach(layerId => {
         const props = e.features[0].properties;
 
         // FILTER PICKING MODE
-        if (filterState.picking) {
+        if (filterManager.state.picking) {
             let selectedFeature = null;
 
             // Loop through ALL features at this click point
@@ -1375,7 +855,7 @@ metroLayers.forEach(layerId => {
                 const p = f.properties;
                 const normId = redirectMap.get(p.id) || p.id;
                 // Exclude originId from being selectable in filter mode
-                const isSelectable = filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId);
+                const isSelectable = filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId);
                 if (isSelectable) {
                     selectedFeature = f;
                     break;
@@ -1400,39 +880,18 @@ metroLayers.forEach(layerId => {
         const currentZoom = map.getZoom();
         const targetZoom = currentZoom > 16 ? currentZoom : 16;
 
-        map.flyTo({
-            center: coordinates,
-            zoom: targetZoom
-        });
-
-        // Set selected stop data (for highlight source if we want to use it, though metro circles are already highlighted by design usually)
-        // But for consistency/logic:
-        const feature = {
-            type: 'Feature',
-            geometry: e.features[0].geometry,
-            properties: props
-        };
-        // We might want to clear "selected-stop" (bus highlight ring) if it looks weird on metro
-        // Or reuse it? Metro circles are big. Bus highlight is a ring.
-        // Let's reuse it for now.
-        map.getSource('selected-stop').setData({
-            type: 'FeatureCollection',
-            features: [feature]
-        });
-
-        // Inject coordinates into props for History/Back navigation usage
         const stopData = { ...props, lat: coordinates[1], lon: coordinates[0] };
 
-        showStopInfo(stopData, true, false);
+        showStopInfo(stopData, true, true);
     });
 
     // Add pointer cursor
     map.on('mouseenter', layerId, (e) => {
-        if (filterState.picking) {
+        if (filterManager.state.picking) {
             const hasSelectable = e.features.some(f => {
                 const p = f.properties;
                 const normId = redirectMap.get(p.id) || p.id;
-                return filterState.reachableStopIds.has(normId) || filterState.targetIds.has(normId);
+                return filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId);
             });
             if (!hasSelectable) return;
         }
@@ -1467,7 +926,7 @@ const setFilterOpacity = (dim) => {
 
 hoverLayers.forEach(layerId => {
     map.on('mousemove', layerId, (e) => {
-        if (filterState.picking) {
+        if (filterManager.state.picking) {
             map.getCanvas().style.cursor = 'pointer';
 
             // Cancel any pending reset from mouseleave
@@ -1499,18 +958,18 @@ hoverLayers.forEach(layerId => {
                 // Check if ANY of the equivalents is selected (Hub Logic)
                 let isSelected = false;
                 hubEquivalents.forEach(id => {
-                    if (filterState.targetIds.has(id)) isSelected = true;
+                    if (filterManager.state.targetIds.has(id)) isSelected = true;
                 });
 
                 if (isSelected) {
                     // DIM if already selected
                     // MUST call updateConnectionLine FIRST (it resets opacity to 0.8)
-                    updateConnectionLine(filterState.originId, filterState.targetIds, false);
+                    updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
                     // THEN Dim
                     setFilterOpacity(true);
                 } else {
                     // STANDARD (Preview Select)
-                    updateConnectionLine(filterState.originId, filterState.targetIds, true, props.id);
+                    updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, true, props.id);
                     // Ensure full opacity
                     setFilterOpacity(false);
                 }
@@ -1535,7 +994,7 @@ hoverLayers.forEach(layerId => {
                 lastHoveredStopId = null;
 
                 // Reset Opacity & Lines
-                updateConnectionLine(filterState.originId, filterState.targetIds, false);
+                updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
                 setFilterOpacity(false); // Ensure 0.8
             }
         }, 100);
@@ -1554,7 +1013,7 @@ function shakeFilterButton() {
 
 // Generic Map Click (Catch background clicks in Filter Mode)
 map.on('click', (e) => {
-    if (!filterState.picking && !window.isPickModeActive) return;
+    if (!filterManager.state.picking && !window.isPickModeActive) return;
 
     // Check if we clicked a stop layer (stops or metro)
     // Check if we clicked a stop layer (stops or metro)
@@ -1879,7 +1338,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     // Sync URL (Router)
     // Only update if it's a new stop or first load, and updateURL is true
     if (updateURL) {
-        Router.updateStop(stop.id, filterState.active, Array.from(filterState.targetIds));
+        Router.updateStop(stop.id, filterManager.state.active, Array.from(filterManager.state.targetIds));
     }
 
     // Explicitly clean up any route layers when showing a stop
@@ -1913,15 +1372,28 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         // Should we fetch the stop again to get coordinates if we don't have them?
         // Usually 'stop' object has lat/lon if coming from cache/list.
         if (flyToStop && stop.lon && stop.lat) {
+            // Calculate offset to shift center upwards (account for bottom panel)
+            // Panel covers bottom ~40%, so we want to shift the visual center up by ~10% of screen height
+            // Reduced to 10% to avoid being too close to the top search bar
+            const offsetY = -(window.innerHeight * 0.1);
+
             // 1. Saved Persistence (Back Button)
             if (stop.savedZoom) {
-                map.flyTo({ center: [stop.lon, stop.lat], zoom: stop.savedZoom });
+                map.flyTo({
+                    center: [stop.lon, stop.lat],
+                    zoom: stop.savedZoom,
+                    offset: [0, offsetY]
+                });
             }
             // 2. Smart Zoom (Click)
             else {
                 const currentZoom = map.getZoom();
                 const targetZoom = currentZoom > 16 ? currentZoom : 16;
-                map.flyTo({ center: [stop.lon, stop.lat], zoom: targetZoom });
+                map.flyTo({
+                    center: [stop.lon, stop.lat],
+                    zoom: targetZoom,
+                    offset: [0, offsetY]
+                });
             }
         }
 
@@ -2127,12 +1599,12 @@ function renderAllRoutes(routesInput, arrivals) {
         // 2. Numeric ShortName
 
         routesForStop.sort((a, b) => {
-            if (filterState.active) {
+            if (filterManager.state.active) {
                 const idA = a.id || (allRoutes.find(r => r.shortName === a.shortName) || {}).id;
                 const idB = b.id || (allRoutes.find(r => r.shortName === b.shortName) || {}).id;
 
-                const matchA = idA && filterState.filteredRoutes.includes(idA);
-                const matchB = idB && filterState.filteredRoutes.includes(idB);
+                const matchA = idA && filterManager.state.filteredRoutes.includes(idA);
+                const matchB = idB && filterManager.state.filteredRoutes.includes(idB);
 
                 if (matchA && !matchB) return -1; // A comes first
                 if (!matchA && matchB) return 1;  // B comes first
@@ -2161,9 +1633,9 @@ function renderAllRoutes(routesInput, arrivals) {
             tile.style.fontWeight = '700';
 
             // Apply Dimming (don't hide)
-            if (filterState.active) {
+            if (filterManager.state.active) {
                 const realId = route.id || (allRoutes.find(r => r.shortName === route.shortName) || {}).id;
-                if (!realId || !filterState.filteredRoutes.includes(realId)) {
+                if (!realId || !filterManager.state.filteredRoutes.includes(realId)) {
                     tile.classList.add('dimmed');
                 } else {
                     // Apply Filter Color
@@ -2194,7 +1666,7 @@ function renderAllRoutes(routesInput, arrivals) {
 
 async function fetchArrivals(stopId) {
     // Check for all equivalent IDs (merged and hubbed)
-    const equivalentIds = getEquivalentStops(stopId);
+    const equivalentIds = getEquivalentStops(stopId, false);
     const idsToCheck = new Set();
     equivalentIds.forEach(eqId => {
         idsToCheck.add(eqId);
@@ -2472,9 +1944,16 @@ function sortArrivalsList() {
 
     // Sort logic
     items.sort((a, b) => {
-        const minA = parseInt(a.getAttribute('data-minutes') || '9999');
-        const minB = parseInt(b.getAttribute('data-minutes') || '9999');
-        return minA - minB;
+        const minA = parseInt(a.getAttribute('data-minutes') || '99999');
+        const minB = parseInt(b.getAttribute('data-minutes') || '99999');
+
+        const diff = minA - minB;
+        if (diff !== 0) return diff;
+
+        // Secondary: Route Number
+        const nameA = a.querySelector('.route-number')?.textContent?.trim() || '';
+        const nameB = b.querySelector('.route-number')?.textContent?.trim() || '';
+        return nameA.localeCompare(nameB, undefined, { numeric: true });
     });
 
     // Re-append in order
@@ -2495,7 +1974,7 @@ function renderArrivals(arrivals, currentStopId = null) {
     // 1. Identify "Missing" Routes
     let extraRoutes = [];
     if (stopId) {
-        const equivalentIds = getEquivalentStops(stopId);
+        const equivalentIds = getEquivalentStops(stopId, false);
         const servingRoutes = new Set();
         equivalentIds.forEach(eqId => {
             const routes = stopToRoutesMap.get(eqId) || [];
@@ -2507,12 +1986,12 @@ function renderArrivals(arrivals, currentStopId = null) {
     }
 
     // 2. Filter Logic (User Route Filter)
-    if (filterState.active) {
+    if (filterManager.state.active) {
         arrivals = arrivals.filter(a => {
             const r = allRoutes.find(route => String(route.shortName) === String(a.shortName));
-            return r && filterState.filteredRoutes.includes(r.id);
+            return r && filterManager.state.filteredRoutes.includes(r.id);
         });
-        extraRoutes = extraRoutes.filter(r => filterState.filteredRoutes.includes(r.id));
+        extraRoutes = extraRoutes.filter(r => filterManager.state.filteredRoutes.includes(r.id));
     }
 
     // 2.5 Show Minibuses Filter
@@ -2532,7 +2011,7 @@ function renderArrivals(arrivals, currentStopId = null) {
                 ? (a.scheduledArrivalMinutes ?? 999)
                 : (a.realtimeArrivalMinutes ?? 999),
             // Pre-calculate display strings
-            color: (filterState.active && RouteFilterColorManager.getColorForRoute(allRoutes.find(r => r.shortName === a.shortName)?.id))
+            color: (filterManager.state.active && RouteFilterColorManager.getColorForRoute(allRoutes.find(r => r.shortName === a.shortName)?.id))
                 ? RouteFilterColorManager.getColorForRoute(allRoutes.find(r => r.shortName === a.shortName)?.id)
                 : (a.color ? `#${a.color}` : 'var(--primary)'),
             headsign: a.headsign
@@ -2565,7 +2044,7 @@ function renderArrivals(arrivals, currentStopId = null) {
             data: r,
             minutes: minutes,
 
-            color: (filterState.active && RouteFilterColorManager.getColorForRoute(r.id))
+            color: (filterManager.state.active && RouteFilterColorManager.getColorForRoute(r.id))
                 ? RouteFilterColorManager.getColorForRoute(r.id)
                 : (r.color ? `#${r.color}` : 'var(--primary)'),
             needsFetch: !cachedTimeStr
@@ -2573,10 +2052,18 @@ function renderArrivals(arrivals, currentStopId = null) {
     });
 
     // 4. Sort EVERYTHING
-    renderList.sort((a, b) => a.minutes - b.minutes);
+    renderList.sort((a, b) => {
+        const minDiff = a.minutes - b.minutes;
+        if (minDiff !== 0) return minDiff; // Sort by Time
+
+        // Secondary Sort: Route Number
+        const nameA = String(a.data.shortName || '');
+        const nameB = String(b.data.shortName || '');
+        return nameA.localeCompare(nameB, undefined, { numeric: true });
+    });
 
     if (renderList.length === 0) {
-        if (filterState.active) {
+        if (filterManager.state.active) {
             listEl.innerHTML = '<div class="empty">No arrivals for selected destination</div>';
         } else {
             listEl.innerHTML = '<div class="empty">No upcoming arrivals</div>';
@@ -2649,16 +2136,30 @@ function renderArrivals(arrivals, currentStopId = null) {
             // Trigger Async Fetch if needed
             if (item.needsFetch) {
                 // Async Load
+                // Async Load
                 getV3Schedule(r.shortName, stopId).then(timeStr => {
+                    if (!timeStr) {
+                        const el = document.getElementById(timeElId);
+                        if (el) el.textContent = '--:--';
+                        return;
+                    }
+
+                    const mins = getMinutesFromNow(timeStr);
+                    div.setAttribute('data-minutes', mins);
+
                     const el = document.getElementById(timeElId);
                     if (el) {
-                        if (timeStr) {
-                            el.textContent = timeStr;
-                            el.classList.remove('loading-text');
+                        el.classList.remove('loading-text');
+                        // Smart format matching 'live' style
+                        if (mins < 60 && mins >= 0) {
+                            el.textContent = `${mins} min`;
                         } else {
-                            el.textContent = '--:--';
+                            el.textContent = timeStr;
                         }
                     }
+
+                    // Crucial: Re-sort list now that we have a time
+                    sortArrivalsList();
                 });
             }
         }
@@ -2782,50 +2283,12 @@ async function refreshStopsLayer(useLocalConfig = false) {
         stops.push(stop); // allStops keeps everything for search
     });
 
-    console.log(`[Refresh] Processed Stops: ${freshStops.length} -> ${stops.length} (Bus: ${busStops.length}, Metro: ${metroStops.length})`);
+    console.log(`[Refresh] Processed Stops: ${freshStops.length} -> ${stops.length}`);
     allStops = stops;
     window.allStops = allStops;
 
-    // UPDATE MAP SOURCES
-    if (map.getSource('stops')) {
-        map.getSource('stops').setData({
-            type: 'FeatureCollection',
-            features: busStops.map(stop => ({
-                type: 'Feature',
-                geometry: {
-                    type: 'Point',
-                    coordinates: [stop.lon, stop.lat]
-                },
-                properties: {
-                    id: stop.id,
-                    name: stop.name,
-                    lat: stop.lat,
-                    lon: stop.lon,
-                    bearing: stop.bearing,
-                    mode: stop.mode
-                }
-            }))
-        });
-        console.log('[Main] Map source "stops" updated (Bus).');
-    }
-
-    if (map.getSource('metro-stops')) {
-        map.getSource('metro-stops').setData({
-            type: 'FeatureCollection',
-            features: metroStops.map(stop => ({
-                type: 'Feature',
-                geometry: {
-                    type: 'Point',
-                    coordinates: [stop.lon, stop.lat]
-                },
-                properties: {
-                    id: stop.id,
-                    name: stop.name
-                }
-            }))
-        });
-        console.log('[Main] Map source "metro-stops" updated.');
-    }
+    // UPDATE MAP SOURCES (Delegated to shared function to ensure formatting/filtering is consistent with Initial Load)
+    addStopsToMap(allStops);
 }
 // Search Logic
 
@@ -2884,6 +2347,11 @@ async function updateRouteView(route, options = {}) {
         document.getElementById('route-info-text').textContent = route.longName; // Will be properly formatted by updateRouteView line 1588
         setSheetState(infoCard, 'half'); // Default to half open
         updateBackButtons(); // Ensure back button state is correct
+
+        // Clear Filter state before showing route
+        if (filterManager.state.active || filterManager.state.picking) {
+            filterManager.clearFilter();
+        }
 
         // Clear existing layers robustly (Safe Atomic Removal)
         const style = map.getStyle();
@@ -3725,7 +3193,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
 
             // Determine Color Strategy
             let color;
-            const isSelected = filterState.targetIds && filterState.targetIds.has(targetId);
+            const isSelected = filterManager.state.targetIds && filterManager.state.targetIds.has(targetId);
 
             if (isSelected) {
                 // Selected: Consume/Lock Color
@@ -3747,7 +3215,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             // "Actual Route" Logic
             // Prioritize fetched polyline from the pattern
             // Fix: Don't downgrade selected lines when hovering. Check if THIS target is selected.
-            const isPersistent = filterState.targetIds && filterState.targetIds.has(targetId);
+            const isPersistent = filterManager.state.targetIds && filterManager.state.targetIds.has(targetId);
 
             if (isPersistent && group.pattern) {
                 const bestPattern = group.pattern;
@@ -3973,8 +3441,8 @@ async function fetchAndCacheGeometry(route, pattern) {
             console.log(`[Debug] Polyline fetched & decoded for ${route.shortName} (${pattern.suffix}), points: ${pattern._decodedPolyline.length}`);
 
             // Re-Draw if still selected
-            if (filterState.active && filterState.targetIds.size > 0) {
-                updateConnectionLine(filterState.originId, filterState.targetIds, false);
+            if (filterManager.state.active && filterManager.state.targetIds.size > 0) {
+                updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
             }
         } else {
             console.warn(`[Debug] No polyline string for ${route.shortName} suffix ${pattern.suffix}`);
@@ -3991,7 +3459,7 @@ async function fetchAndCacheGeometry(route, pattern) {
 // --- Edit Tools Integration ---
 
 let isEditing = false;
-let editState = {
+editState = {
     stopId: null,
     overrides: {}, // { lat, lon, bearing }
     merges: []     // [id1, id2...]

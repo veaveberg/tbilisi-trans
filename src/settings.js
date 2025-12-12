@@ -1,3 +1,5 @@
+import { onApiStatusChange, getApiStatusColor } from './api.js';
+
 export const settings = {
     simplifyNumbers: false,
     showMinibuses: true
@@ -124,4 +126,66 @@ export function initSettings({ onUpdate }) {
             });
         }
     }
+
+    // Online Status Indicator
+    initOnlineStatus();
 }
+
+function initOnlineStatus() {
+    const statusRow = document.createElement('div');
+    statusRow.className = 'menu-row';
+    statusRow.style.display = 'flex';
+    statusRow.style.alignItems = 'center'; // Vertical Center
+    statusRow.style.justifyContent = 'space-between';
+    statusRow.style.padding = '12px 16px';
+    statusRow.style.borderBottom = '1px solid #eee';
+    statusRow.innerHTML = `
+        <span style="font-size:11px; font-weight:600; color:#9ca3af; text-transform:uppercase; letter-spacing:0.5px;">Status</span>
+        
+        <div style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:13px; color:#374151; display:flex; align-items:center; gap:16px;">
+            <span style="display:flex; align-items:center; gap:6px;">
+                APP <span id="status-app-dot" style="width:10px; height:10px; border-radius:50%; background-color:#ccc; display:inline-block;"></span>
+            </span>
+            <span style="display:flex; align-items:center; gap:6px;">
+                API <span id="status-api-dot" style="width:10px; height:10px; border-radius:50%; background-color:#ccc; display:inline-block;"></span>
+            </span>
+        </div>
+    `;
+
+    // Insert as first item in menu
+    const menuPopup = document.getElementById('map-menu-popup');
+    if (menuPopup) {
+        menuPopup.prepend(statusRow);
+    }
+
+    // Status Logic
+    const appDot = statusRow.querySelector('#status-app-dot');
+    const apiDot = statusRow.querySelector('#status-api-dot');
+
+    function updateAppStatus() {
+        const isOnline = navigator.onLine;
+        // Saturated Colors (Green-600 / Red-600)
+        appDot.style.backgroundColor = isOnline ? '#16a34a' : '#dc2626';
+        appDot.title = isOnline ? 'App Online' : 'App Offline';
+    }
+
+    function updateApiStatus(status) {
+        const colorMap = {
+            'green': '#16a34a', // Saturated Green
+            'yellow': '#ca8a04',
+            'red': '#dc2626'
+        };
+        const colorName = getApiStatusColor(status.code || 0);
+        apiDot.style.backgroundColor = colorMap[colorName] || '#ca8a04';
+        apiDot.title = `API: ${status.text || 'Unknown'} (${status.code})`;
+    }
+
+    window.addEventListener('online', updateAppStatus);
+    window.addEventListener('offline', updateAppStatus);
+
+    // Subscribe to API updates
+    onApiStatusChange(updateApiStatus);
+
+    updateAppStatus();
+}
+

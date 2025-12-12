@@ -45,6 +45,97 @@ function enqueueV3Request(task) {
     });
 }
 
+// --- Offline & Caching Logic ---
+
+// API Status Observability
+export let apiStatus = {
+    ok: true,
+    code: 200,
+    text: 'OK'
+};
+const apiStatusListeners = new Set();
+
+export function onApiStatusChange(callback) {
+    apiStatusListeners.add(callback);
+    callback(apiStatus); // immediate firing
+    return () => apiStatusListeners.delete(callback);
+}
+
+function updateApiStatus(ok, code, text) {
+    // Only fire if changed significantly (success vs fail)
+    // Or maybe just always update so UI freshness is visible?
+    // Let's debounce slightly or check equality
+    if (apiStatus.ok === ok && apiStatus.code === code) return;
+
+    apiStatus = { ok, code, text };
+    apiStatusListeners.forEach(cb => cb(apiStatus));
+}
+
+// Helper to determine status color/text from code
+export function getApiStatusColor(code) {
+    if (code === 200) return 'green'; // All Good
+    if (code >= 500) return 'yellow'; // Server Error
+    if (code === 0 || code === 'offline') return 'red'; // Network Error
+    return 'yellow'; // Unknown?
+}
+
+
+async function fetchStaticFallback(endpoint) {
+    try {
+        console.log(`[Fallback] Attempting to load static data for ${endpoint}`);
+        // Map API endpoint to static file
+        // e.g. /stops -> /data/fallback_stops.json
+        // 1. Stop Routes (Dynamic Computation)
+        // Endpoint: /stops/1%3A1234/routes
+        const stopRoutesMatch = endpoint.match(/\/stops\/([^\/]+)\/routes/);
+        if (stopRoutesMatch) {
+            const stopId = decodeURIComponent(stopRoutesMatch[1]);
+            try {
+                const masterRoutesRes = await fetch(`./data/fallback_routes.json`);
+                if (!masterRoutesRes.ok) throw new Error('Master routes missing');
+                const masterRoutes = await masterRoutesRes.json();
+
+                // Filter routes that serve this stop
+                return masterRoutes.filter(r => r.stops && r.stops.includes(stopId));
+            } catch (err) {
+                console.warn(`[Fallback] Failed to compute stop routes: ${err}`);
+                return [];
+            }
+        }
+
+        let filename = '';
+        if (endpoint.endsWith('/routes')) filename = 'fallback_routes.json';
+        else if (endpoint.endsWith('/stops')) filename = 'fallback_stops.json';
+        else {
+            // Check for V3 Metro calls
+            // 1. Route Details: .../routes/123
+            const detailsMatch = endpoint.match(/\/routes\/(\d+)$/);
+            if (detailsMatch) {
+                filename = `fallback_route_details_${detailsMatch[1]}.json`;
+            }
+            // 2. Schedule: .../routes/123/schedule?patternSuffix=0:01...
+            const scheduleMatch = endpoint.match(/\/routes\/(\d+)\/schedule/);
+            if (scheduleMatch) {
+                const urlObj = new URL('http://dummy.com' + endpoint); // parse query params
+                const suffix = urlObj.searchParams.get('patternSuffix');
+                if (suffix) {
+                    const safeSuffix = suffix.replace(/:/g, '_');
+                    filename = `fallback_schedule_${scheduleMatch[1]}_${safeSuffix}.json`;
+                }
+            }
+        }
+
+        if (!filename) return null;
+
+        const res = await fetch(`./data/${filename}`);
+        if (!res.ok) throw new Error('Static file not found');
+        return await res.json();
+    } catch (e) {
+        console.warn(`[Fallback] Failed to load static data: ${e.message}`);
+        return null;
+    }
+}
+
 export async function fetchWithCache(url, options = {}) {
     const cacheKey = `cache_${url}`;
     const now = Date.now();
@@ -56,41 +147,104 @@ export async function fetchWithCache(url, options = {}) {
         console.warn('DB Get Failed', e);
     }
 
+    // 1. STALE-WHILE-REVALIDATE STRATEGY
     if (cached) {
-        // IDB stores objects directly
         const { timestamp, data } = cached;
-        if (now - timestamp < CACHE_DURATION) {
-            console.log(`[Cache] Hit: ${url}`);
+        const age = now - timestamp;
+
+        // If Fresh (< 24h), return immediately (no network)
+        if (age < CACHE_DURATION) {
+            console.log(`[Cache] Hit (Fresh): ${url}`);
             return data;
-        } else {
-            console.log(`[Cache] Expired: ${url}`);
-            db.del(cacheKey);
         }
+
+        // If Stale but usable (< 7 days), return immediately BUT update in background
+        if (age < 7 * 24 * 60 * 60 * 1000) {
+            console.log(`[Cache] Hit (Stale): ${url} - Returning data, fetching update in background...`);
+
+            // Background Revalidation
+            fetch(url, { ...options, credentials: 'omit' }).then(async (res) => {
+                if (res.ok) {
+                    const newData = await res.json();
+                    await db.set(cacheKey, { timestamp: now, data: newData });
+                    console.log(`[Cache] Background Update Success: ${url}`);
+                    updateApiStatus(true, res.status, res.statusText);
+                } else {
+                    console.warn(`[Cache] Background Update Failed (Status ${res.status}): ${url}`);
+                    updateApiStatus(false, res.status, res.statusText);
+                }
+            }).catch(e => {
+                console.warn(`[Cache] Background Update Network Error: ${url}`, e);
+                updateApiStatus(false, 0, 'Offline');
+            });
+
+            return data;
+        }
+
+        // If Very Stale (> 7 days), treat as missing (try network, fallback to this if fail)
+        console.log(`[Cache] Expired (Very Stale): ${url}`);
+
+        if (options.strategy === 'cache-only') {
+            console.log(`[Cache-Only] Returning VERY STALE data for ${url}`);
+            return cached.data;
+        }
+    } else {
+        console.log(`[Cache] Miss: ${url}`);
     }
 
+    if (options.strategy === 'cache-only') {
+        const cleanUrl = url.split('?')[0];
+        console.log(`[Cache-Only] Attempting static fallback for ${cleanUrl}`);
+        const fallbackData = await fetchStaticFallback(cleanUrl);
+        if (fallbackData) {
+            console.log(`[Cache-Only] Returning STATIC fallback for ${url}`);
+            return fallbackData;
+        }
+        return null;
+    }
+
+    // 2. NETWORK FETCH
     // Deduplication Logic
     if (pendingRequests.has(url)) {
-        console.log(`[Cache] Deduping in-flight request: ${url}`);
         return pendingRequests.get(url);
     }
-
-    console.log(`[Cache] Miss: ${url}`);
 
     const fetchOptions = { ...options, credentials: 'omit' };
 
     const requestPromise = (async () => {
         try {
-            const response = await fetch(url, fetchOptions);
-            if (!response.ok) throw new Error('Network response was not ok');
+            const response = await fetchWithRetry(url, fetchOptions); // Use Retry Logic
+            if (!response.ok) throw new Error(`Network error: ${response.status}`);
             const data = await response.json();
 
             // Cache Success
-            try {
-                await db.set(cacheKey, { timestamp: now, data });
-            } catch (e) {
-                console.warn('[Cache] Failed to set item in DB:', e);
-            }
+            await db.set(cacheKey, { timestamp: now, data });
             return data;
+        } catch (err) {
+            console.warn(`[Network] Failed to fetch ${url}: ${err.message}`);
+
+            // 3. FALLBACK STRATEGIES
+
+            // A. Try "Very Stale" Cache if we have it
+            if (cached) {
+                console.warn(`[Fallback] Using expired cache for ${url}`);
+                updateApiStatus(false, 0, 'Offline (Cache)');
+                return cached.data;
+            }
+
+            // B. Try Static JSON (Day 1 Offline Support)
+            // Extract endpoint for mapping
+            const cleanUrl = url.split('?')[0];
+            const fallbackData = await fetchStaticFallback(cleanUrl);
+            if (fallbackData) {
+                console.warn(`[Fallback] Used Static Data for ${url}`);
+                updateApiStatus(false, 0, 'Offline (Static)');
+                // Helper: Cache this so next time strictly offline works faster?
+                await db.set(cacheKey, { timestamp: 0, data: fallbackData }); // Timestamp 0 = Always Stale (will try to update next time)
+                return fallbackData;
+            }
+
+            throw err; // Give up
         } finally {
             pendingRequests.delete(url);
         }
@@ -101,14 +255,29 @@ export async function fetchWithCache(url, options = {}) {
 }
 
 export async function fetchWithRetry(url, options = {}, retries = 3, backoff = 1000) {
+    // Fail Fast if Offline
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        retries = 0;
+    }
+
     try {
         const res = await fetch(url, options);
         // Retry on 5xx errors
         if (retries > 0 && res.status >= 500 && res.status < 600) {
             console.warn(`[Network] 5xx Error (${res.status}) fetching ${url}. Retrying in ${backoff}ms... (${retries} left)`);
+            updateApiStatus(false, res.status, res.statusText); // Report degradation
             await new Promise(r => setTimeout(r, backoff));
             return fetchWithRetry(url, options, retries - 1, backoff * 2);
         }
+
+        // Success (or 4xx which is technically a success for fetch, but handled downstream)
+        if (res.ok) {
+            updateApiStatus(true, res.status, res.statusText);
+        } else {
+            // 4xx or 5xx that ran out of retries
+            updateApiStatus(false, res.status, res.statusText);
+        }
+
         return res;
     } catch (err) {
         if (retries > 0) {
@@ -116,19 +285,23 @@ export async function fetchWithRetry(url, options = {}, retries = 3, backoff = 1
             await new Promise(r => setTimeout(r, backoff));
             return fetchWithRetry(url, options, retries - 1, backoff * 2);
         }
+        // Final Failure
+        updateApiStatus(false, 0, 'Offline');
         throw err;
     }
 }
 
-export async function fetchStops() {
+export async function fetchStops(options = {}) {
     return await fetchWithCache(`${API_BASE_URL}/stops`, {
-        headers: { 'x-api-key': API_KEY }
+        headers: { 'x-api-key': API_KEY },
+        ...options
     });
 }
 
-export async function fetchRoutes() {
+export async function fetchRoutes(options = {}) {
     return await fetchWithCache(`${API_BASE_URL}/routes`, {
-        headers: { 'x-api-key': API_KEY }
+        headers: { 'x-api-key': API_KEY },
+        ...options
     });
 }
 
@@ -304,25 +477,28 @@ export async function fetchScheduleForStop(routeId, stopIds) {
             patterns = await v3InFlight.patterns.get(routeId);
         } else {
             const promise = (async () => {
-                const suffixesRes = await fetchWithRetry(`${API_V3_BASE_URL}/routes/${routeId}?locale=en`, {
-                    headers: { 'x-api-key': API_KEY },
-                    credentials: 'omit'
-                });
-                if (!suffixesRes.ok) throw new Error(`Routes details failed: ${suffixesRes.status}`);
-                const routeData = await suffixesRes.json();
-
-                if (routeData.patterns) {
-                    const suffixes = routeData.patterns.map(p => p.patternSuffix).join(',');
-                    const patRes = await fetchWithRetry(`${API_V3_BASE_URL}/routes/${routeId}/stops-of-patterns?patternSuffixes=${suffixes}&locale=en`, {
+                try {
+                    // Use cache to support offline fallback
+                    const routeData = await fetchWithCache(`${API_V3_BASE_URL}/routes/${routeId}?locale=en`, {
                         headers: { 'x-api-key': API_KEY },
                         credentials: 'omit'
                     });
-                    if (!patRes.ok) throw new Error(`Patterns fetch failed: ${patRes.status}`);
-                    const patText = await patRes.text();
-                    return JSON.parse(patText);
+
+                    if (routeData && routeData.patterns) {
+                        const suffixes = routeData.patterns.map(p => p.patternSuffix).join(',');
+                        // Retrieve detailed pattern stops
+                        return await fetchWithCache(`${API_V3_BASE_URL}/routes/${routeId}/stops-of-patterns?patternSuffixes=${suffixes}&locale=en`, {
+                            headers: { 'x-api-key': API_KEY },
+                            credentials: 'omit'
+                        });
+                    }
+                    return [];
+                } catch (e) {
+                    console.warn(`[Schedule] Failed to load patterns for ${routeId}:`, e);
+                    return [];
                 }
-                return null;
             })();
+
 
             v3InFlight.patterns.set(routeId, promise);
             try {

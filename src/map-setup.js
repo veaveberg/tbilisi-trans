@@ -39,7 +39,7 @@ export function getMapHash() {
 // Debug: Trace Map Movement
 const originalFlyTo = map.flyTo.bind(map);
 map.flyTo = (args, options) => {
-    console.log('[MapDebug] flyTo called:', args);
+    // console.log('[MapDebug] flyTo called:', args[0]);
     // console.trace('[MapDebug] flyTo stack');
     return originalFlyTo(args, options);
 };

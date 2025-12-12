@@ -23,6 +23,7 @@ export const Router = {
     parse() {
         // Strip base path
         let path = location.pathname;
+        console.log(`[Router] Parsing path: "${path}" (Base: "${this.base}")`);
         if (path.startsWith(this.base)) {
             path = path.substring(this.base.length);
         } else if (path.startsWith('/')) {

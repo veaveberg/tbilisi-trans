@@ -290,7 +290,7 @@ function createSuggestionElement(item, historyType = null) {
 
         if (type === 'route') appCallbacks.onRouteSelect(data);
         else if (type === 'stop') {
-            map.flyTo({ center: [data.lon, data.lat], zoom: 16 });
+            // map.flyTo is handled by onStopSelect (showStopInfo) with proper offset
             appCallbacks.onStopSelect(data);
         } else if (type === 'place') {
             const coords = data.center;
