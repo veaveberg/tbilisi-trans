@@ -52,9 +52,12 @@ async function fetchAndSave(endpoint, filename) {
         console.log(`Saved ${filename} (${(fs.statSync(outputPath).size / 1024).toFixed(2)} KB)`);
     } catch (err) {
         console.error(`Error processing ${filename}:`, err.message);
-        // Important: Exit with error so build fails if data is critical?
-        // Actually, maybe warn but allow build, since fallback is optional? 
-        // No, if this is "Day 1" support, we want it to work.
+        // In CI (GitHub Actions), we might be IP blocked. 
+        // We should allow the build to proceed if we have committed fallback data.
+        if (process.env.CI || process.env.GITHUB_ACTIONS) {
+            console.warn(`[CI] Ignoring prefetch error for ${filename}. Using existing file if present.`);
+            return;
+        }
         process.exit(1);
     }
 }
