@@ -1503,6 +1503,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
 
         // Write access is only available in Dev Server mode (active middleware)
         const hasWriteAccess = (isLocalhost || isPrivateIP) && import.meta.env.DEV;
+        console.log('[StopInfo] Debug Access: Local=', isLocalhost, 'Private=', isPrivateIP, 'DEV=', import.meta.env.DEV, '=> WriteAccess=', hasWriteAccess);
 
         if (editBtn) {
             editBtn.style.display = hasWriteAccess ? '' : 'none';
