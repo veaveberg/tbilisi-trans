@@ -4,7 +4,6 @@
     "start_url": "./",
     "display": "standalone",
     "background_color": "#ffffff",
-    "theme_color": "#ffffff",
     "icons": [
         {
             "src": "/tbilisi-trans/android-chrome-192x192.png",

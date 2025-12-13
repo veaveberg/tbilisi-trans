@@ -336,7 +336,14 @@ async function initializeMapData(stopsData, routesData) {
 
     // 6. Final UI
     document.body.classList.remove('loading');
-    setTimeout(() => map.resize(), 100);
+    setTimeout(() => {
+        map.resize();
+        // Restore Focus State (Dimming) if we have an active stop
+        // This fixes the issue where "Fresh Load" resets the layer styles, undoing deep link dimming.
+        if (window.currentStopId) {
+            setMapFocus(true);
+        }
+    }, 100);
 
     // 7. Router / Deep Links
     if (!isDeepLinkHandled) {
@@ -1211,7 +1218,7 @@ function setupPanelDrag(panelId) {
 
 
         if (currentClass === 'collapsed') {
-            if (e.deltaY < 0) { // Scroll Up (pull) -> Expand
+            if (e.deltaY > 0) { // Scroll Down (pull up) -> Expand
                 e.preventDefault();
                 setSheetState(panel, 'half');
             }
@@ -1444,14 +1451,14 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     const panel = document.getElementById('info-panel');
     const nameEl = document.getElementById('stop-name');
     const listEl = document.getElementById('arrivals-list');
-    const idDisplayEl = document.getElementById('stop-id-display');
+
 
     // Close route info if open (exclusive panels)
     // Close route info if open (exclusive panels)
     setSheetState(document.getElementById('route-info'), 'hidden');
 
     nameEl.textContent = stop.name || 'Unknown Stop';
-    if (idDisplayEl) idDisplayEl.textContent = `ID: ${stop.id}`;
+
     panel.classList.remove('metro-mode'); // Reset mode
     listEl.innerHTML = '<div class="loading">Loading arrivals...</div>';
 
@@ -2816,31 +2823,63 @@ const handleCopyLink = (btnId) => {
     const btn = document.getElementById(btnId);
     if (!btn) return;
 
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         e.preventDefault();
 
-        // Copy URL
         const url = window.location.href;
-        navigator.clipboard.writeText(url).then(() => {
+        let success = false;
+
+        try {
+            // Context One: Modern API (Secure Contexts)
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(url);
+                success = true;
+            } else {
+                throw new Error('Clipboard API unavailable');
+            }
+        } catch (err) {
+            // Context Two: Fallback (Non-secure / Older Mobile Safari)
+            console.warn('[UI] Clipboard API failed, trying fallback:', err);
+            try {
+                const textArea = document.createElement("textarea");
+                textArea.value = url;
+
+                // Ensure it's not visible but part of DOM
+                textArea.style.position = "fixed";
+                textArea.style.left = "-9999px";
+                textArea.style.top = "0";
+                document.body.appendChild(textArea);
+
+                textArea.focus();
+                textArea.select();
+
+                success = document.execCommand('copy');
+                document.body.removeChild(textArea);
+
+                if (!success) console.error('[UI] Fallback copy failed.');
+            } catch (fallbackErr) {
+                console.error('[UI] Fallback copy error:', fallbackErr);
+            }
+        }
+
+        if (success) {
             console.log('[UI] URL copied to clipboard:', url);
 
             // Visual Feedback: Turn black (opacity: 1)
-            // The default .icon-btn is opacity: 0.4, hover: 0.8
-            // We want it effectively black. The SVG is black.
-            // So we just force opacity: 1 and maybe scale slightly?
-            // "turn black" effectively means opacity 1.
-
             btn.style.opacity = '1';
-            btn.style.transform = 'scale(1.1)'; // Optional nice touch
+            btn.style.transform = 'scale(1.1)';
 
             setTimeout(() => {
                 btn.style.opacity = '';
                 btn.style.transform = '';
             }, 1000);
-        }).catch(err => {
-            console.error('Failed to copy URL:', err);
-        });
+        } else {
+            // Optional: Shake animation or error indication?
+            // For now, failure remains silent to user to avoid spamming alerts, 
+            // but we log critical errors.
+            alert('Could not copy link. Using a secure (HTTPS) connection?');
+        }
     });
 };
 
