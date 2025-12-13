@@ -1506,8 +1506,13 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         console.log('[StopInfo] Debug Access: Local=', isLocalhost, 'Private=', isPrivateIP, 'DEV=', import.meta.env.DEV, '=> WriteAccess=', hasWriteAccess);
 
         if (editBtn) {
-            editBtn.style.display = hasWriteAccess ? '' : 'none';
-            editBtn.classList.toggle('hidden', !hasWriteAccess);
+            if (hasWriteAccess) {
+                editBtn.style.display = '';
+                editBtn.classList.remove('hidden');
+            } else {
+                editBtn.style.setProperty('display', 'none', 'important');
+                editBtn.classList.add('hidden');
+            }
         }
         if (filterBtn) {
             filterBtn.style.display = ''; // Restore flex/block
@@ -2800,7 +2805,47 @@ if (filterBtn) {
 ['mousedown', 'touchstart', 'click'].forEach(evt => {
     document.getElementById('close-panel').addEventListener(evt, e => e.stopPropagation(), { passive: false });
     document.getElementById('close-route-info').addEventListener(evt, e => e.stopPropagation(), { passive: false });
+    // Also protect copy link buttons
+    if (document.getElementById('copy-link-btn')) document.getElementById('copy-link-btn').addEventListener(evt, e => e.stopPropagation(), { passive: false });
+    if (document.getElementById('copy-route-link-btn')) document.getElementById('copy-route-link-btn').addEventListener(evt, e => e.stopPropagation(), { passive: false });
 });
+
+
+// Copy Link Buttons Logic
+const handleCopyLink = (btnId) => {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        // Copy URL
+        const url = window.location.href;
+        navigator.clipboard.writeText(url).then(() => {
+            console.log('[UI] URL copied to clipboard:', url);
+
+            // Visual Feedback: Turn black (opacity: 1)
+            // The default .icon-btn is opacity: 0.4, hover: 0.8
+            // We want it effectively black. The SVG is black.
+            // So we just force opacity: 1 and maybe scale slightly?
+            // "turn black" effectively means opacity 1.
+
+            btn.style.opacity = '1';
+            btn.style.transform = 'scale(1.1)'; // Optional nice touch
+
+            setTimeout(() => {
+                btn.style.opacity = '';
+                btn.style.transform = '';
+            }, 1000);
+        }).catch(err => {
+            console.error('Failed to copy URL:', err);
+        });
+    });
+};
+
+handleCopyLink('copy-link-btn');
+handleCopyLink('copy-route-link-btn');
 
 // Helper to block map clicks briefly
 function triggerMapClickLock() {
