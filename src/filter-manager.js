@@ -1,3 +1,4 @@
+import mapboxgl from 'mapbox-gl';
 import { RouteFilterColorManager } from './color-manager.js';
 import * as api from './api.js';
 import { hydrateRouteDetails } from './fetch.js';
@@ -10,28 +11,7 @@ export class FilterManager {
         this.map = map;
         this.router = router;
         this.dataProvider = dataProvider;
-        // Expected dataProvider:
-        // { 
-        //   getAllStops: () => [],
-        //   getAllRoutes: () => [],
-        //   getRedirectMap: () => Map,
-        //   getHubMap: () => Map,
-        //   getHubSourcesMap: () => Map,
-        //   getMergeSourcesMap: () => Map,
-        //   getStopToRoutesMap: () => Map,
-        //   getEditState: () => Object
-        // }
-
         this.uiCallbacks = uiCallbacks;
-        // Expected uiCallbacks:
-        // {
-        //   renderArrivals: (arrivals, id) => {},
-        //   renderAllRoutes: (routes, arrivals) => {},
-        //   setSheetState: (el, state) => {},
-        //   updateConnectionLine: (origin, targets, isEdit) => {},
-        //   showStopInfo: (stop, addToStack, flyTo) => {},
-        //   getCircleRadiusExpression: (scale) => [] // Helper from main/map-setup? Actually it's local in main usually.
-        // }
 
         this.state = {
             active: false,
@@ -41,6 +21,8 @@ export class FilterManager {
             reachableStopIds: new Set(),
             filteredRoutes: [] // Array of route IDs
         };
+
+        this.destinationMarkers = new Map(); // Map<stopId, Marker>
     }
 
     getEquivalentStops(id) {
@@ -284,13 +266,8 @@ export class FilterManager {
                         if (idxO === -1) return false;
                         const idxT = p.stops.findIndex((s, i) => i > idxO && targetEq.has(redirectMap.get(s.id) || s.id));
                         if (idxT !== -1) {
-                            // console.log(`[FilterManager] Match found! Route ${r.shortName} connects to ${tid}`);
                             return true;
                         }
-                        // Debugging only:
-                        // if (this.state.targetIds.size > 0 && r.shortName === '333') { // Example hook
-                        //    console.log(`[DebugMatch] Failed. Route ${r.shortName}. O-Index: ${idxO}. Target ${tid} not found after O.`);
-                        // }
                         return false;
                     });
                 } else if (r.stops) {
@@ -309,18 +286,6 @@ export class FilterManager {
             }
             if (!globalMatch) {
                 // Detailed debug for 0 results case (Failure)
-                // Assuming we failed for ALL targets (since globalMatch is false)
-                if (originRoutes.length <= 15) {
-                    // Only log heavily if the list is small enough to be readable
-                    // Debug specific route failure details
-                    const debugTid = Array.from(this.state.targetIds)[0];
-                    const debugTName = (this.dataProvider.getAllStops().find(s => s.id === debugTid) || {}).name || debugTid;
-
-                    // Retrieve patterns if available
-                    const patterns = r._details && r._details.patterns ? r._details.patterns.length : 'no-patterns';
-
-                    console.log(`[FilterDebug] Fail: Route ${r.shortName} (${r.id}) has ${patterns} patterns. Stops: ${r.stops ? r.stops.length : '0'}. Target: ${debugTName} (${debugTid})`);
-                }
             }
             return globalMatch;
         });
@@ -358,6 +323,15 @@ export class FilterManager {
         this.state.filteredRoutes = [];
         RouteFilterColorManager.reset();
 
+        // Clear Markers
+        this.destinationMarkers.forEach(marker => marker.remove());
+        this.destinationMarkers.clear();
+
+        // Clear GL Source
+        if (this.map.getSource('destination-markers')) {
+            this.map.getSource('destination-markers').setData({ type: 'FeatureCollection', features: [] });
+        }
+
         // Clear Map connection
         if (this.map.getSource('filter-connection')) {
             this.map.getSource('filter-connection').setData({ type: 'FeatureCollection', features: [] });
@@ -381,7 +355,7 @@ export class FilterManager {
             this.map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', 1);
         }
 
-        // Reset Circles
+        // Reset Circles (Restore normal radius)
         if (this.map.getLayer('stops-layer-circle')) {
             this.map.setPaintProperty('stops-layer-circle', 'circle-opacity', 1);
             this.map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', 1);
@@ -401,23 +375,29 @@ export class FilterManager {
         const editState = this.dataProvider.getEditState();
         const editId = editState && editState.stopId ? editState.stopId : null;
 
-        if (!this.state.picking && !this.state.active) {
-            // Reset (Handling only the Edit Mode Opacity case here if Clear didn't catch it?)
-            // Actually clearFilter handles the full reset usually. 
-            // This method is mostly for applying the filter state.
-            return;
-        }
+        if (!this.state.picking && !this.state.active) return;
 
         const reachableArray = Array.from(this.state.reachableStopIds || []);
         const selectedArray = Array.from(this.state.targetIds || []);
         const originId = this.state.originId;
 
         const highOpacityIds = new Set(reachableArray);
-        selectedArray.forEach(id => highOpacityIds.add(id));
+        // Exclude selected (targets) from highOpacityIds because they have their own 0-opacity rule
+        // (Mapbox match expression requires unique branch labels)
+        selectedArray.forEach(id => {
+            highOpacityIds.delete(id);
+        });
+
         if (originId) highOpacityIds.add(originId);
+
+        // Exclude editId from highOpacityIds as well, as it has its own priority branch
+        if (editId && highOpacityIds.has(editId)) {
+            highOpacityIds.delete(editId);
+        }
 
         const opacityExpression = ['match', ['get', 'id']];
         if (editId) opacityExpression.push([editId], 0);
+        if (selectedArray.length > 0) opacityExpression.push(selectedArray, 0); // Hide selected from base layer
         opacityExpression.push(Array.from(highOpacityIds), 1.0, 0.1);
 
         const caseExpression = [
@@ -434,8 +414,18 @@ export class FilterManager {
         }
 
         if (this.map.getLayer('stops-layer-circle')) {
-            this.map.setPaintProperty('stops-layer-circle', 'circle-opacity', opacityExpression);
-            this.map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', opacityExpression);
+            const circleOpacityExpression = ['match', ['get', 'id']];
+            if (editId) circleOpacityExpression.push([editId], 0);
+
+            // Targets -> 0 opacity (handled by markers)
+            if (selectedArray.length > 0) circleOpacityExpression.push(selectedArray, 0);
+
+            // Others -> High/Low
+            // High opacity for reachable (but not selected)
+            circleOpacityExpression.push(Array.from(highOpacityIds), 1.0, 0.1);
+
+            this.map.setPaintProperty('stops-layer-circle', 'circle-opacity', circleOpacityExpression);
+            this.map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', circleOpacityExpression);
 
             // Radius Logic
             const radiusExpression = [
@@ -463,12 +453,305 @@ export class FilterManager {
         }
 
         if (this.map.getLayer('metro-layer-circle')) {
-            this.map.setPaintProperty('metro-layer-circle', 'circle-opacity', opacityExpression);
-            this.map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', opacityExpression);
+            const finalOpacity = [
+                'case',
+                ['in', ['get', 'id'], ['literal', selectedArray]], 0,
+                ['in', ['get', 'id'], ['literal', reachableArray]], 1,
+                ['==', ['get', 'id'], originId], 1,
+                0.1
+            ];
+            this.map.setPaintProperty('metro-layer-circle', 'circle-opacity', finalOpacity);
+            this.map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', finalOpacity);
         }
 
         if (this.map.getLayer('stops-highlight')) {
             this.map.setPaintProperty('stops-highlight', 'icon-opacity', opacityExpression);
         }
+
+        // Add Destination Markers Layer if not exists
+        if (!this.map.getSource('destination-markers')) {
+            this.map.addSource('destination-markers', {
+                type: 'geojson',
+                data: { type: 'FeatureCollection', features: [] }
+            });
+        }
+        if (!this.map.getLayer('destination-markers-layer')) {
+            this.map.addLayer({
+                id: 'destination-markers-layer',
+                type: 'symbol',
+                source: 'destination-markers',
+                layout: {
+                    'icon-image': ['get', 'icon'],
+                    'icon-allow-overlap': true,
+                    'icon-ignore-placement': true
+                    // 'icon-size': 0.5 // Removed to allow full size (approx 48px)
+                }
+            });
+
+            // Click Handler for Destination Markers
+            this.map.on('click', 'destination-markers-layer', (e) => {
+                const feature = e.features[0];
+                if (feature) {
+                    const targetId = feature.properties.id;
+                    // Trigger Unselect (Apply Filter toggles logic)
+                    window.applyFilter(targetId);
+                }
+            });
+
+            // Cursor
+            this.map.on('mouseenter', 'destination-markers-layer', () => {
+                this.map.getCanvas().style.cursor = 'pointer';
+            });
+            this.map.on('mouseleave', 'destination-markers-layer', () => {
+                this.map.getCanvas().style.cursor = '';
+            });
+        }
+
+        this.updateDestinationMarkers();
+    }
+
+    updateDestinationMarkers() {
+        const selectedTargets = Array.from(this.state.targetIds);
+        const map = this.map;
+        const allStops = this.dataProvider.getAllStops();
+
+        // 1. Remove Deselected
+        // 1. Clear DOM Markers (Migration Cleanup)
+        // If we still have legacy markers, remove them once.
+        if (this.destinationMarkers.size > 0) {
+            this.destinationMarkers.forEach(m => m.remove());
+            this.destinationMarkers.clear();
+        }
+
+        // Update GeoJSON Source
+        const features = [];
+        selectedTargets.forEach(targetId => {
+            const stop = allStops.find(s => s.id === targetId);
+            if (!stop) return;
+
+            const connectingRoutes = this.getConnectingRoutes(this.state.originId, targetId);
+            const colors = this.getGradientColors(connectingRoutes, this.state.originId, targetId);
+
+            // Generate Signature for Icon Cache
+            // We use colors join as the signature for the ICON itself, to reuse cached images
+            const visualSignature = colors.join('-');
+
+            // Ensure Icon Exists
+            DestinationMarkerRenderer.ensureIcon(this.map, visualSignature, colors);
+
+            features.push({
+                type: 'Feature',
+                geometry: {
+                    type: 'Point',
+                    coordinates: [parseFloat(stop.lon), parseFloat(stop.lat)]
+                },
+                properties: {
+                    id: targetId,
+                    icon: `dest-marker-${visualSignature}`
+                }
+            });
+        });
+
+        const sourceId = 'destination-markers';
+        if (this.map.getSource(sourceId)) {
+            this.map.getSource(sourceId).setData({
+                type: 'FeatureCollection',
+                features: features
+            });
+        }
+    }
+
+    getConnectingRoutes(originId, targetId) {
+        const stopToRoutesMap = this.dataProvider.getStopToRoutesMap();
+        const redirectMap = this.dataProvider.getRedirectMap();
+
+        const originEq = new Set(this.getEquivalentStops(originId));
+        const targetEq = new Set(this.getEquivalentStops(targetId));
+
+        const originRoutesSet = new Set();
+        originEq.forEach(oid => {
+            const routes = stopToRoutesMap.get(oid) || [];
+            routes.forEach(r => originRoutesSet.add(r));
+        });
+
+        const connecting = [];
+        originRoutesSet.forEach(r => {
+            // Check if this route connects ANY origin equivalent to ANY target equivalent
+            // (Logic simplified from refreshRouteFilter)
+            // We need to check exact path for directionality usually.
+
+            let matches = false;
+            if (r._details && r._details.patterns) {
+                matches = r._details.patterns.some(p => {
+                    if (!p.stops) return false;
+                    const idxO = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
+                    if (idxO === -1) return false;
+                    const idxT = p.stops.findIndex((s, i) => i > idxO && targetEq.has(redirectMap.get(s.id) || s.id));
+                    return idxT !== -1;
+                });
+            } else if (r.stops) {
+                const routeStopsNormalized = r.stops.map(sid => redirectMap.get(sid) || sid);
+                const idxO = routeStopsNormalized.findIndex(sid => originEq.has(sid));
+                if (idxO !== -1) {
+                    const idxT = routeStopsNormalized.findIndex((sid, i) => i > idxO && targetEq.has(sid));
+                    matches = (idxT !== -1);
+                }
+            }
+
+            if (matches) connecting.push(r);
+        });
+        return connecting;
+    }
+
+    // Helper to generate path signature matching main.js updateConnectionLine logic
+    getPathSignature(route, originId, targetId) {
+        const redirectMap = this.dataProvider.getRedirectMap();
+        const hubMap = this.dataProvider.getHubMap();
+        // Getting raw stops from route or pattern
+        // We need to find the specific pattern segment if possible, or fallback to route stops.
+
+        let segmentStops = null;
+        const originEq = new Set(this.getEquivalentStops(originId));
+        const targetEq = new Set(this.getEquivalentStops(targetId));
+
+        if (route._details && route._details.patterns) {
+            route._details.patterns.some(p => {
+                if (!p.stops) return false;
+                // Find first O then first T
+                let foundO = -1;
+                let foundT = -1;
+
+                for (let i = 0; i < p.stops.length; i++) {
+                    const sId = p.stops[i].id;
+                    const normId = redirectMap.get(sId) || sId;
+                    if (foundO === -1 && originEq.has(normId)) {
+                        foundO = i;
+                    } else if (foundO !== -1 && targetEq.has(normId)) {
+                        foundT = i;
+                        break;
+                    }
+                }
+
+                if (foundO !== -1 && foundT !== -1) {
+                    segmentStops = p.stops.slice(foundO, foundT + 1);
+                    return true;
+                }
+                return false;
+            });
+        }
+
+        if (!segmentStops && route.stops) {
+            // Fallback for simple routes
+            const stops = route.stops;
+            let foundO = -1;
+            let foundT = -1;
+
+            for (let i = 0; i < stops.length; i++) {
+                const sId = stops[i];
+                const normId = redirectMap.get(sId) || sId;
+                if (foundO === -1 && originEq.has(normId)) {
+                    foundO = i;
+                } else if (foundO !== -1 && targetEq.has(normId)) {
+                    foundT = i;
+                    break;
+                }
+            }
+            if (foundO !== -1 && foundT !== -1) {
+                segmentStops = stops.slice(foundO, foundT + 1).map(sid => ({ id: sid }));
+            }
+        }
+
+        if (!segmentStops || segmentStops.length < 2) return route.id; // Fallback
+
+        // Generate Signature: Map to Hubs -> Dedup -> Join
+        const ids = segmentStops
+            .map(s => {
+                let id = s.id || s;
+                // Normalize Redirects first (matching main.js logic)
+                id = redirectMap.get(id) || id;
+                // Normalize Hubs
+                return hubMap.get(id) || id;
+            })
+            .filter((id, i, arr) => i === 0 || id !== arr[i - 1]) // Dedup adjacent
+            .join('|');
+
+        return ids;
+    }
+
+    getGradientColors(routes, originId, targetId) {
+        if (!routes || routes.length === 0) return ['#888'];
+
+        const colors = routes.map(r => {
+            let c = RouteFilterColorManager.pathColors.get(this.getPathSignature(r, originId, targetId));
+
+            // Removed fallback to getColorForRoute(r.id) because it persists old colors
+            // even after pathColors GC, causing mismatch with main.js logic which wants fresh colors.
+
+            if (!c) {
+                console.warn('[FilterManager] Color not found for signature:', this.getPathSignature(r, originId, targetId), 'Assigning new.');
+                c = RouteFilterColorManager.assignNextColor(this.getPathSignature(r, originId, targetId), [r.id]);
+            }
+            return c;
+        });
+
+        // Dedup colors
+        const uniqueColors = [...new Set(colors)];
+
+        if (uniqueColors.length === 0) return ['#888'];
+        return uniqueColors;
+    }
+}
+
+// Helper Class for generating gradient icons
+class DestinationMarkerRenderer {
+    static ensureIcon(map, signature, colors) {
+        if (!map) return null;
+        const iconId = `dest-marker-${signature}`;
+
+        if (map.hasImage(iconId)) return iconId;
+
+        // Create Canvas for Icon
+        // Reduced size (was 96 -> now 48, approx 24px rendered)
+        const width = 48;
+        const height = 48;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+
+        // Draw Circle
+        const centerX = width / 2;
+        const centerY = height / 2;
+        const radius = 18;
+        const strokeWidth = 4;
+
+        // Shadow removed per user request
+
+        // Background (Gradient or Solid)
+        if (colors.length > 1) {
+            const gradient = ctx.createLinearGradient(centerX - radius, centerY, centerX + radius, centerY);
+            colors.forEach((c, i) => {
+                const stop = i / (colors.length - 1);
+                gradient.addColorStop(stop, c);
+            });
+            ctx.fillStyle = gradient;
+        } else {
+            ctx.fillStyle = colors[0];
+        }
+
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Stroke (White border)
+        ctx.lineWidth = strokeWidth;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+
+        // Add to Map
+        const imageData = ctx.getImageData(0, 0, width, height);
+        map.addImage(iconId, imageData, { pixelRatio: 2 }); // HiDPI
+
+        return iconId;
     }
 }

@@ -1450,3 +1450,22 @@ input:focus+.slider {
 input:checked+.slider:before {
   transform: translateX(20px);
 }
+
+/* Destination Markers (Filtered View) */
+.destination-marker {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 3px solid white;
+  /* Explicit white border as requested */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  z-index: 10;
+}
+
+.destination-marker:hover {
+  transform: scale(1.2);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+  z-index: 11;
+}

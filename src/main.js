@@ -814,6 +814,12 @@ map.on('click', 'stops-layer-circle', async (e) => {
 
     const props = e.features[0].properties;
 
+    // Check if we hit a destination marker (priority)
+    if (map.getLayer('destination-markers-layer')) {
+        const destMarkers = map.queryRenderedFeatures(e.point, { layers: ['destination-markers-layer'] });
+        if (destMarkers.length > 0) return;
+    }
+
     // FILTER PICKING MODE
     if (filterManager.state.picking) {
         let selectedFeature = null;
