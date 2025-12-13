@@ -1497,9 +1497,12 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         console.log('[Debug] Entering Bus Branch');
 
         // Bus Stop Logic
+        // Allow Localhost or Private Network IPs (common home/office ranges)
         const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        const isPrivateIP = location.hostname.startsWith('192.168.') || location.hostname.startsWith('10.') || location.hostname.startsWith('172.');
+
         // Write access is only available in Dev Server mode (active middleware)
-        const hasWriteAccess = isLocalhost && import.meta.env.DEV;
+        const hasWriteAccess = (isLocalhost || isPrivateIP) && import.meta.env.DEV;
 
         if (editBtn) {
             editBtn.style.display = hasWriteAccess ? '' : 'none';
