@@ -194,6 +194,14 @@ function updateBackButtons() {
     if (backRoute) backRoute.classList.toggle('hidden', !hasHistory);
 }
 
+function closeAllPanels() {
+    document.getElementById('info-panel').classList.add('hidden');
+    document.getElementById('route-info').classList.add('hidden');
+    document.getElementById('back-panel').classList.add('hidden');
+    document.getElementById('back-route-info').classList.add('hidden');
+    // Ensure start screen or map checks? usually handled by caller
+}
+
 function handleBack() {
     const previous = popHistory();
     if (previous) {
@@ -469,6 +477,7 @@ map.on('load', async () => {
                 api.fetchStops(),
                 api.fetchRoutes()
             ]);
+
             console.log(`[Fresh Load] Result - Stops: ${stops ? stops.length : 'MISSING'}, Routes: ${routes ? routes.length : 'MISSING'}`);
 
             console.log('[Map] Loading FRESH data...');
@@ -1448,7 +1457,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                 stop.lon = refreshedStop.lon;
                 stop.name = refreshedStop.name;
                 // Recursive retry once
-                return showStopInfo(stop, addToHistory, isPopState);
+                return showStopInfo(stop, addToStack, flyToStop, updateURL);
             }
             // If still missing, maybe fetch? (Optional future improvement)
         }
@@ -1764,6 +1773,29 @@ let v3RoutesMap = null; // Maps shortName ("306") -> V3 ID ("1:R98190")
 let v3RoutesPromise = null;
 const V3_ROUTES_CACHE_KEY = 'v3_routes_map_cache';
 const V3_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+
+// --- Initialization ---
+async function init() {
+    // API Status / Offline Notice
+    const offlineNotice = document.getElementById('offline-notice');
+    if (api.onApiStatusChange) {
+        api.onApiStatusChange((status) => {
+            if (offlineNotice) {
+                const isOffline = !status.ok && status.code !== 200; // or just !status.ok depending on how strict we want
+                if (isOffline) {
+                    offlineNotice.classList.remove('hidden');
+                    offlineNotice.style.display = 'block';
+                } else {
+                    offlineNotice.classList.add('hidden');
+                    offlineNotice.style.display = 'none';
+                }
+            }
+        });
+    }
+
+    // Map is initialized via map-setup.js and map.on('load') listeners elsewhere
+
+}
 
 async function fetchV3Routes() {
     if (v3RoutesMap) return;
@@ -3458,41 +3490,47 @@ function getCatmullRomSpline(points, tension = 0.25, numOfSegments = 16) {
 function slicePolyline(points, originStop, targetStop) {
     if (!points || points.length < 2) return null;
 
-    // Helper: Find nearest index
-    const getNearestIndex = (pt) => {
-        let minDist = Infinity;
-        let index = -1;
-        for (let i = 0; i < points.length; i++) {
-            // points are [lng, lat] (from decodePolyline)
-            const lng = points[i][0];
-            const lat = points[i][1];
+    // Helper: Find all candidate indices within a tolerance (e.g. 50-100m approx in degrees)
+    // 0.001 degrees ~ 111m. Let's look for closest candidates.
+    // Instead of fixed threshold, let's just find the top 3 closest points for each stop?
+    // Or simpler: Find Global Min for Origin, Global Min for Target.
+    // If O <= T, good.
+    // If O > T, check if there's an alternative O (earlier) or alternative T (later) that is "close enough".
 
-            const d = (lng - pt.lon) ** 2 + (lat - pt.lat) ** 2;
-            if (d < minDist) {
-                minDist = d;
-                index = i;
-            }
+    const getCandidates = (pt) => {
+        let candidates = [];
+        const limit = 3; // Top 3
+        for (let i = 0; i < points.length; i++) {
+            const d = (points[i][0] - pt.lon) ** 2 + (points[i][1] - pt.lat) ** 2;
+            candidates.push({ i, d });
         }
-        return index;
+        candidates.sort((a, b) => a.d - b.d);
+        return candidates.slice(0, limit);
     };
 
-    const idxOriginal = getNearestIndex(originStop);
-    const idxTarget = getNearestIndex(targetStop);
+    const origins = getCandidates(originStop);
+    const targets = getCandidates(targetStop);
 
-    if (idxOriginal === -1 || idxTarget === -1) return null;
+    let bestPair = null;
+    let minCombinedDist = Infinity;
 
-    // Ensure directionality (Origin -> Target)
-    let segment = [];
-
-    if (idxOriginal <= idxTarget) {
-        segment = points.slice(idxOriginal, idxTarget + 1);
-    } else {
-        // Fallback to Spline
-        return null;
+    for (const o of origins) {
+        for (const t of targets) {
+            if (o.i <= t.i) {
+                const combined = o.d + t.d;
+                if (combined < minCombinedDist) {
+                    minCombinedDist = combined;
+                    bestPair = { start: o.i, end: t.i };
+                }
+            }
+        }
     }
 
-    // Return segments directly (already [lng, lat])
-    return segment;
+    if (bestPair) {
+        return points.slice(bestPair.start, bestPair.end + 1);
+    }
+
+    return null;
 }
 
 // fetchRoutePolylineV3 definition removed (moved to api.js)
@@ -4336,4 +4374,7 @@ window.selectDevStop = (id) => {
 }
 
 /* Map Menu & Simplify Logic */
+
+// Start App
+init();
 

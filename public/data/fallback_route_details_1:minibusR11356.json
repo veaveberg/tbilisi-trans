@@ -1,0 +1,1 @@
+{"id":"1:minibusR11356","shortName":"417","color":"0033B4","mode":"BUS","patterns":[{"patternSuffix":"1:01","directionId":1,"firstStop":{"id":"1:20123","name":"დავით აღმაშენებლის #100"},"lastStop":{"id":"1:20123","name":"დავით აღმაშენებლის #100"},"headsign":"გიორგიწმინდა - მ/ს \"ახმეტელის თეატრი\""}],"defaultPatternSuffix":"1:01"}

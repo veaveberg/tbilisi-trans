@@ -36,7 +36,7 @@ async function fetchAndSave(endpoint, filename) {
     const url = `${API_BASE_URL}${endpoint}`;
     console.log(`Fetching ${url}...`);
     try {
-        const res = await fetch(url, {
+        const res = await fetchWithRetry(url, {
             headers: {
                 'x-api-key': API_KEY,
                 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -44,6 +44,7 @@ async function fetchAndSave(endpoint, filename) {
                 'Referer': 'https://transit.ttc.com.ge/'
             }
         });
+        // fetchWithRetry throws if fails after retries, or returns res.
         if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
         const data = await res.json();
 
@@ -58,7 +59,9 @@ async function fetchAndSave(endpoint, filename) {
             console.warn(`[CI] Ignoring prefetch error for ${filename}. Using existing file if present.`);
             return;
         }
-        process.exit(1);
+        // Don't exit process, allow other fetches to proceed
+        console.warn(`[Continue] Skipping ${filename} due to error.`);
+        return;
     }
 }
 
@@ -67,7 +70,7 @@ async function main() {
     // Fetch routes but keep in memory to augment
     let routes = [];
     try {
-        const res = await fetch(`${API_BASE_URL}/routes`, {
+        const res = await fetchWithRetry(`${API_BASE_URL}/routes`, {
             headers: {
                 'x-api-key': API_KEY,
                 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -83,6 +86,9 @@ async function main() {
     }
 
     console.log(`Processing ${routes.length} routes for Stop Mapping & Metro Fallback...`);
+
+    const allPolylines = {}; // Consolidate all polylines here
+
 
     // Iterate ALL routes to attach 'stops' list (for Offline Stop->Routes mapping)
     for (const [index, route] of routes.entries()) {
@@ -140,28 +146,57 @@ async function main() {
 
             route.stops = Array.from(stopIds);
 
-            // 3. Metro Specifics (Save Details & Schedules)
-            if (route.mode === 'SUBWAY') {
-                console.log(`Saving Metro Data for ${route.shortName}...`);
+            // 3. Save Details (For ALL routes, to support filtering fallback)
+            // (Previously only for SUBWAY)
+            {
+                // console.log(`Saving Details (and Polylines) for ${route.shortName}...`); // Too verbose
                 const detailsFilename = `fallback_route_details_${route.id}.json`;
                 fs.writeFileSync(path.join(OUTPUT_DIR, detailsFilename), JSON.stringify(details));
 
                 if (details.patterns) {
+                    // A. Schedules (Keep restricted to SUBWAY for now to save space/time? Or all? Let's do all for complete optimistic UI)
+                    // Actually, schedules are large. Let's do Schedules only for SUBWAY and maybe Bus if feasible.
+                    // User asked "fill this prefetch db". Let's try to be generous but maybe limit logs?
+                    // For now, I'll enable Schedules for ALL to ensure consistent experience.
+
                     for (const p of details.patterns) {
                         const suffix = p.patternSuffix;
                         const safeSuffix = suffix.replace(/:/g, '_');
-                        const scheduleEndpoint = `/routes/${route.id}/schedule?patternSuffix=${suffix}&locale=en`;
-                        const scheduleFilename = `fallback_schedule_${route.id}_${safeSuffix}.json`;
-                        const scheduleUrl = `${v3Base}${scheduleEndpoint}`;
 
-                        try {
-                            const schedRes = await fetchWithRetry(scheduleUrl, { headers });
-                            if (schedRes.ok) {
-                                const schedData = await schedRes.json();
-                                fs.writeFileSync(path.join(OUTPUT_DIR, scheduleFilename), JSON.stringify(schedData));
-                            }
-                        } catch (e) { console.warn('Schedule fetch failed', e); }
+                        // SCHEDULE
+                        const scheduleFilename = `fallback_schedule_${route.id}_${safeSuffix}.json`;
+                        if (!fs.existsSync(path.join(OUTPUT_DIR, scheduleFilename))) { // Skip if exists? No, we want to update.
+                            const scheduleEndpoint = `/routes/${route.id}/schedule?patternSuffix=${suffix}&locale=en`;
+                            const scheduleUrl = `${v3Base}${scheduleEndpoint}`;
+                            try {
+                                const schedRes = await fetchWithRetry(scheduleUrl, { headers });
+                                if (schedRes.ok) {
+                                    const schedData = await schedRes.json();
+                                    fs.writeFileSync(path.join(OUTPUT_DIR, scheduleFilename), JSON.stringify(schedData));
+                                }
+                            } catch (e) { /* ignore */ }
+                        }
                     }
+
+                    // B. POLYLINES (Consolidated)
+                    // Polyline URL: /routes/{id}/polylines?patternSuffixes={suffixes}
+                    // Usually we fetch all suffixes together.
+                    const suffixes = details.patterns.map(p => p.patternSuffix).join(',');
+
+                    // Key used for consolidated Map: just route ID (simplest lookup)
+                    const polylineKey = `route:${route.id}`;
+
+                    // Construct URL for fetch (using v3Base)
+                    // Here we MUST encode for the actual network request
+                    const polylineUrl = `${v3Base}/routes/${route.id}/polylines?patternSuffixes=${encodeURIComponent(suffixes)}`;
+
+                    try {
+                        const polyRes = await fetchWithRetry(polylineUrl, { headers });
+                        if (polyRes.ok) {
+                            const polyData = await polyRes.json();
+                            allPolylines[polylineKey] = polyData; // Store in map
+                        }
+                    } catch (e) { console.warn('Polyline fetch failed', e); }
                 }
             }
 
@@ -175,6 +210,10 @@ async function main() {
     // Save Augmented Routes
     fs.writeFileSync(path.join(OUTPUT_DIR, 'fallback_routes.json'), JSON.stringify(routes));
     console.log(`Saved augmented fallback_routes.json with stop mappings.`);
+
+    // Save Consolidated Polylines
+    fs.writeFileSync(path.join(OUTPUT_DIR, 'fallback_polylines.json'), JSON.stringify(allPolylines));
+    console.log(`Saved fallback_polylines.json with ${Object.keys(allPolylines).length} entries.`);
 
     // --- Metro Pre-fetch (Integrated above) ---
     // (Removed separate block)

@@ -66,6 +66,19 @@
     body.loading .reset-view-btn {
       display: none !important;
     }
+
+    .offline-notice {
+      background-color: transparent;
+      color: #dc2626;
+      text-align: center;
+      padding: 2px 0;
+      margin: 8px auto 0 auto;
+      font-size: 13px;
+      font-weight: 700;
+      width: 100%;
+      text-shadow: 0 0 10px white, 0 0 5px white;
+      pointer-events: none;
+    }
   </style>
 </head>
 
@@ -94,6 +107,8 @@
         <div id="search-suggestions" class="suggestions hidden"></div>
       </div>
       <div id="filter-instruction" class="filter-instruction hidden" style="display: none;"></div>
+      <div id="offline-notice" class="offline-notice hidden" style="display: none;">Can't get live data from TTC 🤧
+      </div>
     </div>
 
     <!-- Stop Info Panel (Bottom Sheet) -->

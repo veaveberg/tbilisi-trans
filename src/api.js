@@ -80,9 +80,45 @@ export function getApiStatusColor(code) {
 }
 
 
+// Eagerly fetch the consolidated polylines to ensure fast fallback
+const BASE_URL = import.meta.env.BASE_URL || '/';
+let staticPolylinesCache = fetch(`${BASE_URL}data/fallback_polylines.json`)
+    .then(r => {
+        if (!r.ok) throw new Error('NO_STATIC_POLYLINES');
+        return r.json();
+    })
+    .catch(e => {
+        console.warn('Failed to load static polylines', e);
+        return {}; // return empty object so we don't retry forever
+    });
+
 async function fetchStaticFallback(endpoint) {
     try {
         console.log(`[Fallback] Attempting to load static data for ${endpoint}`);
+
+        // 0. Consolidated Polylines
+        // Route Polylines: .../routes/{id}/polylines?patternSuffixes=...
+        if (endpoint.includes('/polylines')) {
+            // Already eagerly fetching...
+            const allPolylines = await staticPolylinesCache;
+
+            // Extract Route ID from URL
+            // Format: .../routes/{id}/polylines...
+            const match = endpoint.match(/\/routes\/([^\/]+)\/polylines/);
+            if (match && match[1]) {
+                const routeId = decodeURIComponent(match[1]); // e.g. 1:R1234
+                const key = `route:${routeId}`;
+
+                if (allPolylines[key]) {
+                    return allPolylines[key];
+                }
+                console.warn(`[Fallback] Polyline not found in static: ${key}`);
+            } else {
+                console.warn(`[Fallback] Could not parse route ID from: ${endpoint}`);
+            }
+            return null;
+        }
+
         // Map API endpoint to static file
         // e.g. /stops -> /data/fallback_stops.json
         // 1. Stop Routes (Dynamic Computation)
@@ -91,7 +127,7 @@ async function fetchStaticFallback(endpoint) {
         if (stopRoutesMatch) {
             const stopId = decodeURIComponent(stopRoutesMatch[1]);
             try {
-                const masterRoutesRes = await fetch(`./data/fallback_routes.json`);
+                const masterRoutesRes = await fetch(`${BASE_URL}data/fallback_routes.json`);
                 if (!masterRoutesRes.ok) throw new Error('Master routes missing');
                 const masterRoutes = await masterRoutesRes.json();
 
@@ -109,31 +145,50 @@ async function fetchStaticFallback(endpoint) {
         else {
             // Check for V3 Metro calls
             // 1. Route Details: .../routes/123
-            const detailsMatch = endpoint.match(/\/routes\/(\d+)$/);
+            const detailsMatch = endpoint.match(/\/routes\/([^\/]+)$/);
             if (detailsMatch) {
-                filename = `fallback_route_details_${detailsMatch[1]}.json`;
+                const routeId = decodeURIComponent(detailsMatch[1]);
+                filename = `fallback_route_details_${routeId}.json`;
             }
             // 2. Schedule: .../routes/123/schedule?patternSuffix=0:01...
-            const scheduleMatch = endpoint.match(/\/routes\/(\d+)\/schedule/);
+            const scheduleMatch = endpoint.match(/\/routes\/([^\/]+)\/schedule/);
             if (scheduleMatch) {
+                const routeId = decodeURIComponent(scheduleMatch[1]);
+
                 const urlObj = new URL('http://dummy.com' + endpoint); // parse query params
                 const suffix = urlObj.searchParams.get('patternSuffix');
                 if (suffix) {
                     const safeSuffix = suffix.replace(/:/g, '_');
-                    filename = `fallback_schedule_${scheduleMatch[1]}_${safeSuffix}.json`;
+                    filename = `fallback_schedule_${routeId}_${safeSuffix}.json`;
                 }
             }
+            // 3. Polyline: Handled by consolidated block above
         }
 
         if (!filename) return null;
 
-        const res = await fetch(`./data/${filename}`);
+        const res = await fetch(`${BASE_URL}data/${filename}`);
         if (!res.ok) throw new Error('Static file not found');
         return await res.json();
     } catch (e) {
         console.warn(`[Fallback] Failed to load static data: ${e.message}`);
         return null;
     }
+}
+
+function hasFallback(url, cached) {
+    if (cached) return true;
+    // Check if URL matches static fallback patterns logic
+    // 1. /stops/.../routes
+    if (url.match(/\/stops\/[^\/]+\/routes/)) return true;
+    // 2. /routes or /stops lists
+    if (url.endsWith('/routes') || url.endsWith('/stops')) return true;
+    // 3. V3 Route Details
+    if (url.match(/\/routes\/[^\/]+$/)) return true;
+    // 4. V3 Schedule
+    if (url.match(/\/routes\/[^\/]+\/schedule/)) return true;
+
+    return false;
 }
 
 export async function fetchWithCache(url, options = {}) {
@@ -211,9 +266,13 @@ export async function fetchWithCache(url, options = {}) {
 
     const fetchOptions = { ...options, credentials: 'omit' };
 
+    // Fail Fast if we have a fallback: Don't retry at network layer, fail immediately so we can fallback
+    // const useFastFail = hasFallback(url, cached); // REVERTED: User wants 8s background retries
+    const retries = apiStatus.ok ? 3 : 0; // If Offline, don't retry!
+
     const requestPromise = (async () => {
         try {
-            const response = await fetchWithRetry(url, fetchOptions); // Use Retry Logic
+            const response = await fetchWithRetry(url, fetchOptions, retries); // Use Retry Logic
             if (!response.ok) throw new Error(`Network error: ${response.status}`);
             const data = await response.json();
 
@@ -222,35 +281,41 @@ export async function fetchWithCache(url, options = {}) {
             return data;
         } catch (err) {
             console.warn(`[Network] Failed to fetch ${url}: ${err.message}`);
+            // Trigger Offline Status so subsequent requests fail fast
+            updateApiStatus(false, 0, 'Offline');
 
-            // 3. FALLBACK STRATEGIES
-
-            // A. Try "Very Stale" Cache if we have it
-            if (cached) {
-                console.warn(`[Fallback] Using expired cache for ${url}`);
-                updateApiStatus(false, 0, 'Offline (Cache)');
-                return cached.data;
-            }
-
-            // B. Try Static JSON (Day 1 Offline Support)
-            // Extract endpoint for mapping
-            const cleanUrl = url.split('?')[0];
-            const fallbackData = await fetchStaticFallback(cleanUrl);
-            if (fallbackData) {
-                console.warn(`[Fallback] Used Static Data for ${url}`);
-                updateApiStatus(false, 0, 'Offline (Static)');
-                // Helper: Cache this so next time strictly offline works faster?
-                await db.set(cacheKey, { timestamp: 0, data: fallbackData }); // Timestamp 0 = Always Stale (will try to update next time)
-                return fallbackData;
-            }
-
-            throw err; // Give up
-        } finally {
+            // If we are racing, this error is "swallowed" by the fallback strategy in the race,
+            // but we throw here so the promise rejects for standard callers.
+            throw err;
+        }
+        finally {
             pendingRequests.delete(url);
         }
     })();
 
     pendingRequests.set(url, requestPromise);
+
+    // OPTIMISTIC UI: Race Network vs Fallback (250ms normally, 10ms if Offline)
+    if (hasFallback(url, cached)) {
+        const fallbackDataPromise = (async () => {
+            if (cached) return cached.data;
+            const staticData = await fetchStaticFallback(url.split('?')[0]);
+            return staticData || requestPromise; // If no static, we must wait for network
+        })();
+
+        // Smart Offline Mode: If API is already down, fail fast (instantly)
+        const raceTimeout = apiStatus.ok ? 250 : 10;
+
+        const timeoutPromise = new Promise(r => setTimeout(r, raceTimeout)).then(() => {
+            console.log(`[Optimistic] 250ms passed, showing fallback for ${url}`);
+            return fallbackDataPromise;
+        });
+
+        const networkRace = requestPromise.catch(() => fallbackDataPromise); // If net fails fast, use fallback
+
+        return Promise.race([networkRace, timeoutPromise]);
+    }
+
     return requestPromise;
 }
 
@@ -290,6 +355,7 @@ export async function fetchWithRetry(url, options = {}, retries = 3, backoff = 1
         throw err;
     }
 }
+
 
 export async function fetchStops(options = {}) {
     return await fetchWithCache(`${API_BASE_URL}/stops`, {
@@ -360,29 +426,82 @@ export async function fetchBusPositionsV3(routeId, patternSuffix) {
  */
 export async function fetchRoutePolylineV3(routeId, patternSuffixes) {
     const cacheKey = `/pis-gateway/api/v3/routes/${routeId}/polylines?patternSuffixes=${patternSuffixes}`;
+
+    // 1. Memory Cache
     if (v3Cache.polylines.has(cacheKey)) {
-        console.log('[Cache] Hit:', cacheKey);
+        console.log('[Cache] Hit (Memory):', cacheKey);
         return v3Cache.polylines.get(cacheKey);
     }
 
-    return enqueueV3Request(async () => {
+    // 2. DB Cache (Persistent)
+    const dbKey = `v3_poly_${routeId}_${patternSuffixes}`;
+    let cached = null;
+    try {
+        cached = await db.get(dbKey);
+        if (cached) {
+            // Polylines are very stable, treat as fresh for a long time (e.g., 7 days)
+            // Or even indefinitely until manual flush? Let's say 7 days.
+            if (Date.now() - cached.timestamp < 7 * 24 * 60 * 60 * 1000) {
+                console.log('[Cache] Hit (DB):', cacheKey);
+                v3Cache.polylines.set(cacheKey, cached.data);
+                return cached.data;
+            }
+            console.log('[Cache] Stale (DB):', cacheKey);
+        }
+    } catch (e) { /* ignore */ }
+
+    // 3. Network with Fallback logic (Optimistic)
+    const request = async () => {
         try {
-            console.log('[Cache] Miss:', cacheKey);
+            console.log('[Cache] Miss/Stale (Polyline):', cacheKey);
+            // Default 3 retries (~8s) unless Offline
+            const retries = apiStatus.ok ? 3 : 0;
             const res = await fetchWithRetry(`${API_V3_BASE_URL}/routes/${encodeURIComponent(routeId)}/polylines?patternSuffixes=${encodeURIComponent(patternSuffixes)}`, {
                 headers: { 'x-api-key': API_KEY },
                 credentials: 'omit'
-            });
+            }, retries);
 
             if (!res.ok) throw new Error(`Polyline fetch failed: ${res.status}`);
             const data = await res.json();
 
+            // Store in Memory & DB
             v3Cache.polylines.set(cacheKey, data);
+            db.set(dbKey, { timestamp: Date.now(), data }).catch(console.warn);
+
             return data;
         } catch (error) {
-            console.error('Failed to fetch polyline', error);
+            console.warn('Failed to fetch polyline', error);
+            updateApiStatus(false, 0, 'Offline'); // Trigger offline status
             throw error;
         }
-    });
+    };
+
+    const requestPromise = enqueueV3Request(request);
+
+    // OPTIMISTIC UI: Race Network vs Fallback (250ms)
+    // Fallback can be from: 1. Stale DB Cache (preferred) OR 2. Static File (prefetch)
+    if (true) { // Always try optimistic if possible
+        const fallbackDataPromise = (async () => {
+            if (cached) return cached.data;
+            // Try Static Prefetch
+            const cleanKey = cacheKey.split('?')[0]; // Not quite right for V3 params, need full URL construction or extract from cacheKey
+            // Actually `fetchStaticFallback` takes an endpoint string. We can pass the relative URL.
+            // cacheKey defined at top is: /pis-gateway/api/v3/routes/${routeId}/polylines?patternSuffixes=${patternSuffixes}
+            const staticData = await fetchStaticFallback(cacheKey);
+            return staticData || requestPromise; // If no static, we must wait for network
+        })();
+
+        const raceTimeout = apiStatus.ok ? 250 : 10;
+        const timeoutPromise = new Promise(r => setTimeout(r, raceTimeout)).then(() => {
+            console.log(`[Optimistic] Polyline: 250ms passed, showing cached/static data...`);
+            return fallbackDataPromise;
+        });
+
+        const networkRace = requestPromise.catch(() => fallbackDataPromise);
+        return Promise.race([networkRace, timeoutPromise]);
+    }
+
+    return requestPromise;
 }
 
 // Decodes Google Polyline Algorithm
@@ -564,12 +683,24 @@ export async function fetchScheduleForStop(routeId, stopIds) {
             schedule = await v3InFlight.schedules.get(cacheKey);
         } else {
             const promise = (async () => {
-                const schRes = await fetch(`${API_V3_BASE_URL}/routes/${routeId}/schedule?patternSuffix=${suffix}&locale=en`, {
-                    headers: { 'x-api-key': API_KEY },
-                    credentials: 'omit'
-                });
-                if (!schRes.ok) throw new Error(`Schedule fetch failed: ${schRes.status}`);
-                return await schRes.json();
+                try {
+                    // Use fetchWithCache for optimistic UI and fallback
+                    const scheduleData = await fetchWithCache(`${API_V3_BASE_URL}/routes/${routeId}/schedule?patternSuffix=${suffix}&locale=en`, {
+                        headers: { 'x-api-key': API_KEY },
+                        credentials: 'omit',
+                        useFastFail: true, // Race against 250ms timer
+                        retries: 3         // Retry in background
+                    });
+
+                    if (!scheduleData) {
+                        console.warn(`[V3] Schedule fetch returned empty/null`);
+                        return [];
+                    }
+                    return scheduleData;
+                } catch (e) {
+                    console.warn(`[V3] Schedule fetch network error`, e);
+                    return [];
+                }
             })();
 
             v3InFlight.schedules.set(cacheKey, promise);
