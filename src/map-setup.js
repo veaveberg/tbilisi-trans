@@ -199,12 +199,21 @@ geolocate.on('error', (e) => {
     const locateBtn = document.getElementById('locate-me');
     if (locateBtn) updateLocationIcon(locateBtn);
 
-    // 1. Silent rejection check (iOS / Unsecure context)
+    // 1. Silent rejection check (iOS / Safari / Unsecure context)
     if (!code && !message && timeSinceClick < 3000) {
         if (!isSecureContext()) {
-            alert('Location request failed. This app requires a secure (HTTPS) connection to access your location. If you are on GitHub Pages, ensure you use https://.');
+            alert('Location request failed. This app requires a secure (HTTPS) connection to access your location.');
         } else {
-            alert('Location request failed silently. This usually happens on iOS if "Location Services" are disabled in System Settings or if the connection is untrusted.');
+            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+
+            if (isSafari && isMac) {
+                alert('Location failed silently. On Mac Safari, please check: \n1. System Settings -> Privacy & Security -> Location Services (Enable for Safari)\n2. Safari Menu -> Settings for This Website -> Location (Set to Allow)');
+            } else if (isSafari) {
+                alert('Location failed silently. On iOS Safari, please check: \n1. Settings -> Privacy -> Location Services (Enable)\n2. Settings -> Safari -> Location (Set to Allow)');
+            } else {
+                alert('Location request failed silently. This usually happens if "Location Services" are disabled in System Settings or if the connection is untrusted.');
+            }
         }
         return;
     }

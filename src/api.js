@@ -793,6 +793,18 @@ async function fetchFromSmartSource(configFn, id, options = {}) {
 
     // Try sources in order
     for (const source of attemptOrder) {
+        // Strict Source Check:
+        // 1. If ID has a known prefix of ANOTHER source, skip this one.
+        const idPrefix = typeof id === 'string' && id.includes(':') ? id.split(':')[0] : (typeof id === 'string' && id.startsWith('r') ? 'r' : null);
+        if (idPrefix) {
+            const idSep = idPrefix === 'r' ? '' : ':';
+            const matchedSource = sources.find(s => s.prefix === idPrefix || s.stripPrefix === idPrefix + idSep);
+            if (matchedSource && matchedSource.id !== source.id) {
+                // console.log(`[SmartFetch] Skipping ${source.id} for ID ${id} (matches ${matchedSource.id})`);
+                continue;
+            }
+        }
+
         try {
             // Restore API ID (add 1:, remove r, etc)
             const apiId = restoreApiId(id, source);
