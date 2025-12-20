@@ -258,45 +258,40 @@ async function getStaticCache(sourceId, type) {
 
 async function fetchStaticFallback(endpoint) {
     try {
-        // console.log(`[Fallback] Attempting to load static data for ${endpoint}`);
         const urlObj = new URL(endpoint, 'http://dummy.com');
         const pathname = urlObj.pathname;
         const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
         const locale = urlObj.searchParams.get('locale') || 'en';
 
-        // Detect Source
-        const isRustavi = pathname.includes('rustavi') || endpoint.includes('rustavi');
+        const isRustavi = pathname.includes('rustavi') || endpoint.includes('rustavi') || endpoint.includes('/r');
         const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
         const sourceConfig = sources.find(s => s.id === sourceId);
-        // Note: Filenames might use stripped prefix? User said fallback data UNCHANGED.
-        // So tbilisi files are "tbilisi_stops...". Rustavi "rustavi_stops...".
-        // This logic is mostly about finding the right FILE.
 
-        // 1. Stop Routes
         const stopRoutesMatch = pathname.match(/\/stops\/([^\/]+)\/routes/);
         if (stopRoutesMatch) {
             const requestedStopId = decodeURIComponent(stopRoutesMatch[1]);
-            // requestedStopId is App ID (e.g. 801).
-            // Convert to Raw ID for file lookup (e.g. 1:801)
             const rawStopId = restoreApiId(requestedStopId, sourceConfig);
 
             try {
-                // Load localized routes file
                 const masterRoutesRes = await fetch(`${basePath}data/${sourceId}_routes_${locale}.json`);
                 if (!masterRoutesRes.ok) {
                     if (locale !== 'en') {
                         const fallbackEn = await fetch(`${basePath}data/${sourceId}_routes_en.json`);
                         if (fallbackEn.ok) {
                             const enRoutes = await fallbackEn.json();
-                            const filtered = enRoutes.filter(r => r.stops && r.stops.includes(rawStopId));
-                            return filtered.map(r => processRoute(r, sourceConfig));
+                            const res = enRoutes.filter(r => (r.stops && r.stops.includes(rawStopId)) || (r.stops && r.stops.includes(rawStopId.replace('1:', ''))))
+                                .map(r => processRoute(r, sourceConfig));
+                            res._sourceId = sourceId;
+                            return res;
                         }
                     }
                     throw new Error(`${sourceId} routes missing`);
                 }
                 const masterRoutes = await masterRoutesRes.json();
-                const filtered = masterRoutes.filter(r => r.stops && r.stops.includes(rawStopId));
-                return filtered.map(r => processRoute(r, sourceConfig));
+                const res = masterRoutes.filter(r => (r.stops && r.stops.includes(rawStopId)) || (r.stops && r.stops.includes(rawStopId.replace('1:', ''))))
+                    .map(r => processRoute(r, sourceConfig));
+                res._sourceId = sourceId;
+                return res;
 
             } catch (err) {
                 console.warn(`[Fallback] Failed to compute stop routes: ${err}`);
@@ -304,11 +299,9 @@ async function fetchStaticFallback(endpoint) {
             }
         }
 
-        // 2. Simple Files (Global Routes List, Global Stops List)
-        // Ensure we only match top-level /routes and /stops, not sub-resources like /routes/1/stops
         const parts = pathname.split('/').filter(Boolean);
         const lastPart = parts[parts.length - 1];
-        const isTopLevel = parts.length <= 3; // e.g. /api/v3/stops or /api/v3/routes
+        const isTopLevel = parts.length <= 3;
 
         if (lastPart === 'routes' && isTopLevel) {
             const res = await fetch(`${basePath}data/${sourceId}_routes_${locale}.json`);
@@ -316,13 +309,17 @@ async function fetchStaticFallback(endpoint) {
                 const enRes = await fetch(`${basePath}data/${sourceId}_routes_en.json`);
                 if (enRes.ok) {
                     const data = await enRes.json();
-                    return data.map(i => processRoute(i, sourceConfig));
+                    const result = data.map(i => processRoute(i, sourceConfig));
+                    result._sourceId = sourceId;
+                    return result;
                 }
                 return null;
             }
             if (res.ok) {
                 const data = await res.json();
-                return data.map(i => processRoute(i, sourceConfig));
+                const result = data.map(i => processRoute(i, sourceConfig));
+                result._sourceId = sourceId;
+                return result;
             }
             return null;
         }
@@ -333,51 +330,41 @@ async function fetchStaticFallback(endpoint) {
                 const enRes = await fetch(`${basePath}data/${sourceId}_stops_en.json`);
                 if (enRes.ok) {
                     const data = await enRes.json();
-                    return data.map(i => processStop(i, sourceConfig));
+                    const result = data.map(i => processStop(i, sourceConfig));
+                    result._sourceId = sourceId;
+                    return result;
                 }
                 return null;
             }
             if (res.ok) {
                 const data = await res.json();
-                return data.map(i => processStop(i, sourceConfig));
+                const result = data.map(i => processStop(i, sourceConfig));
+                result._sourceId = sourceId;
+                return result;
             }
             return null;
         }
 
-        // 3. Consolidated Files Lookup (Routes Details, Schedules, Polylines)
         const routeMatch = pathname.match(/\/routes\/([^\/]+)(?:(\/.*)|$)/);
         if (routeMatch) {
             const requestedRouteId = decodeURIComponent(routeMatch[1]);
             const rawRouteId = restoreApiId(requestedRouteId, sourceConfig);
             const subPath = routeMatch[2] || '';
 
-            // A. Schedule (Shared File)
             if (subPath.startsWith('/schedule')) {
                 const suffix = urlObj.searchParams.get('patternSuffix');
                 if (suffix) {
                     const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
                     const key = `${rawRouteId}_${safeSuffix}`;
                     const cache = await getStaticCache(sourceId, 'schedules');
-
-
-                    if (!cache) console.warn(`[Fallback Debug] Schedule Cache Missing for ${sourceId}`);
-                    else if (!cache[key]) {
-                        console.warn(`[Fallback Debug] Schedule Key Miss: ${key}. Sample Keys: ${Object.keys(cache).slice(0, 3).join(', ')}`);
-                    } else {
-                        console.log(`[Fallback Debug] Schedule Found for ${key}`);
+                    if (cache) {
+                        const lookup = cache[key] || cache[key.replace('1:', '')];
+                        return lookup || null;
                     }
-
-                    return cache && cache[key] ? cache[key] : null;
-                    // Schedule typically has Stop IDs inside.
-                    // If we need to process them, we should.
-                    // But V3 schedule object structure is complex. Leave for now or implement deeply?
-                    // Assuming V3 schedule logic in `fetchScheduleForStop` handles matching. 
-                    // `fetchScheduleForStop` uses `v3Cache` logic.
                 }
                 return [];
             }
 
-            // B. Polylines (Shared File)
             if (subPath.startsWith('/polylines')) {
                 const suffixesStr = urlObj.searchParams.get('patternSuffixes');
                 if (suffixesStr) {
@@ -389,8 +376,9 @@ async function fetchStaticFallback(endpoint) {
                         for (const suffix of suffixes) {
                             const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
                             const key = `${rawRouteId}_${safeSuffix}`;
-                            if (cache[key]) {
-                                Object.assign(result, cache[key]);
+                            const lookup = cache[key] || cache[key.replace('1:', '')];
+                            if (lookup) {
+                                Object.assign(result, lookup);
                                 foundAny = true;
                             }
                         }
@@ -399,47 +387,36 @@ async function fetchStaticFallback(endpoint) {
                 }
             }
 
-            // C. Stops of Patterns (Localized)
             if (subPath.startsWith('/stops-of-patterns')) {
                 const filename = `${sourceId}_routes_details_${locale}.json`;
-                // Use getStaticCache but ensure we pass filename if passing type, or handle in getStaticCache
-                // getStaticCache implementation uses `type` as filename if it ends in json.
                 const cache = await getStaticCache(sourceId, filename);
-
-                if (cache && cache[rawRouteId] && cache[rawRouteId]._stopsOfPatterns) {
-                    // _stopsOfPatterns is Map<Suffix, StopID[]> or Object?
-                    // Usually Object: { "0:01": ["1:801", ...] }
-                    // We need to process these IDs!
-                    const rawPatterns = cache[rawRouteId]._stopsOfPatterns;
-
-                    // NEW: Handle Array Format (Correct V3 Structure)
-                    if (Array.isArray(rawPatterns)) {
-                        console.log(`[Fallback Debug] Found Array Patterns for ${rawRouteId}. Items: ${rawPatterns.length}`);
-                        return rawPatterns.map(p => ({
-                            ...p,
-                            stop: processStop(p.stop, sourceConfig)
-                        }));
+                if (cache) {
+                    const rawIdNoPrefix = rawRouteId.replace('1:', '');
+                    const routeData = cache[rawRouteId] || cache[rawIdNoPrefix];
+                    if (routeData && routeData._stopsOfPatterns) {
+                        const rawPatterns = routeData._stopsOfPatterns;
+                        if (Array.isArray(rawPatterns)) {
+                            return rawPatterns.map(p => ({
+                                ...p,
+                                stop: processStop(p.stop, sourceConfig)
+                            }));
+                        }
+                        const processed = {};
+                        Object.keys(rawPatterns).forEach(key => {
+                            processed[key] = rawPatterns[key].map(sid => processId(sid, sourceConfig));
+                        });
+                        return processed;
                     }
-
-                    // OLD: Handle Map Format (Legacy Fallback)
-                    const processed = {};
-                    Object.keys(rawPatterns).forEach(key => {
-                        processed[key] = rawPatterns[key].map(sid => processId(sid, sourceConfig));
-                    });
-                    return processed;
-                } else {
-                    console.warn(`[Fallback Debug] Cache hit but missing _stopsOfPatterns for ${rawRouteId} (Cache keys: ${cache ? Object.keys(cache).length : 'null'})`);
                 }
                 return [];
             }
 
-            // C. Route Stops (Shared/Localized File) - Fallback if stops-of-patterns fails?
             if (subPath.startsWith('/stops')) {
                 const filename = `${sourceId}_routes_details_${locale}.json`;
                 const cache = await getStaticCache(sourceId, filename);
-
                 if (cache) {
-                    const routeData = cache[rawRouteId];
+                    const rawIdNoPrefix = rawRouteId.replace('1:', '');
+                    const routeData = cache[rawRouteId] || cache[rawIdNoPrefix];
                     if (routeData && routeData.stops) {
                         return routeData.stops.map(sid => processId(sid, sourceConfig));
                     }
@@ -447,18 +424,20 @@ async function fetchStaticFallback(endpoint) {
                 return [];
             }
 
-            // D. Route Details (Localized)
             if (!subPath || subPath === '/') {
                 const filename = `${sourceId}_routes_details_${locale}.json`;
                 const cache = await getStaticCache(sourceId, filename);
-
-                if (cache && cache[rawRouteId]) {
-                    return processRoute(cache[rawRouteId], sourceConfig);
+                if (cache) {
+                    const rawIdNoPrefix = rawRouteId.replace('1:', '');
+                    const routeData = cache[rawRouteId] || cache[rawIdNoPrefix];
+                    if (routeData) {
+                        return processRoute(routeData, sourceConfig);
+                    }
                 }
                 return null;
             }
+            return null;
         }
-
         return null;
     } catch (e) {
         console.warn(`[Fallback] Failed to load static data: ${e.message}`);
@@ -608,7 +587,8 @@ export function processId(id, source) {
     // 2. Add source prefix (e.g. "r")
     if (source.prefix) {
         const sep = getSeparator(source);
-        if (!finalId.startsWith(source.prefix + sep)) {
+        const prefixMatch = source.prefix.toLowerCase() + sep;
+        if (!finalId.toLowerCase().startsWith(prefixMatch)) {
             finalId = source.prefix + sep + finalId;
         }
     }
@@ -621,8 +601,9 @@ function restoreApiId(id, source) {
     // 1. Remove source prefix
     if (source.prefix) {
         const sep = getSeparator(source);
-        if (apiId.startsWith(source.prefix + sep)) {
-            apiId = apiId.slice((source.prefix + sep).length);
+        const prefixMatch = source.prefix.toLowerCase() + sep;
+        if (apiId.toLowerCase().startsWith(prefixMatch)) {
+            apiId = apiId.slice(prefixMatch.length);
         }
     }
     // 2. Re-add internal prefix
@@ -787,7 +768,8 @@ async function fetchFromSmartSource(configFn, id, options = {}) {
     const explicitSource = sources.find(s => {
         if (!s.prefix) return false;
         const sep = getSeparator(s);
-        return typeof id === 'string' && id.startsWith(s.prefix + sep);
+        const prefixMatch = s.prefix.toLowerCase() + sep;
+        return typeof id === 'string' && id.toLowerCase().startsWith(prefixMatch);
     });
 
     if (explicitSource) {

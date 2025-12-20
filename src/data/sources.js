@@ -1,4 +1,4 @@
-const PROD_BASE = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+const PROD_BASE = import.meta.env.VITE_API_BASE_URL || (window.location.origin + import.meta.env.BASE_URL);
 
 export const sources = [
     {
