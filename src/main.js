@@ -1,20 +1,22 @@
 import './style.css';
 import mapboxgl from 'mapbox-gl';
 
-import stopBearings from './data/stop_bearings.json';
-// stopsConfig will be loaded dynamically
 import { Router } from './router.js';
 import * as api from './api.js';
-import * as metro from './metro.js'; // Import new module
-const { handleMetroStop } = metro; // Destructure for existing calls
+import { LoopUtils } from './loop-utils.js';
+import * as metro from './metro.js';
+const { handleMetroStop } = metro;
+import { map, setupMapControls, getMapHash, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, setupHoverHandlers, setupClickHandlers, setMapFocus } from './map-setup.js';
+import stopBearings from './data/stop_bearings.json';
 import { db } from './db.js';
-import { historyManager } from './history.js';
+import { historyManager, addToHistory, popHistory, clearHistory, updateBackButtons, peekHistory } from './history.js';
 import { hydrateRouteDetails } from './fetch.js';
+import { setupEditTools, getEditState, setEditPickMode } from './dev-tools.js';
 
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
 
-import { map, getMapHash, setupMapControls } from './map-setup.js';
+
 import { initSettings, simplifyNumber, shouldShowRoute } from './settings.js';
 
 // --- Global State Declarations (Hoisted) ---
@@ -23,12 +25,13 @@ let allStops = [];
 let rawStops = [];
 let allRoutes = [];
 let stopToRoutesMap = new Map();
+const hydratedStops = new Set();
 let lastRouteUpdateId = 0;
 const redirectMap = new Map();
 const hubMap = new Map();
 const hubSourcesMap = new Map();
 const mergeSourcesMap = new Map();
-let editState = null;
+
 let busUpdateInterval = null;
 // State declarations
 
@@ -40,8 +43,10 @@ initSettings({
             // If we have cached lastArrivals, re-render
             if (window.lastArrivals) {
                 renderArrivals(window.lastArrivals, window.currentStopId);
-                if (window.lastRoutes) renderAllRoutes(window.lastRoutes, window.lastArrivals);
             }
+        }
+        if (filterManager) {
+            filterManager.recalculateFilter(window.currentStopId, window.lastArrivals, window.lastRoutes);
         }
     }
 });
@@ -59,29 +64,15 @@ let isRouterLogicExecuted = false;
 function onRoutesLoaded(data) {
     if (!data) return;
     allRoutes = data; // Always update global data
+    applyRouteOverrides(); // Apply overrides immediately after loading
 
     if (isRouterLogicExecuted) return; // Only run initial routing once
     isRouterLogicExecuted = true;
 
     console.log('[Init] Router Logic Executing with', data.length, 'routes');
 
-    // 1. Nested Route (Stop + Bus)
-    if (initialState.type === 'nested' && initialState.stopId && initialState.shortName) {
-        window.currentStopId = initialState.stopId;
-        const execute = () => {
-            showStopInfo({ id: initialState.stopId }, true, false, false).then(() => {
-                api.fetchV3Routes().then(() => {
-                    const routeObj = allRoutes.find(r => String(r.shortName) === String(initialState.shortName));
-                    if (routeObj) {
-                        showRouteOnMap(routeObj, true, { initialDirectionIndex: initialState.direction });
-                    }
-                });
-            });
-        };
-        if (map.loaded()) execute(); else map.once('load', execute);
-    }
     // 2. Direct Route (Bus only)
-    else if (initialState.type === 'route' && initialState.shortName) {
+    if (initialState.type === 'route' && initialState.shortName) {
         const execute = () => {
             api.fetchV3Routes().then(() => {
                 const routeObj = allRoutes.find(r => String(r.shortName) === String(initialState.shortName));
@@ -92,28 +83,16 @@ function onRoutesLoaded(data) {
         };
         if (map.loaded()) execute(); else map.once('load', execute);
     }
-    // 3. Stop Only / Filter / Other (Delegated to handleDeepLinks)
-    // We only handle simple stop loads here if they are NOT filtered?
-    // Actually, `handleDeepLinks` is much more robust for Stop logic.
-    // Let's remove the duplicated Stop block here and call `handleDeepLinks` explicitly
-    // OR ensure `handleDeepLinks` is called effectively.
-    // But `handleDeepLinks` is currently called in `initializeMapData` (setupSearch callback).
-    // Let's trust `handleDeepLinks` to handle the Stop case and remove it from here to avoid race/reset.
 
+    // 3. Stop / Nested / Filter (Delegated to handleDeepLinks)
+    // We delegate all stop-based logic to handleDeepLinks to ensure redirects (merged stops) are processed correctly.
     else if (initialState.stopId) {
-        // Delegating to handleDeepLinks which handles filters correctly.
-        // However, we need to ensure handleDeepLinks is called or triggered.
-        // Currently it's called in setupSearch -> onRouteSelect? No.
-        // It's called in `initializeMapData` at line ~332?
-        // Let's check line 332.
-
-        // If I remove this block, `onRoutesLoaded` won't trigger the stop view.
-        // I should call `handleDeepLinks` here instead.
         handleDeepLinks();
     }
 }
 
 // 1. Fast Load (Cache/Static) - Instant UI
+const staticPreloadPromise = api.preloadStaticRoutesDetails(); // Preload for filtering
 api.fetchRoutes({ strategy: 'cache-only' }).then(onRoutesLoaded);
 
 // 2. Fresh Load (Network) - Updates Data/UI
@@ -161,46 +140,7 @@ function getEquivalentStops(id, includeHubs = true) {
 }
 
 // --- Navigation History ---
-const historyStack = [];
-
-function addToHistory(type, data) {
-    // Don't add if it's the same as the current top
-    const top = historyStack[historyStack.length - 1];
-    if (top && top.type === type && top.data.id === data.id) return;
-
-    historyStack.push({ type, data });
-    updateBackButtons();
-    // Save to Recent Cards history (separately from Search History)
-    historyManager.addCard({ type, id: data.id, data });
-}
-
-function popHistory() {
-    if (historyStack.length <= 1) return null;
-    historyStack.pop(); // Remove current
-    return historyStack[historyStack.length - 1]; // Return previous
-}
-
-function clearHistory() {
-    historyStack.length = 0;
-    updateBackButtons();
-}
-
-function updateBackButtons() {
-    const hasHistory = historyStack.length > 1;
-    const backPanel = document.getElementById('back-panel');
-    const backRoute = document.getElementById('back-route-info');
-
-    if (backPanel) backPanel.classList.toggle('hidden', !hasHistory);
-    if (backRoute) backRoute.classList.toggle('hidden', !hasHistory);
-}
-
-function closeAllPanels() {
-    document.getElementById('info-panel').classList.add('hidden');
-    document.getElementById('route-info').classList.add('hidden');
-    document.getElementById('back-panel').classList.add('hidden');
-    document.getElementById('back-route-info').classList.add('hidden');
-    // Ensure start screen or map checks? usually handled by caller
-}
+// Moved to history.js
 
 function handleBack() {
     const previous = popHistory();
@@ -233,7 +173,7 @@ function handleBack() {
 }
 
 // --- Filter Manager ---
-import { FilterManager } from './filter-manager.js';
+import { FilterManager, generatePathSignature } from './filter-manager.js';
 
 let filterManager;
 
@@ -245,8 +185,18 @@ const dataProvider = {
     getHubSourcesMap: () => hubSourcesMap,
     getMergeSourcesMap: () => mergeSourcesMap,
     getStopToRoutesMap: () => stopToRoutesMap,
-    getEditState: () => editState
+    getHydratedStops: () => hydratedStops,
+    getEditState: getEditState
 };
+
+const ALL_STOP_LAYERS = [
+    'stops-layer',
+    'stops-layer-circle',
+    'stops-layer-hit-target',
+    'metro-layer-circle',
+    'metro-layer-label',
+    'metro-transfer-layer'
+];
 
 const uiCallbacks = {
     renderArrivals,
@@ -254,15 +204,39 @@ const uiCallbacks = {
     setSheetState,
     updateConnectionLine,
     showStopInfo,
-    getCircleRadiusExpression // Assuming we can use the local one or move it. Wait, getCircleRadiusExpression is defined locally. I should export it or move it or duplicate it.
-    // It's defined at line ~4400. Let's find it. For now, I'll assume we can pass a wrapper.
+    getCircleRadiusExpression: (scale) => getCircleRadiusExpression(scale)
 };
-// Wrapper for getCircleRadiusExpression if it's a function declaration
-uiCallbacks.getCircleRadiusExpression = (scale) => getCircleRadiusExpression(scale);
 
 // Lazy Init to ensure Map is ready? Or just init immediately.
 // Map is imported. Router is imported.
 filterManager = new FilterManager({ map, router: Router, dataProvider, uiCallbacks });
+
+// Initialize Hover Handlers
+setupHoverHandlers({
+    ALL_STOP_LAYERS,
+    setFilterOpacity: (dim) => {
+        const opacity = dim ? 0.3 : 0.8;
+        if (map.getLayer('filter-connection-line')) {
+            map.setPaintProperty('filter-connection-line', 'line-opacity', opacity);
+        }
+        const style = map.getStyle();
+        if (style && style.layers) {
+            style.layers.forEach(l => {
+                if (l.id.startsWith('filter-connection-')) {
+                    map.setPaintProperty(l.id, 'line-opacity', opacity);
+                }
+            });
+        }
+    }
+});
+
+// Initialize Click Handlers
+setupClickHandlers({
+    ALL_STOP_LAYERS,
+    filterManager,
+    showStopInfo,
+    applyFilter: (targetId) => filterManager.applyFilter(targetId, window.currentStopId, window.lastArrivals, window.lastRoutes)
+});
 
 // Forwarding functions for UI event handlers
 window.toggleFilterMode = () => filterManager.toggleFilterMode(window.currentStopId, window.isPickModeActive, setEditPickMode);
@@ -270,7 +244,12 @@ window.applyFilter = (targetId) => filterManager.applyFilter(targetId, window.cu
 window.clearFilter = () => filterManager.clearFilter(window.currentStopId);
 
 import { RouteFilterColorManager } from './color-manager.js';
+
 import { setupSearch } from './search.js';
+import { ThemeManager } from './theme.js';
+
+// Global Theme Manager
+let themeManager;
 
 // Legacy function cleanup
 // toggleFilterMode, updateMapFilterState, ensureLazyRoutesForStop, refreshRouteFilter, applyFilter, clearFilter 
@@ -304,12 +283,15 @@ async function initializeMapData(stopsData, routesData) {
     rawStops = stopsData;
     allRoutes = routesData;
     window.allStops = allStops; // Debug support
+    applyRouteOverrides(); // Ensure overrides are applied to fresh data
+
 
     // 2. Config & Layers (Populates allStops from rawStops)
     await refreshStopsLayer();
 
     // 3. Index Routes (Clear and Rebuild)
     stopToRoutesMap.clear();
+    hydratedStops.clear();
     allRoutes.forEach(route => {
         if (route.stops) {
             route.stops.forEach(stopId => {
@@ -335,8 +317,7 @@ async function initializeMapData(stopsData, routesData) {
     }
 
     // 5. Map Visuals
-    addStopsToMap(allStops);
-
+    addStopsToMap(allStops, { redirectMap, filterManager, updateConnectionLine });
     if (!areImagesLoaded) {
         await loadImages(map);
         areImagesLoaded = true;
@@ -346,7 +327,6 @@ async function initializeMapData(stopsData, routesData) {
     document.body.classList.remove('loading');
     setTimeout(() => {
         map.resize();
-        // Restore Focus State (Dimming) if we have an active stop
         // This fixes the issue where "Fresh Load" resets the layer styles, undoing deep link dimming.
         if (window.currentStopId) {
             setMapFocus(true);
@@ -355,15 +335,17 @@ async function initializeMapData(stopsData, routesData) {
 
     // 7. Router / Deep Links
     if (!isDeepLinkHandled) {
-        handleDeepLinks();
-        isDeepLinkHandled = true;
+        const success = await handleDeepLinks();
+        if (success) {
+            isDeepLinkHandled = true;
 
-        Router.onPopState = (state) => {
-            if (state.stopId) {
-                // ... (Router logic handled by handleDeepLinks essentially or showStopInfo)
-                // Actually handleDeepLinks is one-off. Router listeners handle subsequent.
-            }
-        };
+            Router.onPopState = (state) => {
+                if (state.stopId) {
+                    // ... (Router logic handled by handleDeepLinks essentially or showStopInfo)
+                    // Actually handleDeepLinks is one-off. Router listeners handle subsequent.
+                }
+            };
+        }
     } else {
         // Deep link already handled (e.g. by Fast Load).
         // If we just reloaded fresh data, we MUST re-apply the filter to the new objects.
@@ -379,29 +361,9 @@ async function initializeMapData(stopsData, routesData) {
 
 
 
-// Load Bus Icon (Simple Arrow)
-const arrowImage = new Image(24, 24);
-const arrowSvg = `
-            <svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2L4.5 20.29L5.21 21L12 18L18.79 21L19.5 20.29L12 2Z" fill="#ef4444" />
-            </svg>`;
-arrowImage.onload = () => {
-    if (!map.hasImage('bus-arrow')) map.addImage('bus-arrow', arrowImage, { sdf: true });
-};
-arrowImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(arrowSvg);
-
-// Load Transfer Station Icon (Half Red / Half Green)
-const transferSvg = `
-        <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="16" cy="16" r="14" fill="#ef4444" /> <!--Red Base-->
-        <path d="M16 2 A14 14 0 0 1 16 30 L16 2 Z" fill="#22c55e" /> <!--Green Right Half-->
-        <circle cx="16" cy="16" r="14" fill="none" stroke="white" stroke-width="4"/> <!--White border to match others-->
-    </svg > `;
-const transferImage = new Image(32, 32);
-transferImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(transferSvg);
-transferImage.onload = () => {
-    if (!map.hasImage('station-transfer')) map.addImage('station-transfer', transferImage);
-};
+// Image Loading Function
+// Render at 3x resolution for crispness on Retina/High-DPI screens
+// Image Loading Function Moved to map-setup.js
 
 map.on('load', () => {
     // Selected Stop Source
@@ -477,7 +439,6 @@ map.on('load', async () => {
                 api.fetchStops(),
                 api.fetchRoutes()
             ]);
-
             console.log(`[Fresh Load] Result - Stops: ${stops ? stops.length : 'MISSING'}, Routes: ${routes ? routes.length : 'MISSING'}`);
 
             console.log('[Map] Loading FRESH data...');
@@ -487,7 +448,146 @@ map.on('load', async () => {
 
     await loadFast();
     loadFresh();
+
+    // Initialize Theme Manager (After Map Load)
+    themeManager = new ThemeManager(map);
+    themeManager.init();
+
+    // Listen for Manual Changes from Settings
+    window.addEventListener('manualThemeChange', (e) => {
+        const newTheme = e.detail;
+        console.log('[Theme] Manual Switch:', newTheme);
+        themeManager.setTheme(newTheme);
+    });
 });
+
+// ---// Theme Switching Listener
+window.addEventListener('themeChanged', (e) => {
+    const { theme, style, lightPreset } = e.detail;
+    console.log(`[Theme] Manual Switch: ${theme} (Preset: ${lightPreset})`);
+
+    // Smart Update for Mapbox Standard
+    const currentStyle = map.getStyle();
+
+    // Check if we are already using standard style
+    // Robust check: Check if current style is 'standard' OR has 'basemap' config
+    // Note: getStyle().name might be 'Standard' or URL might match.
+    // Simpler: Check if we are targeting 'standard' and we assume we are already on 'standard' due to map-setup config.
+    // But initially we might load it via URL.
+
+    // Update Custom Label Colors (Metro, etc.)
+    // We defer this slightly to ensure standard colors apply first if needed
+    setTimeout(() => updateMapTheme(), 50);
+
+    const refreshUI = () => {
+        setTimeout(() => {
+            const stopPanelVisible = !document.getElementById('info-panel').classList.contains('hidden');
+            const routePanelVisible = !document.getElementById('route-info').classList.contains('hidden');
+
+            if (window.currentStopId && window.lastArrivals && stopPanelVisible) {
+                renderArrivals(window.lastArrivals, window.currentStopId);
+            }
+            if (window.currentRoute && routePanelVisible) {
+                updateRouteView(window.currentRoute, { suppressPanel: true });
+            }
+        }, 100);
+    };
+
+    // Dynamic Config Update (Seamless)
+    if (style.includes('standard') && map.setFog && map.setConfigProperty) {
+        try {
+            map.setConfigProperty('basemap', 'lightPreset', lightPreset);
+            console.log(`[Theme] Updated lightPreset to ${lightPreset}`);
+            refreshUI();
+            return; // SUCCESS - No layer reload needed
+        } catch (err) {
+            console.warn('[Theme] Config update failed (not standard style?), falling back to setStyle:', err);
+        }
+    }
+
+    // Fallback: Full Style Reload (Destructive)
+    console.log(`[Theme] Switching Map Style to: ${style}`);
+    map.setStyle(style);
+
+    // Wait for style.load to restore layers
+    map.once('style.load', () => {
+        console.log('[Theme] Style loaded. Restoring layers...');
+        // If we switched TO standard, we should apply preset now
+        if (style.includes('standard') && map.setConfigProperty) {
+            try {
+                map.setConfigProperty('basemap', 'lightPreset', lightPreset);
+            } catch (e) { console.warn('Failed to set preset after load', e); }
+        }
+
+        restoreMapLayers();
+        refreshUI();
+    });
+});
+
+function restoreMapLayers() {
+    // 1. Restore Images
+    // Ensure we await this or handle it synchronously if possible, but loadImages is async
+    // Since we are inside an event handler, we can just fire it.
+    loadImages(map).then(() => {
+        // Redraw layers if needed, but addStopsToMap usually handles source/layer adding.
+        // If layers are added before images, they might be blank until images load.
+        // Mapbox handles this gracefully usually.
+    });
+
+    // 2. Restore Stops & Routes Layers
+    if (window.allStops) {
+        addStopsToMap(window.allStops, { redirectMap, filterManager, updateConnectionLine });
+    }
+
+    // 2.5 Ensure Selected Stop Source & Layer Exist (Critical for Style Reload)
+    if (!map.getSource('selected-stop')) {
+        map.addSource('selected-stop', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+    }
+    // Layer is added by addStopsToMap now? No, we need to ensure it's added.
+    // Actually, addStopsToMap should handle all static layers including highlight for consistency.
+    // Let's modify addStopsToMap to include it, so we don't duplicate logic.
+    // But for now, ensuring source exists here is safe.
+
+
+    // 3. Restore Active Route (Only if actually active/open)
+    if (currentRoute) {
+        console.log('[Restore] Re-plotting active route:', currentRoute.shortName);
+        // Suppress panel if we have an active stop (Nested view) 
+        // OR if we just want to restore the map lines without altering UI state too much
+        const hasActiveStop = !!window.currentStopId;
+        showRouteOnMap(currentRoute, false, { preserveBounds: true, suppressPanel: hasActiveStop });
+    }
+
+    // 4. Restore Active Stop Selection & Focus
+    if (window.currentStopId) {
+        console.log('[Restore] Restoring active stop selection:', window.currentStopId);
+
+        // Restore Destination Markers if active filter
+        if (filterManager.state.active && filterManager.state.targetIds.size > 0) {
+            filterManager.refreshRouteFilter(window.currentStopId);
+        }
+
+        // Restore Selection Highlight
+        const stop = allStops.find(s => s.id === window.currentStopId);
+        if (stop && map.getSource('selected-stop')) {
+            map.getSource('selected-stop').setData({
+                type: 'FeatureCollection',
+                features: [{
+                    type: 'Feature',
+                    geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
+                    properties: { ...stop, mode: stop.vehicleMode || 'BUS' }
+                }]
+            });
+        }
+
+        // Restore Dimming/Focus
+        // Wait for layers to settle? No, we just added them.
+        setMapFocus(true);
+    }
+}
 
 // Modify fetchWithCache to use db
 // API Functions Moved to api.js
@@ -495,16 +595,7 @@ map.on('load', async () => {
 
 
 
-// Helper for Circle Radius Logic
-function getCircleRadiusExpression(scale = 1) {
-    return [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        12.5, 1.2 * scale,
-        16, 4.8 * scale
-    ];
-}
+
 
 const GREEN_LINE_STOPS = [
     'State University', 'Vazha-Pshavela', 'Vazha Pshavela', 'Delisi', 'Medical University', 'Technical University', 'Tsereteli', 'Station Square 2'
@@ -515,8 +606,19 @@ async function handleDeepLinks() {
     const state = Router.parse();
     if (state.stopId) {
         const rawStopId = state.stopId;
-        const normStopId = redirectMap.get(rawStopId) || rawStopId;
-        const stop = allStops.find(s => String(s.id) === String(normStopId));
+        // Router might force '1:' prefix for nested routes, but internal IDs might be '3955'
+        const cleanId = String(rawStopId).replace(/^1:/, '');
+
+        // Check Redirects for both forms
+        const normStopId = redirectMap.get(rawStopId) || redirectMap.get(cleanId) || rawStopId;
+
+        // Try finding stop with normalized ID, raw ID, or clean ID
+        // This ensures we catch '1:3955' -> '3955' mismatches
+        const stop = allStops.find(s =>
+            String(s.id) === String(normStopId) ||
+            String(s.id) === String(cleanId) ||
+            String(s.id) === String(rawStopId)
+        );
 
         console.log(`[DeepLink] Processing Stop: ${rawStopId} -> ${normStopId}. Found=${!!stop}`);
         if (stop) {
@@ -545,507 +647,63 @@ async function handleDeepLinks() {
                 // 4. Update UI Button State
                 const filterBtn = document.getElementById('filter-routes-toggle');
                 if (filterBtn) filterBtn.classList.add('active');
-                if (filterBtn) filterBtn.classList.add('active');
             } else {
                 // Standard Stop View
-                // Pass updateURL=false because the URL is already correct (deep link)
-                // Wait, if it's a deep link /stop123, showing it won't change URL?
-                // But showStopInfo might try to pushState. 
-                // We typically want to respect the current URL.
-                showStopInfo(stop, false, true, false);
+                // addToStack=true: Ensure Stop is in internal history so "Back" works
+                // updateURL=false: Deep link URL is already set, don't overwrite yet
+                await showStopInfo(stop, true, true, false);
             }
+
+            // Handle Nested Route (Bus) found in URL
+            if (state.shortName) {
+                // Fetch V3 routes and ensure we wait for it
+                // We use 'await' here to ensure the Route UI triggers after Stop UI is ready
+                // but since api.fetchV3Routes is async, we can just chain it.
+                // Note: showRouteOnMap is async too.
+                try {
+                    await api.fetchV3Routes();
+                    const route = allRoutes.find(r => String(r.shortName) === String(state.shortName));
+                    if (route) {
+                        // Fix for Zoom Out issue:
+                        // showStopInfo uses flyTo, so map.getZoom() immediately after is unstable (still zooming).
+                        // We must explicitly tell showRouteOnMap what the "previous" (Stop) zoom was intended to be (16 or higher).
+                        const intendedStopZoom = map.getZoom() > 16 ? map.getZoom() : 16;
+
+                        // Show Route
+                        // addToStack=true: Add Route to history (Stop -> Route)
+                        // fromStopId: Helps with potential context/animations
+                        await showRouteOnMap(route, true, {
+                            initialDirectionIndex: state.direction,
+                            fromStopId: stop.id,
+                            startZoom: intendedStopZoom // Pass intended zoom for history
+                        });
+                    } else {
+                        console.warn(`[DeepLink] Route ${state.shortName} not found in allRoutes.`);
+                    }
+                } catch (e) {
+                    console.error('[DeepLink] Failed to load nested route:', e);
+                }
+            }
+            return true; // Successfully handled
         } else {
             console.warn(`[DeepLink] Stop ${state.stopId} not found in data.`);
+            return false; // Failed to find stop (retry later?)
         }
     }
     // Note: Route deep links are handled by onRoutesLoaded logic
+    return true; // Nothing to handle
 }
 
-function addStopsToMap(stops) {
-    // Cleanup existing layers/sources if they exist (idempotency)
-    const layers = ['metro-layer-label', 'metro-layer-circle', 'metro-transfer-layer', 'metro-lines-layer', 'stops-layer', 'stops-layer-circle', 'stops-label-selected'];
-    const sources = ['metro-stops', 'metro-lines-manual', 'stops'];
-
-    layers.forEach(id => {
-        if (map.getLayer(id)) map.removeLayer(id);
-    });
-    sources.forEach(id => {
-        if (map.getSource(id)) map.removeSource(id);
-    });
-
-    // --- Process Metro Stops ---
-    const { busStops, metroFeatures } = metro.processMetroStops(stops, stopBearings);
-    const metroLines = metro.generateMetroLines(metroFeatures);
 
 
-
-    // 1. Bus Source & Layer (Existing code follows...)
-
-
-    // 1. Bus Source & Layer
-    if (!map.getSource('stops')) {
-        map.addSource('stops', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: busStops },
-            cluster: false
-        });
-    }
-
-    // 2. Bus Layers (Split for smooth scaling)
-
-    // Layer A: Small Circles (Zoom < 16)
-    if (!map.getLayer('stops-layer-circle')) {
-        map.addLayer({
-            id: 'stops-layer-circle',
-            type: 'circle',
-            source: 'stops',
-            maxzoom: 16, // Visible until 16, then switches to icons
-            paint: {
-                'circle-color': '#000000',
-                'circle-stroke-color': '#ffffff',
-                'circle-stroke-width': 2.1, // Increased by 40% (1.5 * 1.4)
-                'circle-radius': getCircleRadiusExpression(1),
-                'circle-opacity': 1
-            }
-        });
-    }
-
-    // Layer B: Icons (Zoom >= 16)
-    if (!map.getLayer('stops-layer')) {
-        map.addLayer({
-            id: 'stops-layer',
-            type: 'symbol',
-            source: 'stops',
-            minzoom: 16, // Only visible when zoomed in
-            layout: {
-                'icon-allow-overlap': true,
-                'icon-ignore-placement': true,
-                'symbol-z-order': 'source',
-                'icon-image': [
-                    'case',
-                    ['==', ['get', 'bearing'], 0],
-                    'stop-icon',      // Bearing 0 -> Circle
-                    'stop-close-up-icon' // Bearing !0 -> Directional
-                ],
-                // Fixed size at zoom 16+ (or slight scaling if desired, but request implies parity)
-                'icon-size': [
-                    'interpolate',
-                    ['linear'],
-                    ['zoom'],
-                    // Unified size for both circle (bearing 0) and directional icons to prevent unevenness
-                    16, 0.6,
-                    18, 0.8
-                ],
-                // Rotation Logic
-                'icon-rotate': ['get', 'bearing'],
-                'icon-rotation-alignment': 'map'
-            },
-            paint: {
-                'icon-opacity': 1
-            }
-        });
-    }
-
-    // Filter Connection Line Layer (Below stops, above routes?)
-    if (!map.getSource('filter-connection')) {
-        map.addSource('filter-connection', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: [] }
-        });
-    }
-    if (!map.getLayer('filter-connection-line')) {
-        map.addLayer({
-            id: 'filter-connection-line',
-            type: 'line',
-            source: 'filter-connection',
-            layout: {
-                'line-join': 'round',
-                'line-cap': 'round'
-            },
-            paint: {
-                'line-color': '#2563eb', // Default blue, updated dynamically
-                'line-width': 4,
-                'line-opacity': 0.8
-            }
-        });
-        // Move below stops
-        if (map.getLayer('stops-layer')) {
-            map.moveLayer('filter-connection-line', 'stops-layer');
-        }
-    }
-
-    // Hover Effect for Connection Line
-    const hoverLayers = ['stops-layer', 'stops-layer-circle'];
-    hoverLayers.forEach(layerId => {
-        map.on('mousemove', layerId, (e) => {
-            if (filterManager.state.picking) {
-                let selectedFeature = null;
-
-                // Loop through ALL features at this point to find a selectable one (handle z-overlap)
-                for (const f of e.features) {
-                    const p = f.properties;
-                    const normId = redirectMap.get(p.id) || p.id;
-
-                    // Exclude Origin, but allow any reachable/highlighted
-                    // Actually hover effect logic: we want to draw line to POTENTIAL target.
-                    // Usually we only draw to reachable stops.
-                    if (filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId)) {
-                        selectedFeature = f;
-                        break;
-                    }
-                }
-
-                if (selectedFeature) {
-                    // Pass Current Selection + Hover ID
-                    updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, true, selectedFeature.properties.id);
-                }
-            }
-        });
-
-        map.on('mouseleave', layerId, () => {
-            if (filterManager.state.picking) {
-                // Revert to just the selected lines (remove hover line)
-                // Pass false for isHover
-                updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
-            }
-        });
-    });
-
-    // 2. Add Metro Layers
-    metro.addMetroLayers(map, metroFeatures, metroLines);
-
-    // 4. Labels for Selected Filter Stops (New)
-    // Initially empty filter, populated by updateMapFilterState
-    if (!map.getLayer('stops-label-selected')) {
-        map.addLayer({
-            id: 'stops-label-selected',
-            type: 'symbol',
-            source: 'stops',
-            filter: ['in', ['get', 'id'], ['literal', []]], // Default empty
-            layout: {
-                'text-field': ['get', 'name'],
-                'text-size': 12,
-                'text-offset': [0, 1.2],
-                'text-anchor': 'top',
-                'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'], // Standard mapbox fonts
-                'text-allow-overlap': false
-            },
-            paint: {
-                'text-color': '#000000',
-                'text-halo-color': '#ffffff',
-                'text-halo-width': 2
-            }
-        });
-    }
-
-
-    // Ensure correct Layer Order (Z-Index)
-    // 1. Metro Lines (Bottom)
-    if (map.getLayer('metro-lines-layer') && map.getLayer('stops-layer')) {
-        map.moveLayer('metro-lines-layer', 'stops-layer');
-    }
-    // 2. Stops (Normal)
-    // 3. Highlight (Top)
-    if (map.getLayer('stops-highlight')) {
-        map.moveLayer('stops-highlight');
-    }
-}
-
-// Handle clicks
-map.on('click', 'stops-layer', async (e) => {
-    // Check Click Lock
-    if (window.ignoreMapClicks || window.isPickModeActive) {
-        console.log('[Debug] Map Click Ignored (Lock Active or Pick Mode)');
-        return;
-    }
-
-    const props = e.features[0].properties;
-
-    // FILTER PICKING MODE
-    if (filterManager.state.picking) {
-        let selectedFeature = null;
-
-        // Loop through ALL features at this point to find a selectable one (handle z-overlap)
-        for (const f of e.features) {
-            const p = f.properties;
-            const normId = redirectMap.get(p.id) || p.id;
-            // Exclude originId from being selectable in filter mode
-            const isSelectable = filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId);
-            if (isSelectable) {
-                selectedFeature = f;
-                break;
-            }
-        }
-
-        if (selectedFeature) {
-            applyFilter(selectedFeature.properties.id);
-        } else {
-            shakeFilterButton();
-        }
-        return;
-    }
-
-    // Prevent Bus click if Metro is top-most (UNLESS in Filter Picking Mode)
-    const metroFeatures = map.queryRenderedFeatures(e.point, { layers: ['metro-layer-circle', 'metro-layer-label', 'metro-transfer-layer'] });
-    if (metroFeatures.length > 0 && !filterManager.state.picking) {
-        console.log('[Debug] Click hit Bus Stop but Metro is present. Ignoring Bus handler.');
-        return;
-    }
-
-    const coordinates = e.features[0].geometry.coordinates.slice();
-
-    // Keep global track of selected stop ID
-    window.currentStopId = props.id;
-    if (window.selectDevStop) window.selectDevStop(props.id);
-
-    // Smart Zoom: Don't zoom out if already close
-    const currentZoom = map.getZoom();
-    const targetZoom = currentZoom > 16 ? currentZoom : 16;
-
-    // Inject coordinates into props for History/Back navigation usage
-    const stopData = { ...props, lat: coordinates[1], lon: coordinates[0] };
-
-    showStopInfo(stopData, true, true); // Use centralized flyTo with offset
+// Listen for Theme Changes
+window.addEventListener('manualThemeChange', () => {
+    if (map && map.getStyle()) updateMapTheme();
 });
 
-// Reuse same click logic for stops-layer-circle
-map.on('click', 'stops-layer-circle', async (e) => {
-    // Check Click Lock
-    if (window.ignoreMapClicks || window.isPickModeActive) {
-        return;
-    }
 
-    // Prevent Bus click if Metro is top-most (UNLESS in Filter Picking Mode)
-    const metroFeatures = map.queryRenderedFeatures(e.point, { layers: ['metro-layer-circle', 'metro-layer-label', 'metro-transfer-layer'] });
-    if (metroFeatures.length > 0 && !filterManager.state.picking) {
-        return;
-    }
 
-    const props = e.features[0].properties;
 
-    // Check if we hit a destination marker (priority)
-    if (map.getLayer('destination-markers-layer')) {
-        const destMarkers = map.queryRenderedFeatures(e.point, { layers: ['destination-markers-layer'] });
-        if (destMarkers.length > 0) return;
-    }
-
-    // FILTER PICKING MODE
-    if (filterManager.state.picking) {
-        let selectedFeature = null;
-        for (const f of e.features) {
-            const p = f.properties;
-            const normId = redirectMap.get(p.id) || p.id;
-            const isSelectable = filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId);
-            if (isSelectable) {
-                selectedFeature = f;
-                break;
-            }
-        }
-
-        if (selectedFeature) {
-            applyFilter(selectedFeature.properties.id);
-        } else {
-            shakeFilterButton();
-        }
-        return;
-    }
-
-    const coordinates = e.features[0].geometry.coordinates.slice();
-
-    window.currentStopId = props.id;
-    if (window.selectDevStop) window.selectDevStop(props.id);
-
-    const currentZoom = map.getZoom();
-    const targetZoom = currentZoom > 16 ? currentZoom : 16;
-
-    const stopData = { ...props, lat: coordinates[1], lon: coordinates[0] };
-    showStopInfo(stopData, true, true);
-});
-
-// Metro Click Handlers (Same logic as stops-layer)
-const metroLayers = ['metro-layer-circle', 'metro-layer-label', 'metro-transfer-layer'];
-metroLayers.forEach(layerId => {
-    map.on('click', layerId, async (e) => {
-        const props = e.features[0].properties;
-
-        // FILTER PICKING MODE
-        if (filterManager.state.picking) {
-            let selectedFeature = null;
-
-            // Loop through ALL features at this click point
-            for (const f of e.features) {
-                const p = f.properties;
-                const normId = redirectMap.get(p.id) || p.id;
-                // Exclude originId from being selectable in filter mode
-                const isSelectable = filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId);
-                if (isSelectable) {
-                    selectedFeature = f;
-                    break;
-                }
-            }
-
-            if (selectedFeature) {
-                applyFilter(selectedFeature.properties.id);
-            } else {
-                shakeFilterButton();
-            }
-            return;
-        }
-
-        const coordinates = e.features[0].geometry.coordinates.slice();
-
-        // Keep global track of selected stop ID
-        window.currentStopId = props.id;
-        if (window.selectDevStop) window.selectDevStop(props.id);
-
-        // Smart Zoom: Don't zoom out if already close
-        const currentZoom = map.getZoom();
-        const targetZoom = currentZoom > 16 ? currentZoom : 16;
-
-        const stopData = { ...props, lat: coordinates[1], lon: coordinates[0] };
-
-        showStopInfo(stopData, true, true);
-    });
-
-    // Add pointer cursor
-    map.on('mouseenter', layerId, (e) => {
-        if (filterManager.state.picking) {
-            const hasSelectable = e.features.some(f => {
-                const p = f.properties;
-                const normId = redirectMap.get(p.id) || p.id;
-                return filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId);
-            });
-            if (!hasSelectable) return;
-        }
-        map.getCanvas().style.cursor = 'pointer';
-    });
-    map.on('mouseleave', layerId, () => {
-        map.getCanvas().style.cursor = '';
-    });
-});
-
-// Add pointer cursor for    // Hover Effect for Connection Line
-const hoverLayers = ['stops-layer', 'stops-layer-circle'];
-let lastHoveredStopId = null;
-let hoverTimeout = null;
-
-// Helper to dim/undim filter lines
-const setFilterOpacity = (dim) => {
-    const opacity = dim ? 0.3 : 0.8;
-    if (map.getLayer('filter-connection-line')) {
-        map.setPaintProperty('filter-connection-line', 'line-opacity', opacity);
-    }
-    // Also check for any other pattern matches if we add more dynamic layers later
-    const style = map.getStyle();
-    if (style && style.layers) {
-        style.layers.forEach(l => {
-            if (l.id.startsWith('filter-connection-')) {
-                map.setPaintProperty(l.id, 'line-opacity', opacity);
-            }
-        });
-    }
-};
-
-hoverLayers.forEach(layerId => {
-    map.on('mousemove', layerId, (e) => {
-        if (filterManager.state.picking) {
-            map.getCanvas().style.cursor = 'pointer';
-
-            // Cancel any pending reset from mouseleave
-            if (hoverTimeout) {
-                clearTimeout(hoverTimeout);
-                hoverTimeout = null;
-            }
-
-            let selectedFeature = null;
-            if (e.features.length > 0) {
-                selectedFeature = e.features[0];
-            }
-
-            if (selectedFeature) {
-                const props = selectedFeature.properties;
-                // Normalize ID for comparison (String vs Number safety)
-                // Use Group ID (Hub or Normalized) to prevent flickering between sibling stops
-                const rawId = props.id;
-                const normId = redirectMap.get(rawId) || rawId;
-                const groupId = hubMap.get(normId) || normId;
-                const currentStableId = String(groupId);
-
-                // Optimization: Only update if the hovered GROUP/STOP CHANGED
-                if (lastHoveredStopId === currentStableId) return;
-                lastHoveredStopId = currentStableId;
-
-                const hubEquivalents = getEquivalentStops(normId);
-
-                // Check if ANY of the equivalents is selected (Hub Logic)
-                let isSelected = false;
-                hubEquivalents.forEach(id => {
-                    if (filterManager.state.targetIds.has(id)) isSelected = true;
-                });
-
-                if (isSelected) {
-                    // DIM if already selected
-                    // MUST call updateConnectionLine FIRST (it resets opacity to 0.8)
-                    updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
-                    // THEN Dim
-                    setFilterOpacity(true);
-                } else {
-                    // STANDARD (Preview Select)
-                    updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, true, props.id);
-                    // Ensure full opacity
-                    setFilterOpacity(false);
-                }
-            }
-        } else {
-            map.getCanvas().style.cursor = 'pointer';
-            lastHoveredStopId = null;
-        }
-    });
-
-    map.on('mouseleave', layerId, () => {
-        map.getCanvas().style.cursor = '';
-
-        // Debounce to 100ms for safety against layer gaps/jitter
-        if (hoverTimeout) clearTimeout(hoverTimeout);
-
-        hoverTimeout = setTimeout(() => {
-            // Check if we have effectively moved away
-            // NOTE: mousemove on another layer would have cleared this timeout & updated lastHoveredStopId
-
-            if (lastHoveredStopId !== null) {
-                lastHoveredStopId = null;
-
-                // Reset Opacity & Lines
-                updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
-                setFilterOpacity(false); // Ensure 0.8
-            }
-        }, 100);
-    });
-});
-
-// Helper: Shake Animation
-function shakeFilterButton() {
-    const btn = document.getElementById('filter-routes-toggle');
-    if (btn) {
-        btn.classList.remove('shake');
-        void btn.offsetWidth; // Force reflow
-        btn.classList.add('shake');
-    }
-}
-
-// Generic Map Click (Catch background clicks in Filter Mode)
-map.on('click', (e) => {
-    if (!filterManager.state.picking && !window.isPickModeActive) return;
-
-    // Check if we clicked a stop layer (stops or metro)
-    // Check if we clicked a stop layer (stops or metro)
-    const features = map.queryRenderedFeatures(e.point, { layers: ['stops-layer', 'stops-layer-circle', ...metroLayers] });
-
-    // If we didn't hit a stop layer, we hit background -> Shake
-    if (features.length === 0) {
-        shakeFilterButton();
-    }
-});
 
 
 // Handle touch/drag logic for panels
@@ -1075,6 +733,11 @@ function setupPanelDrag(panelId) {
         // Explicitly ignore Close Buttons
         if (target.closest('#close-panel') || target.closest('#close-route-info') || target.closest('.icon-btn')) {
             return;
+        }
+
+        // Allow Text Selection in Route Header (ignore drag start)
+        if (target.closest('#route-info-text') || target.closest('#route-info-number')) {
+            return; // Let browser handle selection
         }
 
         // Check if header or body
@@ -1317,60 +980,27 @@ map.on('moveend', () => {
 });
 
 
-// Helper: Dim background layers when focusing on a stop/route
-function setMapFocus(active) {
-    const opacity = active ? 0.4 : 1.0;
-
-    // Bus Stops
-    if (map.getLayer('stops-layer')) {
-        map.setPaintProperty('stops-layer', 'icon-opacity', opacity);
-    }
-
-    // Metro Layers
-    if (map.getLayer('metro-layer-circle')) {
-        map.setPaintProperty('metro-layer-circle', 'circle-opacity', opacity);
-        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', opacity);
-    }
-    if (map.getLayer('metro-layer-label')) {
-        map.setPaintProperty('metro-layer-label', 'text-opacity', opacity);
-    }
-    if (map.getLayer('metro-transfer-layer')) {
-        map.setPaintProperty('metro-transfer-layer', 'icon-opacity', opacity);
-        map.setPaintProperty('metro-transfer-layer', 'text-opacity', opacity);
-    }
-
-    if (map.getLayer('stops-label-selected')) {
-        map.setPaintProperty('stops-label-selected', 'text-opacity', opacity);
-    }
-
-    // Selected Stop Highlight - ALWAYS KEEP OPAQUE
-    if (map.getLayer('stops-highlight')) {
-        map.setPaintProperty('stops-highlight', 'icon-opacity', 1.0);
-    }
-}
-
 async function showStopInfo(stop, addToStack = true, flyToStop = false, updateURL = true) {
+    if (!stop) return;
+
+    if (stop.id) window.currentStopId = stop.id;
+
     // Enable Focus Mode (Dim others)
     setMapFocus(true);
 
     if (addToStack) addToHistory('stop', stop);
 
     // Sync URL (Router)
-    // Only update if it's a new stop or first load, and updateURL is true
-    // Sync URL (Router)
-    // Only update if it's a new stop or first load, and updateURL is true
     if (updateURL) {
         Router.updateStop(stop.id, filterManager.state.active, Array.from(filterManager.state.targetIds));
     }
 
     // Explicitly clean up any route layers when showing a stop
-    // This is crucial when coming "Back" from a route
     if (busUpdateInterval) clearInterval(busUpdateInterval);
 
-    // Robust Layer Cleanup: Remove any layer starting with route- or live-buses-
+    // Robust Layer Cleanup
     const style = map.getStyle();
     if (style && style.layers) {
-        // Collect IDs first
         const layersToRemove = style.layers
             .filter(layer => layer.id.startsWith('route') || layer.id.startsWith('live-buses'))
             .map(layer => layer.id);
@@ -1379,55 +1009,27 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
             if (map.getLayer(id)) map.removeLayer(id);
         });
     }
-    // Remove sources
+    // Set sources to empty collections instead of removing them, to avoid "source missing" errors
     ['route', 'route-stops', 'live-buses'].forEach(id => {
-        if (map.getSource(id)) map.removeSource(id);
+        if (map.getSource(id)) map.getSource(id).setData({ type: 'FeatureCollection', features: [] });
     });
 
-    // Highlight selected stop
-    // Highlight selected stop
     if (stop.id) {
-        // Restore Global State (Crucial for Back Button / State Restoration)
         window.currentStopId = stop.id;
         if (window.selectDevStop) window.selectDevStop(stop.id);
 
-        // Should we fetch the stop again to get coordinates if we don't have them?
-        // Usually 'stop' object has lat/lon if coming from cache/list.
         if (flyToStop && stop.lon && stop.lat) {
-            // Calculate offset to shift center upwards (account for bottom panel)
-            // Panel covers bottom ~40%, so we want to shift the visual center up by ~10% of screen height
-            // Reduced to 10% to avoid being too close to the top search bar
             const offsetY = -(window.innerHeight * 0.1);
-
-            // 1. Saved Persistence (Back Button)
-            if (stop.savedZoom) {
-                map.flyTo({
-                    center: [stop.lon, stop.lat],
-                    zoom: stop.savedZoom,
-                    offset: [0, offsetY]
-                });
-            }
-            // 2. Smart Zoom (Click)
-            else {
-                const currentZoom = map.getZoom();
-                const targetZoom = currentZoom > 16 ? currentZoom : 16;
-                map.flyTo({
-                    center: [stop.lon, stop.lat],
-                    zoom: targetZoom,
-                    offset: [0, offsetY]
-                });
-            }
+            const currentZoom = map.getZoom();
+            const targetZoom = stop.savedZoom || (currentZoom > 16 ? currentZoom : 16);
+            map.flyTo({
+                center: [stop.lon, stop.lat],
+                zoom: targetZoom,
+                offset: [0, offsetY]
+            });
         }
 
-        // Update highlight source
-        // We might not have the full feature if coming from history/cache depending on structure
-        console.log('[Debug] showStopInfo called for:', stop);
-
-
-
-
         if (stop.lon && stop.lat) {
-            console.log('[Debug] Updating selected-stop source with:', stop.lon, stop.lat);
             const feature = {
                 type: 'Feature',
                 geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
@@ -1438,28 +1040,16 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                     type: 'FeatureCollection',
                     features: [feature]
                 });
-
-
-
-                // Force highlight layers to top
-                if (map.getLayer('debug-selected-circle')) map.moveLayer('debug-selected-circle');
                 if (map.getLayer('stops-highlight')) map.moveLayer('stops-highlight');
-            } else {
-                console.warn('[Debug] Source selected-stop NOT found, waiting for map load...');
             }
         } else {
-            console.warn('[Debug] Stop missing coords, attempting fix:', stop);
-            // Attempt to retrieve from allStops again in case it was a skeletal object
             const refreshedStop = allStops.find(s => s.id === stop.id);
             if (refreshedStop && refreshedStop.lat) {
-                console.log('[Debug] Recovered stop coordinates from global list');
                 stop.lat = refreshedStop.lat;
                 stop.lon = refreshedStop.lon;
                 stop.name = refreshedStop.name;
-                // Recursive retry once
                 return showStopInfo(stop, addToStack, flyToStop, updateURL);
             }
-            // If still missing, maybe fetch? (Optional future improvement)
         }
     }
 
@@ -1467,47 +1057,26 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     const nameEl = document.getElementById('stop-name');
     const listEl = document.getElementById('arrivals-list');
 
-
-    // Close route info if open (exclusive panels)
-    // Close route info if open (exclusive panels)
     setSheetState(document.getElementById('route-info'), 'hidden');
-
     nameEl.textContent = stop.name || 'Unknown Stop';
 
-    panel.classList.remove('metro-mode'); // Reset mode
+    panel.classList.remove('metro-mode');
     listEl.innerHTML = '<div class="loading">Loading arrivals...</div>';
 
-    // Cleanup: Remove any existing Metro header if it exists (from previous selection)
     const existingHeader = panel.querySelector('.metro-header');
     if (existingHeader) existingHeader.remove();
 
-    // Detect Metro Station
-    // Detect Metro Station
-    // Clear header extension
     const headerExtension = document.getElementById('header-extension');
     if (headerExtension) headerExtension.innerHTML = '';
 
-    // STRICT CHECK: Metro stations must have mode 'SUBWAY' (set in addStopsToMap) OR have a specific ID pattern.
     const isMetro = stop.mode === 'SUBWAY' || (stop.id && (stop.id.startsWith('1:metro') || stop.id.includes('metro') || stop.id.includes('Metro')));
 
-    console.log(`[Debug] showStopInfo: ID=${stop.id}, Mode=${stop.mode}, isMetro=${isMetro}`);
-
-    // Toggle UI Actions Visibility (Edit & Filter)
     const editBtn = document.getElementById('btn-edit-stop');
     const filterBtn = document.getElementById('filter-routes-toggle');
 
     if (isMetro) {
-        console.log('[Debug] Entering Metro Branch');
-        if (editBtn) {
-            editBtn.classList.add('hidden');
-            editBtn.style.display = 'none';
-        }
-        if (filterBtn) {
-            filterBtn.classList.add('hidden');
-            filterBtn.style.display = 'none';
-        }
-
-        // Delegate to Metro Module
+        if (editBtn) editBtn.classList.add('hidden');
+        if (filterBtn) filterBtn.classList.add('hidden');
         handleMetroStop(stop, panel, nameEl, listEl, {
             allRoutes,
             stopToRoutesMap,
@@ -1516,98 +1085,143 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         });
         return;
     } else {
-        console.log('[Debug] Entering Bus Branch');
-
-        // Bus Stop Logic
-        // Allow Localhost or Private Network IPs (common home/office ranges)
-        const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-        const isPrivateIP = location.hostname.startsWith('192.168.') || location.hostname.startsWith('10.') || location.hostname.startsWith('172.');
-
-        // Write access is only available in Dev Server mode (active middleware)
-        const hasWriteAccess = (isLocalhost || isPrivateIP) && import.meta.env.DEV;
-        console.log('[StopInfo] Debug Access: Local=', isLocalhost, 'Private=', isPrivateIP, 'DEV=', import.meta.env.DEV, '=> WriteAccess=', hasWriteAccess);
-
+        metro.stopMetroTicker();
+        const hasWriteAccess = (location.hostname === 'localhost' || location.hostname.startsWith('192.168.')) && import.meta.env.DEV;
         if (editBtn) {
-            if (hasWriteAccess) {
-                editBtn.style.display = '';
-                editBtn.classList.remove('hidden');
-            } else {
-                editBtn.style.setProperty('display', 'none', 'important');
-                editBtn.classList.add('hidden');
-            }
+            editBtn.classList.toggle('hidden', !hasWriteAccess);
         }
         if (filterBtn) {
-            filterBtn.style.display = ''; // Restore flex/block
             filterBtn.classList.remove('hidden');
         }
     }
 
-
-
-
-    setSheetState(panel, 'half'); // Default to half open
-    updateBackButtons(); // Ensure back button state is correct
-
+    setSheetState(panel, 'half');
+    updateBackButtons();
 
     try {
-        // Check for merged IDs
         const subIds = mergeSourcesMap.get(stop.id) || [];
         const idsAndParent = [stop.id, ...subIds];
-
-        // Fetch Routes (static) for ALL IDs in parallel
-        // Optimization: Only fetch if NOT already in stopToRoutesMap
         const routePromises = idsAndParent.map(id => {
-            if (stopToRoutesMap.has(id) && stopToRoutesMap.get(id).length > 0) {
-                console.log(`[Optimization] Routes for ${id} already loaded. Skipping fetch.`);
-                // Return wrapped promise compatible with the result structure (array of routes)
-                return Promise.resolve(stopToRoutesMap.get(id));
+            if (hydratedStops.has(id)) {
+                return Promise.resolve(stopToRoutesMap.get(id) || []);
             }
-            return api.fetchStopRoutes(id).catch(e => { console.warn(`fetchStopRoutes failed for ${id}:`, e); return []; });
-        });
+            return api.fetchStopRoutes(id, stop._source).then(fetchedRoutes => {
+                if (fetchedRoutes && Array.isArray(fetchedRoutes)) {
+                    if (!stopToRoutesMap.has(id)) stopToRoutesMap.set(id, []);
+                    const currentList = stopToRoutesMap.get(id);
 
-        // Fetch Arrivals (live) - this function already handles merged IDs internally
-        const arrivalsPromise = fetchArrivals(stop.id);
+                    fetchedRoutes.forEach(fr => {
+                        const canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName));
+                        const routeToAdd = canonical || fr;
+                        if (!currentList.includes(routeToAdd)) currentList.push(routeToAdd);
+                    });
+                    hydratedStops.add(id);
+                }
+                return stopToRoutesMap.get(id) || [];
+            }).catch(() => []);
+        });
 
         const [results, arrivals] = await Promise.all([
             Promise.all(routePromises),
-            arrivalsPromise
+            fetchArrivals(stop.id)
         ]);
 
-        // Flatten attributes from all stops
         const allFetchedRoutes = results.flat();
-
-        // UPDATE CACHE for Filtering
-        // We have fresh routes for this stop. Update the map so filtering works!
         stopToRoutesMap.set(stop.id, allFetchedRoutes);
-        console.log(`[Debug] Updated stopToRoutesMap for ${stop.id} with ${allFetchedRoutes.length} routes.`);
-
-        // --- Build All Routes (Header Extension) ---
         window.lastRoutes = allFetchedRoutes;
-        renderAllRoutes(allFetchedRoutes, arrivals);
-
-        // --- Render Arrivals ---
-        window.lastArrivals = arrivals; // Store for filtering
+        window.lastArrivals = arrivals;
         renderArrivals(arrivals, stop.id);
-
     } catch (error) {
         listEl.innerHTML = '<div class="error">Failed to load arrivals</div>';
         console.error(error);
     }
 }
 
-function renderAllRoutes(routesInput, arrivals) {
-    const headerExtension = document.getElementById('header-extension');
-    if (!headerExtension) return;
+function getRouteDisplayColor(route) {
+    if (!route) return 'var(--primary)';
+    const isDark = document.body.classList.contains('dark-mode');
 
-    headerExtension.innerHTML = ''; // Clear previous
+    // 1. Filter Manager Priority (Selection/Common Routes)
+    if (filterManager && filterManager.state && filterManager.state.active) {
+        const routeId = route.id || (allRoutes.find(r => r.shortName === route.shortName) || {}).id;
+        if (routeId) {
+            const filterColor = RouteFilterColorManager.getColorForRoute(routeId);
+            if (filterColor) return filterColor;
+        }
+    }
+
+    // 2. Identify Rustavi
+    const isRustavi = route._source === 'rustavi' || (route.id && (String(route.id).startsWith('r') || String(route.id).startsWith('rustavi:')));
+    if (isRustavi) {
+        // Rustavi: Distinct Indigo
+        if (isDark) return '#818cf8'; // Lighter Indigo
+        return '#4f46e5'; // Deep Indigo
+    }
+
+    // 3. Identify Minibus (Tbilisi)
+    const s = String(route.shortName);
+    const isMinibus = (s.startsWith('4') || s.startsWith('5')) && s.length === 3;
+
+    if (isMinibus && isDark) {
+        // Brighten minibus blue for dark mode
+        return '#0a84ff'; // Vibrant Apple Blue
+    }
+
+    const rawColor = route.color || '2563eb';
+    if (rawColor === '2563eb') return 'var(--primary)';
+
+    return rawColor.startsWith('#') ? rawColor : `#${rawColor}`;
+}
+
+function getPatternHeadsign(route, directionIndex, defaultHeadsign) {
+    if (!route) return defaultHeadsign;
+
+    // 1. Resolve Route & Overrides
+    const matchedRoute = allRoutes.find(r => r.id === route.id || r.shortName === route.shortName);
+    const overrides = (matchedRoute && matchedRoute._overrides) ? matchedRoute._overrides : route._overrides;
+
+    if (overrides && overrides.destinations) {
+        const destObj = overrides.destinations[directionIndex];
+        if (destObj && destObj.headsign) {
+            const locale = new URLSearchParams(window.location.search).get('locale') || 'en';
+            return destObj.headsign[locale] || destObj.headsign.en || destObj.headsign.ka || defaultHeadsign;
+        }
+    }
+
+    // 2. Fallback to parsing from longName if headsign is missing or default
+    if (!defaultHeadsign || defaultHeadsign === route.longName) {
+        // Use LoopUtils or similar if needed, but for now just return what we have
+        return defaultHeadsign;
+    }
+
+    return defaultHeadsign;
+}
+
+function renderAllRoutes(routesInput, arrivals) {
+    // Deduplicate Routes (Prioritize Parent aka first fetched)
 
     // Deduplicate Routes (Prioritize Parent aka first fetched)
     const uniqueRoutesMap = new Map();
 
     if (routesInput && Array.isArray(routesInput)) {
         routesInput.forEach(r => {
-            if (r && r.shortName && !uniqueRoutesMap.has(r.shortName)) {
-                uniqueRoutesMap.set(r.shortName, r);
+            if (!r) return;
+
+            // 1. Resolve Real Route (with overrides) from allRoutes
+            let realRoute = r;
+            if (r.id) {
+                // Try to find by ID (handling stripped prefix)
+                const cleanId = r.id.includes(':') ? r.id.split(':')[1] : r.id;
+                const found = allRoutes.find(x => x.id === cleanId || x.id === r.id);
+                if (found) realRoute = found;
+            } else if (r.shortName) {
+                // Fallback by shortName (risky if overridden, but better than nothing)
+                const found = allRoutes.find(x => x.shortName === r.shortName);
+                if (found) realRoute = found;
+            }
+
+            if (realRoute && realRoute.shortName && !uniqueRoutesMap.has(realRoute.shortName)) {
+                uniqueRoutesMap.set(realRoute.shortName, realRoute);
             }
         });
     }
@@ -1616,10 +1230,20 @@ function renderAllRoutes(routesInput, arrivals) {
     // Merge with arrivals for robustness
     if (arrivals && arrivals.length > 0) {
         arrivals.forEach(arr => {
-            if (!uniqueRoutesMap.has(arr.shortName)) {
-                const fullRoute = allRoutes.find(r => r.shortName === arr.shortName);
-                const newRoute = fullRoute || { shortName: arr.shortName, id: null, color: '2563eb' };
-                uniqueRoutesMap.set(arr.shortName, newRoute);
+            // Resolve Arrival to Real Route Logic (Similar to renderArrivals)
+            let resolvedShortName = arr.shortName;
+            let resolvedRoute = null;
+
+            if (v3RoutesMap && v3RoutesMap.has(String(arr.shortName))) {
+                const mappedId = v3RoutesMap.get(String(arr.shortName));
+                const cleanId = mappedId.includes(':') ? mappedId.split(':')[1] : mappedId;
+                resolvedRoute = allRoutes.find(x => x.id === cleanId || x.id === mappedId);
+                if (resolvedRoute) resolvedShortName = resolvedRoute.shortName;
+            }
+
+            if (!uniqueRoutesMap.has(resolvedShortName)) {
+                const newRoute = resolvedRoute || { shortName: resolvedShortName, id: null, color: '2563eb' };
+                uniqueRoutesMap.set(resolvedShortName, newRoute);
             }
         });
     }
@@ -1644,6 +1268,13 @@ function renderAllRoutes(routesInput, arrivals) {
                 if (!matchA && matchB) return 1;  // B comes first
             }
 
+            // Source Sort: Rustavi goes to bottom
+            const isRustaviA = a._source === 'rustavi' || (a.id && a.id.startsWith('rustavi:'));
+            const isRustaviB = b._source === 'rustavi' || (b.id && b.id.startsWith('rustavi:'));
+
+            if (isRustaviA && !isRustaviB) return 1;
+            if (!isRustaviA && isRustaviB) return -1;
+
             // Numeric Sort
             return (parseInt(a.shortName) || 0) - (parseInt(b.shortName) || 0);
         });
@@ -1656,14 +1287,18 @@ function renderAllRoutes(routesInput, arrivals) {
 
         routesForStop.forEach(route => {
             // Apply Show Minibuses Filter
-            if (!shouldShowRoute(route.shortName)) return;
+            if (!shouldShowRoute(route.shortName, route)) return;
 
             const tile = document.createElement('button');
             tile.className = 'route-tile';
-            tile.textContent = simplifyNumber(route.shortName);
-            const color = route.color || '2563eb';
-            tile.style.backgroundColor = `#${color}20`; // 12% opacity
-            tile.style.color = `#${color}`;
+
+            // Prefer Valid Custom Alias > ShortName
+            const displayName = route.customShortName || route.shortName;
+            tile.textContent = simplifyNumber(displayName);
+
+            const displayColor = getRouteDisplayColor(route);
+            tile.style.backgroundColor = `color-mix(in srgb, ${displayColor}, transparent 88%)`;
+            tile.style.color = displayColor;
             tile.style.fontWeight = '700';
 
             // Apply Dimming (don't hide)
@@ -1694,8 +1329,9 @@ function renderAllRoutes(routesInput, arrivals) {
         });
 
         container.appendChild(tilesContainer);
-        headerExtension.appendChild(container);
+        return container;
     }
+    return null;
 }
 
 async function fetchArrivals(stopId) {
@@ -1771,31 +1407,8 @@ let v3RoutesMap = null; // Maps shortName ("306") -> V3 ID ("1:R98190")
 
 // Promise singleton to prevent parallel route fetches
 let v3RoutesPromise = null;
-const V3_ROUTES_CACHE_KEY = 'v3_routes_map_cache';
+const V3_ROUTES_CACHE_KEY = 'v3_routes_map_cache'; // Revert to v1 cache or just use original key
 const V3_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
-
-// --- Initialization ---
-async function init() {
-    // API Status / Offline Notice
-    const offlineNotice = document.getElementById('offline-notice');
-    if (api.onApiStatusChange) {
-        api.onApiStatusChange((status) => {
-            if (offlineNotice) {
-                const isOffline = !status.ok && status.code !== 200; // or just !status.ok depending on how strict we want
-                if (isOffline) {
-                    offlineNotice.classList.remove('hidden');
-                    offlineNotice.style.display = 'block';
-                } else {
-                    offlineNotice.classList.add('hidden');
-                    offlineNotice.style.display = 'none';
-                }
-            }
-        });
-    }
-
-    // Map is initialized via map-setup.js and map.on('load') listeners elsewhere
-
-}
 
 async function fetchV3Routes() {
     if (v3RoutesMap) return;
@@ -1818,17 +1431,15 @@ async function fetchV3Routes() {
 
     // 2. Fetch from API if no cache
     v3RoutesPromise = (async () => {
-        // 1. Try Cache First
+        // 1. Try Cache First (Redundant check?)
         try {
             const cached = await db.get(V3_ROUTES_CACHE_KEY);
-            if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
+            if (cached && (Date.now() - cached.timestamp < V3_CACHE_DURATION)) {
                 console.log('[V3] Loaded global routes list from DB Cache');
                 v3RoutesMap = new Map(cached.data);
                 return;
             }
-        } catch (e) {
-            console.warn('[V3] Failed to read routes cache', e);
-        }
+        } catch (e) { }
 
         // 2. Network Fetch via API Module
         try {
@@ -1867,10 +1478,17 @@ async function fetchV3Routes() {
 
 // fetchWithRetry moved to api.js
 
-async function getV3Schedule(routeShortName, stopId) {
-    if (!v3RoutesMap) await fetchV3Routes();
-    const routeId = v3RoutesMap && v3RoutesMap.get(String(routeShortName));
-    if (!routeId) return null;
+async function getV3Schedule(routeShortName, stopId, explicitRouteId = null) {
+    let routeId = explicitRouteId;
+    if (!routeId) {
+        if (!v3RoutesMap) await fetchV3Routes();
+        routeId = v3RoutesMap && v3RoutesMap.get(String(routeShortName));
+    }
+
+    if (!routeId) {
+        console.warn(`[V3 Debug] Route ID not found for ${routeShortName}`);
+        return null;
+    }
 
     // Use API
     const stopIds = getEquivalentStops(stopId);
@@ -1878,45 +1496,99 @@ async function getV3Schedule(routeShortName, stopId) {
         mergeSourcesMap.get(stopId).forEach(s => stopIds.push(s));
     }
 
+    // console.log(`[V3 Debug] Fetching schedule for RouteID: ${routeId}, StopIDs:`, stopIds);
+
     const schedule = await api.fetchScheduleForStop(routeId, stopIds);
-    if (!schedule) return null;
+    if (!schedule) {
+        console.warn(`[V3 Debug] No schedule returned from API for ${routeId}`);
+        return null;
+    }
 
-    // Parse Schedule locally (or move parsing to api? Parsing is fast)
-    // The previous implementation returned "12:34" string or similar?
-    // Let's assume api returns raw schedule object. We need to format it.
-    // Wait, the previous getV3Schedule returned "12:34" string?
-    // Step 105: "return timeString;" at the end (truncated, but implied).
-    // Let's check the previous code logic again or assume we need to format it.
-
+    // console.log(`[V3 Debug] Schedule fetched. Parsing...`);
     return parseSchedule(schedule, stopIds);
 }
 
 function parseSchedule(schedule, potentialIds) {
-    if (!schedule || !Array.isArray(schedule)) return null;
+    if (!schedule || !Array.isArray(schedule)) {
+        console.warn(`[V3 Debug] Invalid schedule format`, schedule);
+        return null;
+    }
 
     try {
         // Fix: Force Tbilisi Timezone (GMT+4)
         const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' }); // YYYY-MM-DD
         const todayStr = tbilisiNow;
+        // console.log(`[V3 Debug] Parse Schedule for Today: ${todayStr}`);
 
         let daySchedule = schedule.find(s => s.serviceDates.includes(todayStr));
+
+        if (!daySchedule) {
+            console.warn(`[V3 Debug] No schedule found for today (${todayStr}) in ${schedule.length} service periods.`);
+        } else {
+            // console.log(`[V3 Debug] Found schedule for today.`);
+        }
 
         // Helper to find next time in a specific day's schedule
         const findNextTime = (sched, minTimeMinutes) => {
             if (!sched) return null;
-            // Check against all equivalent stop IDs
-            const stop = sched.stops.find(s => potentialIds.includes(String(s.id)));
-            if (!stop) return null;
 
-            const times = stop.arrivalTimes.split(',');
-            for (const t of times) {
-                const [h, m] = t.split(':').map(Number);
-                const stopMinutes = h * 60 + m; // Absolute minutes in the day
-                if (stopMinutes > minTimeMinutes) {
-                    return t;
-                }
+            // Find ALL occurrences of this stop in the schedule (handling loops)
+            const matchedStops = sched.stops.filter(s => {
+                const sId = String(s.id);
+                const sCode = String(s.code || '');
+                return potentialIds.some(pid => {
+                    const pIdStr = String(pid);
+                    // Standardize: remove '1:', remove 'r'/'R' prefix
+                    const normalize = (id) => String(id).replace(/^\d+:/, '').replace(/^[rR]/, '');
+
+                    const pIdNorm = normalize(pIdStr);
+                    const sIdNorm = normalize(sId);
+
+                    if (pIdStr === sId) return true;
+                    if (pIdNorm === sIdNorm) return true;
+                    if (sCode && normalize(sCode) === pIdNorm) return true;
+                    return false;
+                });
+            });
+
+            // Debug Log for loop diagnosis (limit to specific stop if noisy, but global for now is fine for dev)
+            if (matchedStops.length > 1) {
+                console.log(`[V3 Loop Debug] Found ${matchedStops.length} occurrences of stop in schedule.`);
+            } else if (matchedStops.length === 0) {
+                console.warn(`[V3 Loop Debug] No stops matched potential IDs: ${potentialIds.join(',')}. Available Schedule Stops (first 5):`, sched.stops.slice(0, 5).map(s => s.id));
             }
-            return null;
+
+            if (matchedStops.length === 0) {
+                return null;
+            }
+
+            // Collect all valid times from all matched stop entries
+            // Return ALL valid next times (one per occurrence), not just the earliest absolute one.
+            const results = [];
+
+            matchedStops.forEach((stop, idx) => {
+                const times = stop.arrivalTimes.split(',');
+                // Check matched index relative to total stops to infer direction
+                // We need the index of THIS stop in the full `sched.stops` array.
+                // `matchedStops` is a subset.
+                const originalIndex = sched.stops.findIndex(s => s === stop);
+
+                for (const t of times) {
+                    const [h, m] = t.split(':').map(Number);
+                    const stopMinutes = h * 60 + m; // Absolute minutes in the day
+
+                    if (stopMinutes > minTimeMinutes) {
+                        results.push({
+                            time: `${h}:${String(m).padStart(2, '0')}`,
+                            minutes: stopMinutes,
+                            progress: originalIndex / sched.stops.length
+                        });
+                        break; // Found the next time for THIS specific stop occurrence
+                    }
+                }
+            });
+
+            return results.length > 0 ? results : null;
         };
 
         // Get Current Minutes in Tbilisi
@@ -1931,20 +1603,42 @@ function parseSchedule(schedule, potentialIds) {
         const m = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
         const curMinutes = h * 60 + m;
 
-        let nextTime = findNextTime(daySchedule, curMinutes);
+        let nextTimes = findNextTime(daySchedule, curMinutes);
 
         // Fallback: Check tomorrow if no time found today
-        if (!nextTime) {
-            // Calculate tomorrow string safe for timezone
-            const tDate = new Date(todayStr);
-            tDate.setDate(tDate.getDate() + 1);
-            const tomorrowStr = tDate.toISOString().split('T')[0];
+        if (!nextTimes) {
+            // Calculate tomorrow string safe for Tbilisi Timezone
+            // 1. Get current Tbilisi time
+            const now = new Date();
+            const tbilisiDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tbilisi' }));
+
+            // 2. Add 1 day
+            tbilisiDate.setDate(tbilisiDate.getDate() + 1);
+
+            // 3. Format back to YYYY-MM-DD
+            // CAUTION: toISOString uses UTC. We must manually format or use CA locale trick again
+            const tomorrowStr = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Asia/Tbilisi',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            }).format(tbilisiDate);
 
             const tmrSchedule = schedule.find(s => s.serviceDates.includes(tomorrowStr));
-            nextTime = findNextTime(tmrSchedule, -1);
+            nextTimes = findNextTime(tmrSchedule, -1);
+
+            if (!nextTimes) {
+                // console.warn(`[V3 Debug] No next time found for tomorrow (${tomorrowStr}) either.`);
+            }
         }
 
-        return nextTime;
+        if (!nextTimes) {
+            // ... (tomorrow logic) ...
+        } else {
+            console.log(`[V3 Debug] Found next times for today:`, nextTimes);
+        }
+
+        return nextTimes;
 
     } catch (err) {
         console.warn(`[V3] Logic Error parsing schedule:`, err);
@@ -1960,7 +1654,7 @@ function formatScheduledTime(minutesFromNow) {
     // Force Tbilisi Timezone display
     return new Intl.DateTimeFormat('en-GB', {
         timeZone: "Asia/Tbilisi",
-        hour: '2-digit',
+        hour: 'numeric',
         minute: '2-digit',
         hour12: false
     }).format(target);
@@ -1997,7 +1691,10 @@ function sortArrivalsList() {
     const listEl = document.getElementById('arrivals-list');
     if (!listEl) return;
 
-    const items = Array.from(listEl.children);
+    const allChildren = Array.from(listEl.children);
+    // Exclude the route chips container from sorting
+    const items = allChildren.filter(child => !child.classList.contains('all-routes-container'));
+    const nonSorted = allChildren.filter(child => child.classList.contains('all-routes-container'));
 
     // Sort logic
     items.sort((a, b) => {
@@ -2013,7 +1710,8 @@ function sortArrivalsList() {
         return nameA.localeCompare(nameB, undefined, { numeric: true });
     });
 
-    // Re-append in order
+    // Re-append: non-sorted items first (chips), then sorted arrivals
+    nonSorted.forEach(item => listEl.appendChild(item));
     items.forEach(item => listEl.appendChild(item));
 }
 
@@ -2028,18 +1726,45 @@ function renderArrivals(arrivals, currentStopId = null) {
 
     const stopId = currentStopId || window.currentStopId;
 
+    // 0. Prepend All Routes (Chips)
+    if (window.lastRoutes) {
+        const tiles = renderAllRoutes(window.lastRoutes, arrivals);
+        if (tiles) listEl.appendChild(tiles);
+    }
+
     // 1. Identify "Missing" Routes
     let extraRoutes = [];
     if (stopId) {
         const equivalentIds = getEquivalentStops(stopId, false);
-        const servingRoutes = new Set();
+        const uniqueRoutesMap = new Map();
+
         equivalentIds.forEach(eqId => {
             const routes = stopToRoutesMap.get(eqId) || [];
-            routes.forEach(r => servingRoutes.add(r));
+            routes.forEach(r => {
+                // Deduplicate by shortName + key attributes
+                // User requirement: Keep routes that "stop twice" (loops/pseudo-twins).
+                // These often have same Number and same Destination, but distinct Route IDs (different directions in DB).
+                // So we MUST distinguish by Route ID (`r.id`).
+                // This might re-introduce "Rustavi duplicates" if they are distinct IDs but effectively same route.
+                // But hiding a valid loop stop is worse than showing a technical duplicate.
+                const key = `${r.shortName}_${r.longName || ''}_${r.id}`;
+
+                if (stopId === '1354' && String(r.shortName) === '329') {
+                    // console.log(`[Dedup Debug] 1354/329: Key="${key}", ID=${r.id}, Source LongName="${r.longName}"`);
+                }
+
+                if (!uniqueRoutesMap.has(key)) {
+                    uniqueRoutesMap.set(key, r);
+                } else if (stopId === '1354' && String(r.shortName) === '329') {
+                    // console.log(`[Dedup Debug] 1354/329: DROPPED duplicate for key "${key}" (ID=${r.id})`);
+                }
+            });
         });
 
         const arrivalRouteShortNames = new Set(arrivals.map(a => String(a.shortName)));
-        extraRoutes = Array.from(servingRoutes).filter(r => !arrivalRouteShortNames.has(String(r.shortName)));
+
+        // Filter out routes that are already in arrivals
+        extraRoutes = Array.from(uniqueRoutesMap.values()).filter(r => !arrivalRouteShortNames.has(String(r.shortName)));
     }
 
     // 2. Filter Logic (User Route Filter)
@@ -2052,26 +1777,51 @@ function renderArrivals(arrivals, currentStopId = null) {
     }
 
     // 2.5 Show Minibuses Filter
-    arrivals = arrivals.filter(a => shouldShowRoute(a.shortName));
-    extraRoutes = extraRoutes.filter(r => shouldShowRoute(r.shortName));
+    /* console.log(`[Arrivals Debug] ExtraRoutes before filter: ${extraRoutes.length}`); */
+    arrivals = arrivals.filter(a => {
+        // Precise matching using ID if possible, fallback to shortName
+        const r = allRoutes.find(route => String(route.id) === String(a.id)) ||
+            allRoutes.find(route => String(route.shortName) === String(a.shortName));
+        return shouldShowRoute(a.shortName, r);
+    });
+    extraRoutes = extraRoutes.filter(r => {
+        const show = shouldShowRoute(r.shortName, r);
+        /* if (!show) console.log(`[Arrivals Debug] Filtered out extraRoute: ${r.shortName}`); */
+        return show;
+    });
+    console.log(`[Arrivals Debug] ExtraRoutes after filter: ${extraRoutes.length}`);
 
     // 3. Unified List Creation with Cache Lookup
     let renderList = [];
 
     // Add Live Arrivals
     arrivals.forEach(a => {
+        // Robustness: Handle nulls
+        let minutes = 999;
+        if (a.realtime) {
+            minutes = (a.realtimeArrivalMinutes !== undefined && a.realtimeArrivalMinutes !== null) ? a.realtimeArrivalMinutes : 999;
+        } else {
+            minutes = (a.scheduledArrivalMinutes !== undefined && a.scheduledArrivalMinutes !== null) ? a.scheduledArrivalMinutes : 999;
+        }
+
+        // Logic to Apply Overrides (Destinations)
+        let directionIndex = 0;
+        if (a.patternSuffix) {
+            const part = a.patternSuffix.split(':')[0];
+            directionIndex = parseInt(part) || 0;
+        }
+
+        const matchedRouteForColor = allRoutes.find(r => r.shortName === a.shortName);
+        const displayHeadsign = getPatternHeadsign(matchedRouteForColor, directionIndex, a.headsign);
+
         renderList.push({
             type: 'live',
             data: a,
-            // Calculate sort minutes
-            minutes: (!a.realtime)
-                ? (a.scheduledArrivalMinutes ?? 999)
-                : (a.realtimeArrivalMinutes ?? 999),
+            minutes: minutes,
             // Pre-calculate display strings
-            color: (filterManager.state.active && RouteFilterColorManager.getColorForRoute(allRoutes.find(r => r.shortName === a.shortName)?.id))
-                ? RouteFilterColorManager.getColorForRoute(allRoutes.find(r => r.shortName === a.shortName)?.id)
-                : (a.color ? `#${a.color}` : 'var(--primary)'),
-            headsign: a.headsign
+            color: getRouteDisplayColor(allRoutes.find(r => r.shortName === a.shortName) || { ...a, id: a.id }),
+            headsign: displayHeadsign,
+            directionIndex: directionIndex
         });
     });
 
@@ -2101,9 +1851,7 @@ function renderArrivals(arrivals, currentStopId = null) {
             data: r,
             minutes: minutes,
 
-            color: (filterManager.state.active && RouteFilterColorManager.getColorForRoute(r.id))
-                ? RouteFilterColorManager.getColorForRoute(r.id)
-                : (r.color ? `#${r.color}` : 'var(--primary)'),
+            color: getRouteDisplayColor(r),
             needsFetch: !cachedTimeStr
         });
     });
@@ -2120,110 +1868,302 @@ function renderArrivals(arrivals, currentStopId = null) {
     });
 
     if (renderList.length === 0) {
-        if (filterManager.state.active) {
-            listEl.innerHTML = '<div class="empty">No arrivals for selected destination</div>';
-        } else {
-            listEl.innerHTML = '<div class="empty">No upcoming arrivals</div>';
-        }
+        const div = document.createElement('div');
+        div.className = 'empty';
+        div.textContent = filterManager.state.active ? 'No arrivals for selected destination' : 'No upcoming arrivals';
+        listEl.appendChild(div);
         return;
     }
 
     // 5. Render Unified List
     renderList.forEach(item => {
         const div = document.createElement('div');
-        div.className = item.type === 'scheduled' ? 'arrival-item extra-route' : 'arrival-item';
+        div.className = 'arrival-item'; // Unified class
         div.style.borderLeftColor = item.color;
         div.setAttribute('data-minutes', item.minutes);
 
-        let innerContent = '';
+        // -- Data Prep --
+        let routeShortName, headsign, timeDisplay, isScheduled, needsDisclaimer, routeIdForClick;
+        let routeColor = item.color;
 
         if (item.type === 'live') {
             const a = item.data;
-            const isScheduled = !a.realtime;
-            const scheduledClass = isScheduled ? 'scheduled-time' : '';
-            const disclaimer = isScheduled ? '<div class="scheduled-disclaimer">Scheduled</div>' : '';
+            routeShortName = a.displayShortName || a.shortName;
+            headsign = item.headsign || a.headsign;
+            isScheduled = !a.realtime;
+            routeIdForClick = a.id; // Use specific ID if available
 
-            let tDisp;
-            if (isScheduled && item.minutes < 60 && item.minutes >= 0) {
-                tDisp = `${item.minutes} min`;
+            // Time Display Logic
+            const rawMins = item.minutes;
+            if (rawMins === 999 || rawMins === null || rawMins === undefined) {
+                timeDisplay = '--:--';
+            } else if (isScheduled && rawMins < 60 && rawMins >= 0) {
+                timeDisplay = `${rawMins} min`;
             } else if (isScheduled) {
-                tDisp = formatScheduledTime(a.scheduledArrivalMinutes);
+                timeDisplay = formatScheduledTime(rawMins);
             } else {
-                tDisp = `${a.realtimeArrivalMinutes} min`;
+                timeDisplay = `${rawMins} min`;
+            }
+            if (!timeDisplay || timeDisplay.includes('undefined') || timeDisplay.includes('NaN')) {
+                timeDisplay = '--:--';
             }
 
-            innerContent = `
-              <div class="route-number" style="color: ${item.color}">${simplifyNumber(a.shortName)}</div>
-              <div class="destination" title="${a.headsign}">${a.headsign}</div>
-              <div class="time-container">
-                  <div class="time ${scheduledClass}">${tDisp}</div>
-                  ${disclaimer}
-              </div>
-            `;
+            needsDisclaimer = isScheduled;
 
-            const routeObj = allRoutes.find(r => r.shortName === a.shortName);
-            if (routeObj) {
-                div.addEventListener('click', () => {
-                    showRouteOnMap(routeObj, true, {
-                        preserveBounds: true,
-                        fromStopId: stopId,
-                        targetHeadsign: a.headsign
-                    });
-                });
-            }
-
+            // Resolve proper route object for overrides if possible (re-using logic from prep)
+            // Simplified: we already calculated displayShortName in loop if we could.
+            // But we need routeObj for click handler.
         } else {
-            // Scheduled (Extra)
+            // Scheduled
             const r = item.data;
-            const timeElId = `time-${r.shortName}-${stopId}`;
+            routeShortName = r.customShortName || r.shortName;
 
-            innerContent = `
-              <div class="route-number" style="color: ${item.color}">${simplifyNumber(r.shortName)}</div>
-              <div class="destination" title="${r.longName}">${r.longName}</div>
-              <div class="time-container">
-                  <div id="${timeElId}" class="time scheduled-time">${item.timeDisplay}</div>
-                  <div class="scheduled-disclaimer">Scheduled</div>
-              </div>
-            `;
+            // Heuristic Naming: Match LoopUtils logic
+            // User Feedback: Don't parse non-loop routes if headsign is available.
+            // Priority: Override > API Headsign > Parsed Destination (Heuristic) > Full LongName
 
+            // 0. CHECK OVERRIDES
+            // Resolve fresh route object from allRoutes to ensure we have the latest _overrides
+            // Fuzzy match ID just in case
+            const freshRoute = allRoutes.find(route =>
+                String(route.id) === String(r.id) ||
+                String(route.id) === `1:${r.id}` ||
+                `1:${route.id}` === String(r.id)
+            ) || r;
+
+            // Deep Debug for Scheduled 24 structure
+            if (r.shortName === '24') {
+                console.log(`[Sched 24 Structure] ID: ${r.id}, FreshID: ${freshRoute.id}`);
+                console.log(` - Patterns?`, freshRoute.patterns ? freshRoute.patterns.length : 'None');
+                if (freshRoute.patterns) {
+                    freshRoute.patterns.forEach(p => {
+                        console.log(`   P: ${p.patternSuffix}, Stops: ${p.stops ? p.stops.length : '?'}`);
+                        // Check strict and loose equality for StopID
+                        if (p.stops) console.log(`   Has Stop ${stopId}? ${p.stops.includes(stopId) || p.stops.includes(String(stopId))}`);
+                    });
+                }
+            }
+
+
+
+            let overrideHeadsign = null;
+            if (freshRoute._overrides && freshRoute._overrides.destinations) {
+                // For scheduled items (extraRoutes), we often lack direction context (patternSuffix).
+                // Default to Direction 0? Or try to deduce?
+                // Most extraRoutes are just the generic route object.
+                // We'll try Dir 0 first.
+                // Improve: If we knew the stop sequence/direction for this stop... 
+                // but `stopToRoutesMap` is generic.
+
+                // Try Dir 0 ONLY if we are fairly sure? 
+                // Actually, for scheduled items without direction context, defaulting to Dir 0 
+                // (Forward) is often wrong for the return trip and confuses users.
+                // BETTER: If we don't know the direction, show the FULL LONGNAME (e.g. "Rustavi - Station Square").
+                // Then let the async fetch resolve the specific direction.
+
+                // SO: We SKIP defaulting to destinations[0] here unless we have some hint (which we don't).
+                // overrideHeadsign remains null.
+            }
+
+            if (overrideHeadsign) {
+                headsign = overrideHeadsign;
+            } else if (freshRoute._overrides && freshRoute._overrides.longName) {
+                // Fallback to Overridden LongName (e.g. "Rustavi – Station Square")
+                // This handles cases where we don't know the direction yet, but we want the clean overridden name.
+                const lng = 'en'; // fallback
+                headsign = freshRoute._overrides.longName[lng] || freshRoute._overrides.longName.en || freshRoute._overrides.longName.ka || r.longName;
+            } else if (item.headsign) {
+                headsign = item.headsign;
+            } else {
+                const parsed = LoopUtils.parseRouteName(r.longName);
+                if (parsed.destination) {
+                    headsign = parsed.destination;
+                } else {
+                    headsign = r.longName || '';
+                }
+            }
+
+            isScheduled = true;
+            needsDisclaimer = true;
+            timeDisplay = item.timeDisplay || '--:--';
+
+            // If we have a timeDisplay from cache that is a number, format it
+            if (typeof item.minutes === 'number' && item.minutes < 60 && item.minutes >= 0) {
+                timeDisplay = `${item.minutes} min`;
+            }
+
+            routeIdForClick = r.id;
+        }
+
+        // -- Fallbacks --
+        if (!headsign || headsign === 'undefined') {
+            headsign = 'Destination Unknown';
+        }
+
+        // -- HTML Generation (Unified) --
+        // Structure:
+        // [Route Badge] [Destination       ] [Time]
+        //               [Scheduled (opt)   ]
+
+        // However, the "Live" template was:
+        // [Number] [Destination] [TimeContainer]
+
+        // The "Scheduled" template was:
+        // [Badge] [Details: [Dest] [TimeContainer]]
+
+        // We will use the "Live" template structure for BOTH as it is cleaner and requested.
+
+        const scheduledClass = isScheduled ? 'scheduled-time' : '';
+        const disclaimerHtml = needsDisclaimer ? '<div class="scheduled-disclaimer">Scheduled</div>' : '';
+
+        // Special ID for async update
+        const timeElId = item.type === 'scheduled' ? `time-${item.data.shortName}-${stopId}` : '';
+        const timeElAttr = timeElId ? `id="${timeElId}"` : '';
+
+        const innerContent = `
+          <div class="route-number" style="color: ${routeColor}">${simplifyNumber(routeShortName)}</div>
+          <div class="destination" title="${headsign}">${headsign}</div>
+          <div class="time-container">
+              <div ${timeElAttr} class="led-text ${scheduledClass}">${timeDisplay}</div>
+              ${disclaimerHtml}
+          </div>
+        `;
+
+        div.innerHTML = innerContent;
+
+        // -- Click Handlers --
+        // Resolve Route Object
+        let routeObj = allRoutes.find(r => r.id === routeIdForClick);
+        if (!routeObj && item.data.shortName) {
+            routeObj = allRoutes.find(r => r.shortName === item.data.shortName);
+        }
+
+        if (routeObj) {
             div.addEventListener('click', () => {
-                showRouteOnMap(r, true, { preserveBounds: true, fromStopId: stopId });
+                showRouteOnMap(routeObj, true, {
+                    preserveBounds: true,
+                    fromStopId: stopId,
+                    targetHeadsign: headsign,
+                    initialDirectionIndex: item.directionIndex
+                });
             });
+        }
 
-            // Trigger Async Fetch if needed
-            if (item.needsFetch) {
-                // Async Load
-                // Async Load
-                getV3Schedule(r.shortName, stopId).then(timeStr => {
-                    if (!timeStr) {
-                        const el = document.getElementById(timeElId);
-                        if (el) el.textContent = '--:--';
-                        return;
+        // Append to list
+        listEl.appendChild(div);
+
+        // -- Async Fetch Hook for Scheduled Items --
+        if (item.type === 'scheduled' && item.needsFetch) {
+            getV3Schedule(item.data.shortName, stopId, item.data.id).then(res => {
+                if (!res) {
+                    // No data found -> --:--
+                    return;
+                }
+
+                // Handle Multiple Arrivals (Loop Route)
+                if (Array.isArray(res) && res.length > 0) {
+                    const firstArrival = res[0];
+                    const minutes = firstArrival.minutes; // Absolute minutes
+
+                    // --- DYNAMIC DIRECTION OVERRIDE ---
+                    let inferredDir = 0; // Default
+
+                    // 1. Try explicit Pattern Suffix (Precision)
+                    if (firstArrival.patternSuffix) {
+                        const part = firstArrival.patternSuffix.split(':')[0]; // "0:25" -> "0"
+                        inferredDir = parseInt(part);
+                        if (isNaN(inferredDir)) inferredDir = 0; // Safety
+                    }
+                    // 2. Fallback: Infer direction from progress (0.0 - 1.0)
+                    // < 0.5 = Forward (0), >= 0.5 = Backward (1) (Heuristic)
+                    else {
+                        inferredDir = (firstArrival.progress !== undefined && firstArrival.progress >= 0.5) ? 1 : 0;
                     }
 
-                    const mins = getMinutesFromNow(timeStr);
-                    div.setAttribute('data-minutes', mins);
+                    item.directionIndex = inferredDir;
 
-                    const el = document.getElementById(timeElId);
-                    if (el) {
-                        el.classList.remove('loading-text');
-                        // Smart format matching 'live' style
-                        if (mins < 60 && mins >= 0) {
-                            el.textContent = `${mins} min`;
-                        } else {
-                            el.textContent = timeStr;
+                    // Lookup ID fuzzy
+                    const rId = item.data.id;
+                    const routeId = String(rId);
+                    let ov = window.routesConfig?.routeOverrides?.[routeId];
+                    if (!ov && routeId.includes(':')) ov = window.routesConfig?.routeOverrides?.[routeId.split(':')[1]];
+                    if (!ov && !routeId.includes(':')) ov = window.routesConfig?.routeOverrides?.[`1:${routeId}`];
+
+                    let newHeadsign = null;
+
+                    if (ov && ov.destinations && ov.destinations[inferredDir]) {
+                        const d = ov.destinations[inferredDir];
+                        const lang = 'en'; // fallback
+                        newHeadsign = d.headsign?.[lang] || d.headsign?.en || d.headsign?.ka;
+                    }
+
+                    // Fallback: Parse LongName if no override and we have direction
+                    if (!newHeadsign) {
+                        const longNameToParse = (routeObj && routeObj._overrides && routeObj._overrides.longName &&
+                            (routeObj._overrides.longName.en || routeObj._overrides.longName.ka))
+                            || item.data.longName;
+
+                        const parsed = LoopUtils.parseRouteName(longNameToParse);
+                        if (parsed.origin && parsed.destination) {
+                            if (inferredDir === 1) {
+                                newHeadsign = parsed.origin; // Backward -> Destination is Origin
+                            } else {
+                                newHeadsign = parsed.destination; // Forward -> Destination is Destination
+                            }
                         }
                     }
 
-                    // Crucial: Re-sort list now that we have a time
-                    sortArrivalsList();
-                });
-            }
-        }
+                    if (newHeadsign) {
+                        const destEl = div.querySelector('.destination');
+                        if (destEl) {
+                            destEl.innerText = newHeadsign;
+                            destEl.title = newHeadsign;
+                        }
+                    }
 
-        div.innerHTML = innerContent;
-        listEl.appendChild(div);
+                    // UPDATE TIME UI
+                    const timeEl = document.getElementById(timeElId);
+                    if (timeEl) {
+                        const timeStr = firstArrival.time;
+                        timeEl.textContent = timeStr;
+
+                        // Recalculate minutes relative to now for "X min" display
+                        // We have firstArrival.minutes (absolute day minutes)
+                        // We need minutes from NOW.
+                        const minsFromNow = getMinutesFromNow(timeStr);
+                        div.setAttribute('data-minutes', minsFromNow);
+
+                        if (minsFromNow < 60 && minsFromNow >= 0) {
+                            timeEl.textContent = `${minsFromNow} min`;
+                            // Remove scheduled styling if it looks like live (optional, but requested behavior is usually distinct)
+                        }
+                    }
+
+                } else {
+                    // Single string result (Legacy)
+                    const timeStr = typeof res === 'string' ? res : res.time;
+                    const timeEl = document.getElementById(timeElId);
+                    if (timeEl) {
+                        timeEl.textContent = timeStr;
+                        const mins = getMinutesFromNow(timeStr);
+                        div.setAttribute('data-minutes', mins);
+                        if (mins < 60 && mins >= 0) {
+                            timeEl.textContent = `${mins} min`;
+                        }
+                    }
+                }
+
+                setTimeout(() => sortArrivalsList(), 50);
+            }).catch(err => {
+                console.warn('[V3] Schedule Fetch Error', err);
+            });
+        }
     });
+
+
+
+    // Initial Sort
+    sortArrivalsList();
 }
 
 // --- REUSABLE: Refresh Stops Logic (Apply Overrides/Merges) ---
@@ -2268,9 +2208,57 @@ async function refreshStopsLayer(useLocalConfig = false) {
     hubMap.clear();
     hubSourcesMap.clear();
 
-    const overrides = stopsConfigToUse?.overrides || {};
-    const merges = stopsConfigToUse?.merges || {};
-    const hubs = stopsConfigToUse?.hubs || {};
+    // --- Normalize Config IDs (Handle new prefix logic) ---
+    // Since config file might use '1:' prefix (Tbilisi) or others, and we now use stripped/prefixed IDs (e.g. 801, r43),
+    // we must try to match config IDs to the actual loaded IDs in `rawStops`.
+
+    // Create lookup set for valid IDs
+    // Note: freshStops isn't defined yet in the original code? 
+    // Wait, I need to check where `freshStops` is defined. 
+    // It is defined at line 2678: `const freshStops = rawStops.map...`
+    // I should move `freshStops` definition UP before this block.
+    // Or just use `rawStops`. rawStops is available.
+
+    const validStopIds = new Set(rawStops.map(s => s.id));
+
+    const normalizeConfigId = (rawId) => {
+        if (!rawId) return rawId;
+        if (validStopIds.has(rawId)) return rawId;
+
+        // Try processing with all known source rules
+        // api.sources is array of {id, prefix, stripPrefix...}
+        if (api.sources) {
+            for (const source of api.sources) {
+                const processed = api.processId(rawId, source);
+                if (validStopIds.has(processed)) return processed;
+            }
+        }
+        return rawId;
+    };
+
+    const rawOverrides = stopsConfigToUse?.overrides || {};
+    const overrides = {};
+    Object.keys(rawOverrides).forEach(k => {
+        overrides[normalizeConfigId(k)] = rawOverrides[k];
+    });
+
+    const rawMerges = stopsConfigToUse?.merges || {};
+    const merges = {};
+    Object.keys(rawMerges).forEach(k => {
+        merges[normalizeConfigId(k)] = normalizeConfigId(rawMerges[k]);
+    });
+
+    const rawHubs = stopsConfigToUse?.hubs || {};
+    const hubs = {};
+    Object.keys(rawHubs).forEach(k => {
+        const normKey = normalizeConfigId(k);
+        const members = rawHubs[k];
+        if (Array.isArray(members)) {
+            hubs[normKey] = members.map(m => normalizeConfigId(m));
+        } else {
+            hubs[normKey] = members;
+        }
+    });
 
     // Build merge mappings
     Object.keys(merges).forEach(source => {
@@ -2302,7 +2290,45 @@ async function refreshStopsLayer(useLocalConfig = false) {
     // `Object.assign(stop, ...)` MUTATES `stop`.
     // If rawStops elements are mutated, subsequent refreshes stack.
     // FIX: Map rawStops to NEW objects.
+    // Fix: Ensure stops defined in Config (Overrides/Merges) but missing from API are added.
+    // This allows "virtual" or "legacy" stops to exist (e.g. 3954 which is a target).
+    // Creates a map of existing API stops for fast lookup.
     const freshStops = rawStops.map(s => ({ ...s }));
+    const existingIds = new Set(freshStops.map(s => s.id));
+
+    // 1. Check Overrides for missing stops
+    Object.keys(overrides).forEach(id => {
+        if (!existingIds.has(id)) {
+            // console.log(`[Refresh] Injecting Config Stop (Override): ${id}`);
+            // Create minimal skeletal stop
+            freshStops.push({
+                id: id,
+                name: "Unknown Stop", // Will be overwritten by override name if present
+                lat: 0,
+                lon: 0,
+                code: id.replace('1:', '').replace('r', ''),
+                _source: 'config' // Marker
+            });
+            existingIds.add(id);
+        }
+    });
+
+    // 2. Check Merge Targets for missing stops
+    // If A merges to B, and B is missing, we must create B.
+    Object.values(merges).forEach(targetId => {
+        if (!existingIds.has(targetId)) {
+            // console.log(`[Refresh] Injecting Config Stop (Merge Target): ${targetId}`);
+            freshStops.push({
+                id: targetId,
+                name: "Merged Stop",
+                lat: 0,
+                lon: 0,
+                code: targetId.replace('1:', '').replace('r', ''),
+                _source: 'config'
+            });
+            existingIds.add(targetId);
+        }
+    });
 
     const busStops = [];
     const metroStops = [];
@@ -2313,23 +2339,80 @@ async function refreshStopsLayer(useLocalConfig = false) {
         (s.name && s.name.includes('Metro Station')) ||
         (s.id && typeof s.id === 'string' && s.id.startsWith('M:'));
 
+    // ...
+    // Clear dynamic maps before rebuilding
+    // mergeSourcesMap (defined globally or at top of scope)
+    // redirectMap (defined globally or at top of scope)
+    // Note: Assuming mergeSourcesMap and redirectMap are available in this scope.
+    // They seem to be module-level constants or let variables.
+
     freshStops.forEach(stop => {
         // If this stop is merged INTO another, skip adding it to map list
         if (merges[stop.id]) return;
 
+        // Populate Merge Maps from API-provided Merges
+        if (stop.mergedIds && stop.mergedIds.length > 0) {
+            const existing = mergeSourcesMap.get(stop.id) || [];
+            const combined = [...new Set([...existing, ...stop.mergedIds])];
+            mergeSourcesMap.set(stop.id, combined);
+
+            stop.mergedIds.forEach(mergedId => {
+                redirectMap.set(mergedId, stop.id);
+            });
+        }
+
         // Apply Default Bearings (Standard Config)
+        // Normalize bearings map on first use to match App IDs
+        if (!window.normalizedBearings) {
+            window.normalizedBearings = {};
+            // We need to iterate over stopBearings and process keys
+            // Use existing `api.processId` logic via `sources`
+            // But simpler: just try to match keys to `validStopIds` locally if possible, 
+            // OR use the same `normalizeConfigId` logic.
+            // Actually, efficient way:
+            // Iterate all keys in stopBearings. 
+            // Transform key using `normalizeConfigId` logic (which creates App ID from Raw ID).
+            // Assign to new map.
+            Object.keys(stopBearings).forEach(rawKey => {
+                const appKey = normalizeConfigId(rawKey);
+                window.normalizedBearings[appKey] = stopBearings[rawKey];
+            });
+        }
+
         if (stop.bearing === undefined) {
-            stop.bearing = stopBearings[stop.id] || 0;
+            stop.bearing = window.normalizedBearings[stop.id] || 0;
         }
 
         // Apply Override if exists
         if (overrides[stop.id]) {
-            Object.assign(stop, overrides[stop.id]);
+            const override = { ...overrides[stop.id] };
+
+            // Special handling for 'name' override (which is {en, ka})
+            if (override.name) {
+                // Get active locale
+                const urlParams = new URLSearchParams(window.location.search);
+                const locale = urlParams.get('locale') || 'en';
+
+                // If we have an override for this locale, use it.
+                // Otherwise, leave the original name (which is presumably correct for the *other* locale, or fallback).
+                // Actually, if we override, we likely want to replace it.
+                // But `stop.name` starts as the pre-fetched string for the *requested* locale (or fallback).
+                if (override.name[locale]) {
+                    stop.name = override.name[locale];
+                }
+                // If override exists but is empty for this locale?
+                // `startEditing` logic puts `undefined` if empty.
+
+                // Remove 'name' from the object we pass to Object.assign so it doesn't overwrite with {en, ka}
+                delete override.name;
+            }
+
+            Object.assign(stop, override);
         }
 
         // Deduplicate
         const coordKey = `${stop.lat.toFixed(6)},${stop.lon.toFixed(6)}`;
-        if (seenCoords.has(coordKey)) return;
+        // if (seenCoords.has(coordKey)) return; // Disable deduplication to ensure all ID targets exist
         seenCoords.add(coordKey);
 
         if (isMetroStop(stop)) {
@@ -2340,12 +2423,12 @@ async function refreshStopsLayer(useLocalConfig = false) {
         stops.push(stop); // allStops keeps everything for search
     });
 
-    console.log(`[Refresh] Processed Stops: ${freshStops.length} -> ${stops.length}`);
+    // console.log(`[Refresh] Processed Stops: ${freshStops.length} -> ${stops.length}`);
     allStops = stops;
     window.allStops = allStops;
 
-    // UPDATE MAP SOURCES (Delegated to shared function to ensure formatting/filtering is consistent with Initial Load)
-    addStopsToMap(allStops);
+    // UPDATE MAP SOURCES (Delegated to shared function)
+    addStopsToMap(allStops, { redirectMap, filterManager, updateConnectionLine });
 }
 // Search Logic
 
@@ -2360,17 +2443,33 @@ let currentPatternIndex = 0;
 async function showRouteOnMap(route, addToStack = true, options = {}) {
     // Snapshot current Zoom into the previous state (the Stop view) 
     // This allows "Back" to restore the exact zoom level.
-    if (historyStack.length > 0) {
-        const top = historyStack[historyStack.length - 1];
-        if (top.type === 'stop') {
-            top.data.savedZoom = map.getZoom();
-        }
+    const top = peekHistory();
+    if (top && top.type === 'stop') {
+        // If explicit startZoom provided (e.g. from Deep Link where map is flying), use it.
+        // Otherwise capture current zoom.
+        top.data.savedZoom = options.startZoom || map.getZoom();
     }
 
     if (addToStack) addToHistory('route', route);
 
     currentRoute = route;
+    window.currentRoute = route; // Crucial for Edit Tools
     currentPatternIndex = 0; // Reset to default
+
+    if (!map.isStyleLoaded()) {
+        console.log('[Router] Style not loaded. Waiting...');
+        await Promise.race([
+            new Promise(resolve => map.once('style.load', () => {
+                console.log('[Router] Style loaded event fired.');
+                resolve();
+            })),
+            new Promise(resolve => setTimeout(() => {
+                console.warn('[Router] Style load timed out (4s). Proceeding anyway...');
+                resolve();
+            }, 4000))
+        ]);
+    }
+
     await updateRouteView(route, options);
 
     // Update URL
@@ -2391,18 +2490,41 @@ async function updateRouteView(route, options = {}) {
         // Close stop info panel (but preserve stop highlight when coming from stop)
         const infoPanel = document.getElementById('info-panel');
         // Temporarily disable highlight clearing by NOT hiding info-panel through setSheetState
-        infoPanel.classList.add('hidden');
-        infoPanel.classList.remove('sheet-half', 'sheet-full', 'sheet-collapsed');
+        if (!options.suppressPanel) {
+            infoPanel.classList.add('hidden');
+            infoPanel.classList.remove('sheet-half', 'sheet-full', 'sheet-collapsed');
+        }
 
         // Route Info Card Setup
         const infoCard = document.getElementById('route-info');
-        document.getElementById('route-info-number').textContent = route.shortName;
-        document.getElementById('route-info-number').style.color = route.color ? `#${route.color}` : 'var(--primary)';
-        document.getElementById('route-info-number').style.color = route.color ? `#${route.color}` : 'var(--primary)';
-        // NOTE: Initial longName might be "Origin - Destination". We try to split it if possible, or just show as destination for now.
-        // Better to wait for stops data to render properly, but for immediate feedback:
-        document.getElementById('route-info-text').textContent = route.longName; // Will be properly formatted by updateRouteView line 1588
-        setSheetState(infoCard, 'half'); // Default to half open
+        const numberEl = document.getElementById('route-info-number');
+        const displayColor = getRouteDisplayColor(route);
+
+        numberEl.textContent = simplifyNumber(route.customShortName || route.shortName);
+        numberEl.style.color = displayColor;
+        numberEl.style.backgroundColor = `color-mix(in srgb, ${displayColor}, transparent 88%)`;
+
+        // Logic to Show Edit Button (Restored)
+        const editBtn = document.getElementById('btn-edit-route');
+        if (editBtn) {
+            const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+            const isPrivateIP = location.hostname.startsWith('192.168.') || location.hostname.startsWith('10.') || location.hostname.startsWith('172.');
+            const hasWriteAccess = (isLocalhost || isPrivateIP) && import.meta.env.DEV;
+
+            if (hasWriteAccess) {
+                editBtn.style.display = '';
+                editBtn.classList.remove('hidden');
+            } else {
+                editBtn.style.display = 'none';
+                editBtn.classList.add('hidden');
+            }
+        }
+        // Set initial state to avoid flicker while data fetches
+        document.getElementById('route-info-text').innerHTML = '<div class="loading">Loading details...</div>';
+
+        if (!options.suppressPanel) {
+            setSheetState(infoCard, 'half'); // Default to half open
+        }
         updateBackButtons(); // Ensure back button state is correct
 
         // Clear Filter state before showing route
@@ -2432,7 +2554,7 @@ async function updateRouteView(route, options = {}) {
         });
 
         // 1. Fetch Route Details (v3) to get patterns
-        const routeDetails = await api.fetchRouteDetailsV3(route.id);
+        const routeDetails = await api.fetchRouteDetailsV3(route.id, { strategy: 'cache-first' });
         if (requestId !== lastRouteUpdateId) return; // Stale check
         const patterns = routeDetails.patterns;
 
@@ -2448,13 +2570,15 @@ async function updateRouteView(route, options = {}) {
         // 2. Try to match by Headsign (most accurate for specific arrival clicks)
         else if (options.targetHeadsign && patterns.length > 0) {
             const normalizedTarget = options.targetHeadsign.toLowerCase().trim();
+            // console.log(`[Router] Attempting Headsign Match: "${normalizedTarget}" vs`, patterns.map(p => `"${p.headsign}"`));
+
             const matchedIndex = patterns.findIndex(p =>
                 p.headsign && p.headsign.toLowerCase().trim() === normalizedTarget
             );
             if (matchedIndex !== -1) {
                 currentPatternIndex = matchedIndex;
                 directionFound = true;
-                console.log(`[Debug] Matched pattern by headsign: ${options.targetHeadsign}`);
+                console.log(`[Debug] Matched pattern by headsign: ${options.targetHeadsign} -> Index ${matchedIndex}`);
             }
         }
 
@@ -2476,16 +2600,21 @@ async function updateRouteView(route, options = {}) {
                         const sId = String(s.id || s.stopId);
                         const normId = redirectMap.get(sId) || sId;
                         // Check against all equivalent stops of fromStopId
-                        return getEquivalentStops(options.fromStopId).has(normId);
+                        const equivs = getEquivalentStops(options.fromStopId);
+                        return equivs.includes(normId);
                     });
                 });
 
                 if (matchedIndex !== -1) {
                     currentPatternIndex = matchedIndex;
+                    directionFound = true;
                 }
-            } catch (err) {
-                console.warn('Failed to auto-detect direction:', err);
-                // Fallback to default index 0
+            } catch (e) {
+                console.warn('[Router] Failed to auto-detect direction from stop', e);
+            }
+        } else {
+            if (!patterns[currentPatternIndex]) {
+                currentPatternIndex = 0;
             }
         }
 
@@ -2497,8 +2626,26 @@ async function updateRouteView(route, options = {}) {
         const currentPatternStops = await api.fetchRouteStopsV3(route.id, currentPattern.patternSuffix);
         if (requestId !== lastRouteUpdateId) return; // Stale check
 
-        const originStop = currentPatternStops[0]?.name || '';
-        const destinationStop = currentPatternStops[currentPatternStops.length - 1]?.name || currentPattern.headsign;
+        const destinationHeadsign = getPatternHeadsign(route, currentPatternIndex, currentPattern.headsign);
+        let originHeadsign = '';
+        if (patterns.length > 1) {
+            // Find the other pattern to use its headsign as the origin
+            const otherIdx = patterns.findIndex((p, idx) => idx !== currentPatternIndex);
+            if (otherIdx !== -1) {
+                originHeadsign = getPatternHeadsign(route, otherIdx, patterns[otherIdx].headsign);
+            }
+        }
+
+        if (originHeadsign && destinationHeadsign && originHeadsign !== destinationHeadsign) {
+            document.getElementById('route-info-text').innerHTML = `
+                <div class="origin">${originHeadsign}</div>
+                <div class="destination">→ ${destinationHeadsign}</div>
+            `;
+        } else {
+            document.getElementById('route-info-text').innerHTML = `
+                <div class="destination">${destinationHeadsign || route.longName}</div>
+            `;
+        }
 
         if (patterns.length > 1) {
             switchBtn.classList.remove('hidden');
@@ -2512,17 +2659,8 @@ async function updateRouteView(route, options = {}) {
                     Router.updateRoute(route.shortName, currentPatternIndex);
                 }
             };
-
-            document.getElementById('route-info-text').innerHTML = `
-                <div class="origin">${originStop}</div>
-                <div class="destination">→ ${destinationStop}</div>
-            `;
         } else {
             switchBtn.classList.add('hidden');
-            document.getElementById('route-info-text').innerHTML = `
-                <div class="origin">${originStop}</div>
-                <div class="destination">→ ${destinationStop}</div>
-            `;
         }
 
         if (requestId !== lastRouteUpdateId) return; // Stale check before heavy map ops
@@ -2531,49 +2669,78 @@ async function updateRouteView(route, options = {}) {
 
         // 2. Fetch Polylines (Current & Ghost)
         const allSuffixes = patterns.map(p => p.patternSuffix).join(',');
-        const polylineData = await api.fetchRoutePolylineV3(route.id, allSuffixes);
+        const polylineData = await api.fetchRoutePolylineV3(route.id, allSuffixes, { strategy: 'cache-first' });
+        if (!polylineData) {
+            console.warn('[Route] No polyline data available (offline?)');
+            return;
+        }
         if (requestId !== lastRouteUpdateId) return; // Stale check
 
         // Plot Ghost Route (Other patterns)
         patterns.forEach(p => {
             if (p.patternSuffix !== patternSuffix) {
-                const ghostEncoded = polylineData[p.patternSuffix]?.encodedValue;
-                if (ghostEncoded) {
-                    const ghostCoords = api.decodePolyline(ghostEncoded);
-                    map.addSource(`route-ghost-${p.patternSuffix}`, {
-                        type: 'geojson',
-                        data: {
-                            type: 'Feature',
-                            geometry: { type: 'LineString', coordinates: ghostCoords }
-                        }
-                    });
-                    map.addLayer({
-                        id: `route-ghost-${p.patternSuffix}`,
-                        type: 'line',
-                        source: `route-ghost-${p.patternSuffix}`,
-                        layout: { 'line-join': 'round', 'line-cap': 'round' },
-                        paint: {
-                            'line-color': route.color ? `#${route.color}` : '#2563eb',
-                            'line-width': 4,
-                            'line-opacity': 0.3 // 30% opacity for ghost route
-                        }
-                    }, 'stops-layer'); // Below stops
+                const ghostEntry = polylineData[p.patternSuffix];
+                let ghostCoords = null;
+
+                if (Array.isArray(ghostEntry)) {
+                    ghostCoords = ghostEntry;
+                } else if (ghostEntry && ghostEntry.encodedValue) {
+                    ghostCoords = api.decodePolyline(ghostEntry.encodedValue);
+                }
+
+                if (ghostCoords) {
+                    // Check if source/layer already exists to prevent dupes/errors if re-running
+                    const ghostId = `route-ghost-${p.patternSuffix}`;
+                    if (!map.getSource(ghostId)) {
+                        map.addSource(ghostId, {
+                            type: 'geojson',
+                            data: {
+                                type: 'Feature',
+                                geometry: { type: 'LineString', coordinates: ghostCoords }
+                            }
+                        });
+                        map.addLayer({
+                            id: ghostId,
+                            type: 'line',
+                            source: ghostId,
+                            layout: { 'line-join': 'round', 'line-cap': 'round' },
+                            paint: {
+                                'line-color': getRouteDisplayColor(route),
+                                'line-width': 4,
+                                'line-opacity': 0.3, // 30% opacity for ghost route
+                                'line-emissive-strength': 1
+                            }
+                        }, 'stops-layer'); // Below stops
+                    }
                 }
             }
         });
 
         // Plot Current Route
-        const encodedPolyline = polylineData[patternSuffix]?.encodedValue;
-        if (encodedPolyline) {
-            const coordinates = api.decodePolyline(encodedPolyline);
+        const currEntry = polylineData[patternSuffix];
+        let coordinates = null;
 
-            map.addSource('route', {
-                type: 'geojson',
-                data: {
+        if (Array.isArray(currEntry)) {
+            coordinates = currEntry;
+        } else if (currEntry && currEntry.encodedValue) {
+            coordinates = api.decodePolyline(currEntry.encodedValue);
+        }
+
+        if (coordinates) {
+            if (map.getSource('route')) {
+                map.getSource('route').setData({
                     type: 'Feature',
                     geometry: { type: 'LineString', coordinates: coordinates }
-                }
-            });
+                });
+            } else {
+                map.addSource('route', {
+                    type: 'geojson',
+                    data: {
+                        type: 'Feature',
+                        geometry: { type: 'LineString', coordinates: coordinates }
+                    }
+                });
+            }
 
             // Gentle Zoom Out (No Panning)
             // If zoomed in close (>14.5), ease to 14. Otherwise keep current view.
@@ -2585,7 +2752,7 @@ async function updateRouteView(route, options = {}) {
         }
 
         // 3. Fetch Stops for "Bumps" / Beads
-        const stopsData = await api.fetchRouteStopsV3(route.id, patternSuffix);
+        const stopsData = await api.fetchRouteStopsV3(route.id, patternSuffix, { strategy: 'cache-first' });
         if (requestId !== lastRouteUpdateId) return; // Stale check
 
         const stopsGeoJSON = {
@@ -2619,9 +2786,10 @@ async function updateRouteView(route, options = {}) {
                 'line-cap': 'round'
             },
             paint: {
-                'line-color': route.color ? `#${route.color}` : '#2563eb',
+                'line-color': getRouteDisplayColor(route),
                 'line-width': 12, // Extra Bolder line
-                'line-opacity': 0.8
+                'line-opacity': 0.8,
+                'line-emissive-strength': 1
             }
         }); // Removing beforeId to place on top
 
@@ -2634,14 +2802,16 @@ async function updateRouteView(route, options = {}) {
                 'circle-color': '#ffffff', // White
                 'circle-radius': 3, // Small
                 'circle-stroke-width': 0,
-                'circle-opacity': 1
+                'circle-opacity': 1,
+                'circle-emissive-strength': 1
             }
         });
 
         // 4. Start Live Bus Tracking
         if (route.id) {
-            updateLiveBuses(route.id, patternSuffix, route.color ? `#${route.color}` : '#2563eb');
-            busUpdateInterval = setInterval(() => updateLiveBuses(route.id, patternSuffix, route.color ? `#${route.color}` : '#2563eb'), 5000);
+            const liveColor = getRouteDisplayColor(route);
+            updateLiveBuses(route.id, patternSuffix, liveColor);
+            busUpdateInterval = setInterval(() => updateLiveBuses(route.id, patternSuffix, liveColor), 5000);
         }
 
         // Force Stop Highlight to Top
@@ -2655,53 +2825,7 @@ async function updateRouteView(route, options = {}) {
     }
 }
 
-async function updateLiveBuses(routeId, patternSuffix, color) {
-    try {
-        const positionsData = await api.fetchBusPositionsV3(routeId, patternSuffix);
-        const buses = positionsData[patternSuffix] || [];
-
-        const busGeoJSON = {
-            type: 'FeatureCollection',
-            features: buses.map(bus => ({
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: [bus.lon, bus.lat] },
-                properties: {
-                    heading: bus.heading,
-                    id: bus.vehicleId,
-                    color: color
-                }
-            }))
-        };
-
-        if (map.getSource('live-buses')) {
-            map.getSource('live-buses').setData(busGeoJSON);
-        } else {
-            map.addSource('live-buses', { type: 'geojson', data: busGeoJSON });
-
-            // Bus Icon Layer (Arrow) - SDF Colored
-            map.addLayer({
-                id: 'live-buses-arrow',
-                type: 'symbol',
-                source: 'live-buses',
-                layout: {
-                    'icon-image': 'bus-arrow',
-                    'icon-size': 1.2, // Larger
-                    'icon-allow-overlap': true,
-                    'icon-rotate': ['get', 'heading'],
-                    'icon-rotation-alignment': 'map'
-                },
-                paint: {
-                    'icon-color': ['get', 'color'], // SDF coloring
-                    'icon-halo-color': '#ffffff',
-                    'icon-halo-width': 4,
-                    'icon-halo-blur': 0
-                }
-            });
-        }
-    } catch (error) {
-        console.error('Failed to update live buses:', error);
-    }
-}
+// updateLiveBuses moved to map-setup.js
 
 // Helper for Sheet State (Mobile)
 function setSheetState(panel, state) {
@@ -2852,7 +2976,7 @@ if (filterBtn) {
     document.getElementById('close-route-info').addEventListener(evt, e => e.stopPropagation(), { passive: false });
     // Also protect copy link buttons
     if (document.getElementById('copy-link-btn')) document.getElementById('copy-link-btn').addEventListener(evt, e => e.stopPropagation(), { passive: false });
-    if (document.getElementById('copy-route-link-btn')) document.getElementById('copy-route-link-btn').addEventListener(evt, e => e.stopPropagation(), { passive: false });
+    if (document.getElementById('copy-route-link-btn')) document.getElementById('copy-link-btn').addEventListener(evt, e => e.stopPropagation(), { passive: false });
 });
 
 
@@ -2946,6 +3070,7 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
     if (typeof stopEditing === 'function') stopEditing(true);
 
     setSheetState(panel, 'hidden');
+    metro.stopMetroTicker();
 
     try {
         window.currentStopId = null; // Clear Global State
@@ -3014,6 +3139,10 @@ function clearRoute() {
     if (map.getSource('selected-stop')) {
         map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
     }
+
+    // CRITICAL: Clear global state references so we don't accidentally restore them
+    currentRoute = null;
+    window.currentRoute = null;
 }
 
 
@@ -3043,108 +3172,6 @@ function loadSvgImage(map, id, url, width = 32, height = 32) {
     img.src = url;
 }
 
-// Load Custom Icons
-function loadImages(map) {
-    // Determine base URL for assets
-    const baseUrl = import.meta.env.BASE_URL || '/';
-
-    // Load SVG Icons (Rasterized)
-    // loadSvgImage(map, 'stop-icon', `${baseUrl}stop.svg`, 64, 64);
-
-    // UNIFIED CIRCLE (0 degree stops): Match stop-selected.svg style (Black, r=24.5, stroke=4)
-    const circleSize = 53; // Width of the SVG is 53
-    const circleCanvas = document.createElement('canvas');
-    circleCanvas.width = circleSize * 2; // Retina
-    circleCanvas.height = circleSize * 2;
-    const cCtx = circleCanvas.getContext('2d');
-
-    // Scale for retina
-    cCtx.scale(2, 2);
-
-    // Center logic (53/2 = 26.5)
-    const cx = 26.5;
-    const cy = 26.5;
-    const r = 24.5;
-
-    cCtx.fillStyle = '#000000';
-    cCtx.strokeStyle = '#ffffff';
-    cCtx.lineWidth = 4;
-
-    cCtx.beginPath();
-    cCtx.arc(cx, cy, r, 0, Math.PI * 2);
-    cCtx.fill();
-    cCtx.stroke();
-
-    map.addImage('stop-icon', cCtx.getImageData(0, 0, circleSize * 2, circleSize * 2), { pixelRatio: 2 });
-    // STOPS FAR AWAY: Simple Circle (Programmatic)
-    const farSize = 24; // Small canvas
-    const farCanvas = document.createElement('canvas');
-    farCanvas.width = farSize;
-    farCanvas.height = farSize;
-    const farCtx = farCanvas.getContext('2d');
-
-    farCtx.fillStyle = 'rgba(60, 60, 60, 0.7)'; // Less intense black (Dark Grey, slight opacity)
-    farCtx.beginPath();
-    farCtx.arc(farSize / 2, farSize / 2, 6, 0, Math.PI * 2); // Radius 6 = 12px circle
-    farCtx.fill();
-
-    map.addImage('stop-far-away-icon', farCtx.getImageData(0, 0, farSize, farSize), { pixelRatio: 2 });
-
-    // Unified Design: Use 'stop-selected.svg' (Circle + Arrow, Black) for ALL close-up stops
-    // Pivot Issue: The visual center (circle) is at Y=49.35, but image height is 76 (Center 38).
-    // Mapbox rotates around 38. We need it to rotate around 49.35.
-    // Solution: Pad the image bottom so Center Y = 49.35. Total Height = 49.35 * 2 = 98.7.
-
-    const svgUrl = `${baseUrl}stop-selected.svg`;
-    const imgIco = new Image();
-    imgIco.crossOrigin = 'Anonymous';
-    imgIco.onload = () => {
-        // Source Logical Size: 53 x 76
-        // Target Pixel Size (2x): 106 x 152
-        // Pivot Y (Logical): 49.35
-        // New Logical Height: 49.35 * 2 = 98.7
-        // New Pixel Height (2x): 197.4 -> 198
-
-        const padCanvas = document.createElement('canvas');
-        padCanvas.width = 106; // 53 * 2
-        padCanvas.height = 198; // 99 * 2 (Pivot at 99)
-        const pCtx = padCanvas.getContext('2d');
-
-        // Draw image at Top (0,0) so Pivot (49.35 * 2 = 98.7) aligns with Center (198 / 2 = 99)
-        // Wait, if I draw at 0, Pivot is at 98.7. Center is 99. Close enough.
-        pCtx.drawImage(imgIco, 0, 0, 106, 152);
-
-        const imageData = pCtx.getImageData(0, 0, 106, 198);
-
-        // Add both icons using this centered image
-        map.addImage('stop-close-up-icon', imageData, { pixelRatio: 2 });
-        map.addImage('stop-selected-icon', imageData, { pixelRatio: 2 });
-    };
-    imgIco.onerror = (e) => console.error('Failed to load stop-selected.svg for padding', e);
-    imgIco.src = svgUrl;
-
-    // Create an SDF Arrow Icon programmatically
-    const width = 48;
-    const height = 48;
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-
-    // Draw Arrow
-    ctx.fillStyle = '#000000'; // SDF requires black drawing on transparent
-    ctx.beginPath();
-    ctx.moveTo(width / 2, 0); // Top
-    ctx.lineTo(width, height); // Bottom Right
-    ctx.lineTo(width / 2, height * 0.7); // Inner Notch
-    ctx.lineTo(0, height); // Bottom Left
-    ctx.closePath();
-    ctx.fill();
-
-    // Add to map as SDF
-    const imageData = ctx.getImageData(0, 0, width, height);
-    if (!map.hasImage('bus-arrow')) map.addImage('bus-arrow', imageData, { sdf: true });
-}
 
 // Updated Multi-Target Connection Line Logic with Path Separation
 function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId = null) {
@@ -3261,22 +3288,16 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                 // Generate Signature
                 // HUB COLOR LOGIC: Use HUB PARENT IDs for generating color signature
                 // This ensures all routes going to the same "Hub" get the same color.
-                const ids = segmentStops
-                    .map(s => {
-                        const id = s.id || s;
-                        return hubMap.get(id) || id; // Normalize to HUB
-                    })
-                    .filter((id, i, arr) => i === 0 || id !== arr[i - 1]) // Dedup adjacent
-                    .join('|');
+                const ids = generatePathSignature(segmentStops, null, hubMap);
 
-                if (!pathGroups.has(ids)) {
+                if (ids && !pathGroups.has(ids)) {
                     pathGroups.set(ids, {
                         routes: [],
                         stops: segmentStops,
                         pattern: matchedPattern
                     });
                 }
-                pathGroups.get(ids).routes.push(r);
+                if (ids) pathGroups.get(ids).routes.push(r);
             }
         });
 
@@ -3346,7 +3367,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             // Fix: Don't downgrade selected lines when hovering. Check if THIS target is selected.
             const isPersistent = filterManager.state.targetIds && filterManager.state.targetIds.has(targetId);
 
-            if (isPersistent && group.pattern) {
+            if ((isPersistent || isHover) && group.pattern) {
                 const bestPattern = group.pattern;
                 const bestRoute = group.routes[0]; // Just need one route ID for fetching
 
@@ -3364,8 +3385,8 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                             console.warn('Polyline slice failed', e);
                         }
                     } else {
-                        // Trigger Fetch
-                        fetchAndCacheGeometry(bestRoute, bestPattern);
+                        // Trigger Fetch (Cache-Only for stability during picking)
+                        fetchAndCacheGeometry(bestRoute, bestPattern, { strategy: 'cache-only' });
                     }
                 }
             }
@@ -3490,57 +3511,51 @@ function getCatmullRomSpline(points, tension = 0.25, numOfSegments = 16) {
 function slicePolyline(points, originStop, targetStop) {
     if (!points || points.length < 2) return null;
 
-    // Helper: Find all candidate indices within a tolerance (e.g. 50-100m approx in degrees)
-    // 0.001 degrees ~ 111m. Let's look for closest candidates.
-    // Instead of fixed threshold, let's just find the top 3 closest points for each stop?
-    // Or simpler: Find Global Min for Origin, Global Min for Target.
-    // If O <= T, good.
-    // If O > T, check if there's an alternative O (earlier) or alternative T (later) that is "close enough".
-
-    const getCandidates = (pt) => {
-        let candidates = [];
-        const limit = 3; // Top 3
+    // Helper: Find nearest index
+    const getNearestIndex = (pt) => {
+        let minDist = Infinity;
+        let index = -1;
         for (let i = 0; i < points.length; i++) {
-            const d = (points[i][0] - pt.lon) ** 2 + (points[i][1] - pt.lat) ** 2;
-            candidates.push({ i, d });
-        }
-        candidates.sort((a, b) => a.d - b.d);
-        return candidates.slice(0, limit);
-    };
+            // points are [lng, lat] (from decodePolyline)
+            const lng = points[i][0];
+            const lat = points[i][1];
 
-    const origins = getCandidates(originStop);
-    const targets = getCandidates(targetStop);
-
-    let bestPair = null;
-    let minCombinedDist = Infinity;
-
-    for (const o of origins) {
-        for (const t of targets) {
-            if (o.i <= t.i) {
-                const combined = o.d + t.d;
-                if (combined < minCombinedDist) {
-                    minCombinedDist = combined;
-                    bestPair = { start: o.i, end: t.i };
-                }
+            const d = (lng - pt.lon) ** 2 + (lat - pt.lat) ** 2;
+            if (d < minDist) {
+                minDist = d;
+                index = i;
             }
         }
+        return index;
+    };
+
+    const idxOriginal = getNearestIndex(originStop);
+    const idxTarget = getNearestIndex(targetStop);
+
+    if (idxOriginal === -1 || idxTarget === -1) return null;
+
+    // Ensure directionality (Origin -> Target)
+    let segment = [];
+
+    if (idxOriginal <= idxTarget) {
+        segment = points.slice(idxOriginal, idxTarget + 1);
+    } else {
+        // Fallback to Spline
+        return null;
     }
 
-    if (bestPair) {
-        return points.slice(bestPair.start, bestPair.end + 1);
-    }
-
-    return null;
+    // Return segments directly (already [lng, lat])
+    return segment;
 }
 
 // fetchRoutePolylineV3 definition removed (moved to api.js)
 
-async function fetchAndCacheGeometry(route, pattern) {
+async function fetchAndCacheGeometry(route, pattern, options = {}) {
     if (pattern._fetchingPolyline || pattern._polyfailed) return;
     pattern._fetchingPolyline = true;
 
     try {
-        const data = await api.fetchRoutePolylineV3(route.id, pattern.suffix);
+        const data = await api.fetchRoutePolylineV3(route.id, pattern.suffix, options);
 
         // console.log(`[Debug] Polyline API Response for ${route.shortName} (${pattern.suffix}):`, JSON.stringify(data));
         // Data format usually: { [suffix]: "encoded_string" } OR { [suffix]: { encodedValue: "..." } }
@@ -3548,6 +3563,9 @@ async function fetchAndCacheGeometry(route, pattern) {
         let encoded = null;
 
         if (typeof entry === 'string') {
+            encoded = entry;
+        } else if (Array.isArray(entry)) {
+            // Updated API returns decoded array for validation/slices
             encoded = entry;
         } else if (entry && typeof entry === 'object') {
             encoded = entry.encodedValue || entry.points || entry.geometry;
@@ -3571,9 +3589,9 @@ async function fetchAndCacheGeometry(route, pattern) {
             }
         }
 
-        if (typeof encoded === 'string') {
-            pattern._decodedPolyline = api.decodePolyline(encoded);
-            console.log(`[Debug] Polyline fetched & decoded for ${route.shortName} (${pattern.suffix}), points: ${pattern._decodedPolyline.length}`);
+        if (typeof encoded === 'string' || Array.isArray(encoded)) {
+            pattern._decodedPolyline = (typeof encoded === 'string') ? api.decodePolyline(encoded) : encoded;
+            // console.log(`[Debug] Polyline fetched & decoded for ${route.shortName} (${pattern.suffix}), points: ${pattern._decodedPolyline.length}`);
 
             // Re-Draw if still selected
             if (filterManager.state.active && filterManager.state.targetIds.size > 0) {
@@ -3593,788 +3611,115 @@ async function fetchAndCacheGeometry(route, pattern) {
 }
 // --- Edit Tools Integration ---
 
-let isEditing = false;
-editState = {
-    stopId: null,
-    overrides: {}, // { lat, lon, bearing }
-    merges: []     // [id1, id2...]
-};
-const editSessionCache = {}; // Cache for unapplied drafts: { stopId: { overrides, parent, unmerges } }
+// --- Route Overrides Logic ---
+let routesConfig = { routeOverrides: {} };
+window.routesConfig = routesConfig;
 
-// Map Markers for Editing
-let editLocMarker = null;
-let editRotMarker = null;
-let editRotLine = null; // GeoJSON source for line between center and rotation handle
-
-function initEditTools() {
-    const editBtn = document.getElementById('btn-edit-stop');
-    const editBlock = document.getElementById('stop-edit-block');
-    const applyBtn = document.getElementById('edit-btn-apply');
-
-    const toggleLoc = document.getElementById('edit-toggle-loc');
-    const toggleRot = document.getElementById('edit-toggle-rot');
-    const toggleMerge = document.getElementById('edit-toggle-merge');
-
-    if (!editBtn || !editBlock) return;
-
-    // Toggle Edit Mode
-    editBtn.addEventListener('click', () => {
-        isEditing = !isEditing;
-        editBtn.classList.toggle('active', isEditing);
-
-        // Reset toggles when closing/opening
-        if (isEditing) {
-            editBlock.classList.remove('hidden');
-            editBlock.style.display = 'flex';
-            // Initialize State
-            startEditing(window.currentStopId);
-        } else {
-            editBlock.classList.add('hidden');
-            editBlock.style.display = 'none';
-            editBlock.style.display = 'none';
-            stopEditing(true);
-            // updateMapFilterState(); // Handled in stopEditing
-        }
-    });
-
-    // Toggles
-    toggleLoc.addEventListener('click', () => {
-        toggleLoc.classList.toggle('active');
-        if (!toggleLoc.classList.contains('active') && editState.overrides) {
-            delete editState.overrides.lat;
-            delete editState.overrides.lon;
-        }
-        updateEditMap();
-        checkDirtyState();
-    });
-
-    toggleRot.addEventListener('click', () => {
-        toggleRot.classList.toggle('active');
-        if (!toggleRot.classList.contains('active') && editState.overrides) {
-            delete editState.overrides.bearing;
-        }
-        updateEditMap();
-        checkDirtyState();
-    });
-
-    toggleMerge.addEventListener('click', () => {
-        const wasActive = toggleMerge.classList.contains('active');
-        const nowActive = !wasActive;
-        toggleMerge.classList.toggle('active', nowActive);
-
-        // Disable Hub if Merge active
-        if (nowActive) {
-            document.getElementById('edit-toggle-hub').classList.remove('active');
-            setEditPickMode('merge');
-        } else {
-            setEditPickMode(null);
-        }
-    });
-
-    const toggleHub = document.getElementById('edit-toggle-hub');
-    toggleHub.addEventListener('click', () => {
-        const wasActive = toggleHub.classList.contains('active');
-        const nowActive = !wasActive;
-        toggleHub.classList.toggle('active', nowActive);
-
-        // Disable Merge if Hub active
-        if (nowActive) {
-            toggleMerge.classList.remove('active');
-            setEditPickMode('hub');
-        } else {
-            // Turning off defaults to null (no picker)
-            setEditPickMode(null);
-        }
-    });
-
-    // Apply
-    applyBtn.addEventListener('click', async () => {
-        await saveEditChanges();
-        // Don't close, just update state.
-    });
-}
-
-function startEditing(stopId) {
-    if (!stopId) return;
-    const stop = allStops.find(s => s.id === stopId);
-    if (!stop) return;
-
-    if (editSessionCache[stopId]) {
-        console.log('[EditTools] Restoring draft for:', stopId);
-        editState = {
-            stopId: stopId,
-            overrides: { ...editSessionCache[stopId].overrides },
-            mergeParent: editSessionCache[stopId].mergeParent,
-            unmerges: [...(editSessionCache[stopId].unmerges || [])],
-            hubTarget: editSessionCache[stopId].hubTarget,
-            unhubs: [...(editSessionCache[stopId].unhubs || [])]
-        };
-    } else {
-        // 2. Load from Config
-        editState = {
-            stopId: stopId,
-            overrides: {},
-            mergeParent: null,
-            unmerges: [],
-            hubTarget: null,
-            unhubs: []
-        };
-
-        if (stopsConfig?.overrides?.[stopId]) {
-            editState.overrides = { ...stopsConfig.overrides[stopId] };
-        }
-
-        // Existing Hub?
-        if (stopsConfig?.hubs?.[stopId]) {
-            editState.hubTarget = stopsConfig.hubs[stopId];
-        } else {
-            // Check reverse (hubSourcesMap) to see if this stop is the Leader?
-            // If I am Leader, I don't point to anyone. `hubTarget` is null.
-            // But I might want to link TO someone else.
-            editState.hubTarget = null;
-        }
-    }
-
-    // Set toggle state based on overrides (Active = Has Override)
-    const toggleLoc = document.getElementById('edit-toggle-loc');
-    const toggleRot = document.getElementById('edit-toggle-rot');
-
-    if (editState.overrides.lat || editState.overrides.lon) {
-        toggleLoc.classList.add('active');
-    } else {
-        toggleLoc.classList.remove('active');
-    }
-
-    if (editState.overrides.bearing !== undefined) {
-        toggleRot.classList.add('active');
-    } else {
-        toggleRot.classList.remove('active');
-    }
-
-    updateEditMergedList();
-    updateEditMap();
-    updateMapFilterState(); // Trigger hide of original
-    checkDirtyState();
-}
-
-function stopEditing(persist = false) {
+async function loadRoutesConfig() {
     try {
-        // Persist State if requested
-        if (persist && editState.stopId) {
-            editSessionCache[editState.stopId] = {
-                overrides: { ...editState.overrides },
-                mergeParent: editState.mergeParent,
-                unmerges: editState.unmerges,
-                hubTarget: editState.hubTarget,
-                unhubs: editState.unhubs
-            };
-            console.log('[EditTools] Persisted draft for:', editState.stopId);
-        } else if (!persist && editState.stopId) {
-            delete editSessionCache[editState.stopId];
+        const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+        // Add cache buster to ensure fresh config on reload
+        const response = await fetch(`${basePath}data/routes_config.json?v=${Date.now()}`);
+        if (response.ok) {
+            const data = await response.json();
+            routesConfig = data || { routeOverrides: {} };
+            if (!routesConfig.routeOverrides) routesConfig.routeOverrides = {};
+            window.routesConfig = routesConfig;
+            // console.log('[Config] Loaded routes config', routesConfig);
+            if (allRoutes && allRoutes.length > 0) applyRouteOverrides();
         }
     } catch (e) {
-        console.error('[EditTools] Error persisting state:', e);
-    }
-
-    // Always Reset UI
-    const editBtn = document.getElementById('btn-edit-stop');
-    if (editBtn) editBtn.classList.remove('active');
-
-    const editBlock = document.getElementById('stop-edit-block');
-    if (editBlock) {
-        editBlock.classList.add('hidden');
-        editBlock.style.display = 'none';
-    }
-
-    isEditing = false;
-
-    // Clear Markers
-    if (editLocMarker) { editLocMarker.remove(); editLocMarker = null; }
-    if (editRotMarker) { editRotMarker.remove(); editRotMarker = null; }
-
-    if (map.getSource('edit-rot-line')) {
-        map.removeLayer('edit-rot-line-layer');
-        map.removeSource('edit-rot-line');
-    }
-
-    // Reset Toggles
-    document.querySelectorAll('.edit-chip').forEach(el => el.classList.remove('active'));
-    setEditPickMode(null); // Use null to turn off
-
-    // Clear Edit State ID so updateMapFilterState RESTORES the original marker
-    editState.stopId = null;
-
-    updateMapFilterState(); // Restore original stop visibility
-}
-
-// Rotation Handler Global Reference (need to remove listeners on cleanup)
-let rotateMouseHandler = null;
-let rotateUpHandler = null;
-
-function updateEditMap() {
-    const stopId = editState.stopId;
-    const stopFeature = map.querySourceFeatures('stops', { filter: ['==', ['get', 'id'], stopId] })[0];
-    const stop = stopFeature ? stopFeature.properties : allStops.find(s => s.id === stopId);
-
-    if (!stop) return;
-
-    let lat, lon;
-    if (editState.overrides.lat) lat = parseFloat(editState.overrides.lat);
-    if (editState.overrides.lon) lon = parseFloat(editState.overrides.lon);
-
-    if ((isNaN(lat) || isNaN(lon)) && stopFeature && stopFeature.geometry) {
-        lon = stopFeature.geometry.coordinates[0];
-        lat = stopFeature.geometry.coordinates[1];
-    }
-    if (isNaN(lat) || isNaN(lon)) {
-        lat = parseFloat(stop.lat);
-        lon = parseFloat(stop.lon);
-    }
-    if (isNaN(lat) || isNaN(lon)) return;
-
-    const bearing = editState.overrides.bearing !== undefined ? editState.overrides.bearing : (stop.bearing || 0);
-
-    const toggleLoc = document.getElementById('edit-toggle-loc');
-    const toggleRot = document.getElementById('edit-toggle-rot');
-
-    // Always show the unified marker in Edit Mode
-    let el;
-    if (!editLocMarker) {
-        el = document.createElement('div');
-        el.className = 'edit-stop-marker';
-        el.innerHTML = `
-            <svg width="63.6" height="91.2" viewBox="0 0 53 76" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="26.5" cy="49.3533" r="24.5" fill="black" stroke="white" stroke-width="4"/>
-                <path d="M22.1698 4.5C24.0943 1.1667 28.9054 1.16675 30.83 4.5L35.9657 13.3945C37.8902 16.7278 35.4845 20.8944 31.6356 20.8945H21.3651C17.5161 20.8945 15.1096 16.7279 17.0341 13.3945L22.1698 4.5Z" fill="black" stroke="white" stroke-width="4"/>
-            </svg>
-            <div class="edit-arrow-zone" title="Drag to Rotate"></div>
-            <div class="edit-body-zone" title="Drag to Move"></div>
-        `;
-
-        // Marker
-        editLocMarker = new mapboxgl.Marker({
-            element: el,
-            draggable: true,
-        })
-            .setLngLat([lon, lat])
-            .setRotation(bearing) // Native rotation of the DIV
-            .setRotationAlignment('map') // Align to map (North) or 'viewport'? 'map' means 0 is North.
-            .addTo(map);
-
-        const arrowZone = el.querySelector('.edit-arrow-zone');
-
-        // --- Rotation Logic ---
-        arrowZone.addEventListener('mousedown', (e) => {
-            e.stopPropagation(); // Prevent Drag Start (Movement)
-            e.preventDefault();
-
-            el.classList.add('rotating');
-            map.dragPan.disable(); // Prevent map panning while rotating
-
-            // Center of the marker in pixels
-            const pos = map.project([lon, lat]);
-
-            const onMouseMove = (moveEvent) => {
-                const dx = moveEvent.clientX - pos.x;
-                const dy = moveEvent.clientY - pos.y;
-                /*
-                   Mapbox Bearing: 0 = North (Up), 90 = East (Right).
-                   Math.atan2(y, x): 0 = Right, -PI/2 = Up.
-                   Angle differences:
-                   Math 0deg = Mapbox 90
-                   Math -90deg = Mapbox 0
-                   Math 180deg = Mapbox 270 (-90)
-                   Math 90deg = Mapbox 180
- 
-                   Formula: Mapbox = 90 + (Math * 180 / PI)
-                */
-
-                let rad = Math.atan2(dy, dx);
-                let deg = rad * (180 / Math.PI);
-
-                // Convert to Bearing (0 North, CW)
-                // atan2(0, 1) [Right] -> 0 deg. Mapbox expect 90.
-                // atan2(-1, 0) [Up] -> -90 deg. Mapbox expect 0.
-
-                let newBearing = 90 + deg;
-                if (newBearing < 0) newBearing += 360;
-                if (newBearing >= 360) newBearing -= 360;
-
-                // Snap to 15 degrees? No, smooth.
-                newBearing = Math.round(newBearing);
-
-                // Update State
-                editState.overrides.bearing = newBearing;
-
-                // LIGHT UP BUTTON
-                if (toggleRot) toggleRot.classList.add('active');
-
-                // Update Marker Visual (Immediate)
-                editLocMarker.setRotation(newBearing);
-
-                // Update Toggles Check
-                checkDirtyState();
-            };
-
-            const onMouseUp = () => {
-                document.removeEventListener('mousemove', onMouseMove);
-                document.removeEventListener('mouseup', onMouseUp);
-                el.classList.remove('rotating');
-                map.dragPan.enable();
-            };
-
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
-        });
-
-        // --- Drag Logic (Body) ---
-        editLocMarker.on('drag', () => {
-            const lngLat = editLocMarker.getLngLat();
-            editState.overrides.lon = parseFloat(lngLat.lng.toFixed(5));
-            editState.overrides.lat = parseFloat(lngLat.lat.toFixed(5));
-
-            // LIGHT UP BUTTON
-            if (toggleLoc) toggleLoc.classList.add('active');
-
-            // Keep state consistent
-            lon = lngLat.lng;
-            lat = lngLat.lat;
-
-            checkDirtyState();
-        });
-
-    } else {
-        // Update Position & Rotation if it already exists
-        editLocMarker.setLngLat([lon, lat]);
-        editLocMarker.setRotation(bearing);
-    }
-
-    // Cleanup old artifacts if they exist (legacy safety)
-    if (editRotMarker) { editRotMarker.remove(); editRotMarker = null; }
-    if (map.getSource('edit-rot-line')) {
-        map.removeLayer('edit-rot-line-layer');
-        map.removeSource('edit-rot-line');
+        console.warn('Failed to load routes_config.json', e);
     }
 }
 
-function updateEditStateFromMap() {
-    // Sync state if needed
-}
+function applyRouteOverrides() {
+    console.log('[Config] Applying Route Overrides...', window.routesConfig?.routeOverrides ? Object.keys(window.routesConfig.routeOverrides).length : 0);
 
-let editPickHandler = null;
+    if (!window.routesConfig?.routeOverrides) return;
 
-function setEditPickMode(mode) {
-    // Turning off if mode is null (or falsy)
-    if (!mode) {
-        window.isPickModeActive = false;
-        window.editPickModeType = null;
-        const existing = document.getElementById('edit-pick-banner');
-        if (existing) existing.remove();
-        document.body.style.cursor = 'default';
-        if (editPickHandler) map.off('click', 'stops-layer', editPickHandler);
-        return;
-    }
+    // Detect locale loosely or assume EN/KA based on something? 
+    // Ideally we want to patch the object with the *correct* locale string.
+    // BUT `allRoutes` is usually monolingual based on what was fetched.
+    // If we loaded EN routes, `longName` is EN.
+    // If we have an override, we should check if we have an override for that locale.
 
-    // Turning on
-    window.isPickModeActive = true;
-    window.editPickModeType = mode; // 'merge' or 'hub'
+    // We can infer locale from document.documentElement.lang or URL? 
+    // Or just look at what's in `allRoutes`? 
+    // Actually, `api.js` loads specific locale files.
+    // Let's assume we patch `longName` if a matching locale override exists.
+    // AND we attach `_overrides` object for components that support dual-lang or dynamic reuse.
 
-    const banner = document.createElement('div');
-    banner.id = 'edit-pick-banner';
-    banner.style.cssText = `
-        position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-        background: ${mode === 'hub' ? '#2563eb' : '#ef4444'}; color: white; padding: 12px 24px; border-radius: 50px;
-        font-weight: 600; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        z-index: 999999; cursor: pointer; display: flex; align-items: center; gap: 12px;
-    `;
-    const label = mode === 'hub' ? 'Select a stop to Hub with...' : 'Select a stop to merge into...';
+    // Simple approach: Check URL locale or default 'en'
+    const urlParams = new URLSearchParams(window.location.search);
+    const locale = urlParams.get('locale') || 'en';
 
-    banner.innerHTML = `
-        <span>${label}</span>
-        <span style="font-size:18px; line-height:1; background:rgba(255,255,255,0.25); width:24px; height:24px; display:flex; align-items:center; justify-content:center; border-radius:50%; flex-shrink:0">×</span>
-    `;
+    let updateCount = 0;
 
-    // Remove existing
-    const existing = document.getElementById('edit-pick-banner');
+    allRoutes.forEach(route => {
+        // Robust ID Matching: Check raw, stripped, and prefixed
+        let override = window.routesConfig.routeOverrides[route.id];
 
-    // If toggling OFF (mode is null)
-    if (mode === null) {
-        // If we were in Hub mode, we might need cleanup specific to it
-        if (window.editPickModeType === 'hub') {
-            // Cleanup Hub Listeners
-            if (editPickHandler) map.off('click', 'stops-layer', editPickHandler);
+        if (!override && route.id.includes(':')) {
+            const stripped = route.id.split(':')[1];
+            override = window.routesConfig.routeOverrides[stripped];
         }
 
-        // General Cleanup
-        window.isPickModeActive = false;
-        window.editPickModeType = null;
-        if (existing) existing.remove();
-        document.body.style.cursor = 'default';
-        if (editPickHandler) map.off('click', 'stops-layer', editPickHandler); // Redundant but safe
-
-        // Re-open panel fully
-        setSheetState(document.getElementById('info-panel'), 'half');
-        return;
-    }
-
-    // Normal ON Logic
-    window.isPickModeActive = true;
-    window.editPickModeType = mode; // 'merge' or 'hub'
-
-    const bannerEl = document.createElement('div');
-    bannerEl.id = 'edit-pick-banner';
-    bannerEl.style.cssText = `
-        position: fixed; top: 0; left: 0; width: 100%; height: 60px;
-        background: #3b82f6; color: white; display: flex; align-items: center; justify-content: center;
-        font-weight: bold; z-index: 9999; box-shadow: 0 2px 10px rgba(0,0,0,0.2); cursor: pointer;
-    `;
-    bannerEl.innerHTML = mode === 'merge' ?
-        'Tap a stop to MERGE this one into...' :
-        'Tap stops to HUB with (Click banner to finish)';
-
-    if (existing) existing.remove();
-    document.body.appendChild(bannerEl);
-    document.body.style.cursor = 'crosshair';
-
-    // Close Panel to see map
-    setSheetState(document.getElementById('info-panel'), 'collapsed');
-
-    // Click Handler
-    if (editPickHandler) map.off('click', 'stops-layer', editPickHandler);
-
-    editPickHandler = (e) => {
-        const targetFeature = e.features[0];
-        if (!targetFeature) return;
-        const targetId = targetFeature.properties.id;
-
-        if (targetId === editState.stopId) {
-            // alert("Cannot pick itself!"); // Annoying in multi-pick?
-            return;
+        if (!override && !route.id.includes(':')) {
+            override = window.routesConfig.routeOverrides[`1:${route.id}`];
         }
 
-        if (window.editPickModeType === 'merge') {
-            editState.mergeParent = targetId;
-            // Merge is single-shot
-            setEditPickMode(null);
-            document.getElementById('edit-toggle-merge').classList.remove('active');
-            updateEditMergedList();
-            checkDirtyState();
-            setSheetState(document.getElementById('info-panel'), 'half');
+        // Debug specific route
+        // if (route.id === 'minibusR24637') {
+        //     console.log(`[Config] applyRouteOverrides checking minibusR24637. Override exists?`, !!override, override);
+        // }
+
+        // DEBUG: Log first 3 routes to check ID format
+        /*
+        if (updateCount < 3) {
+             // console.log(`[Config] Checking route ID: '${route.id}'. Override exists? ${!!override}`);
         }
-        else if (window.editPickModeType === 'hub') {
-            // Hub is Multi-Shot Toggle
-            if (!editState.hubAdds) editState.hubAdds = [];
+        */
 
-            // Toggle logic: If already added, remove?
-            // Or if already in unhubs, remove from unhubs?
+        if (override) {
+            updateCount++;
+            route._overrides = override; // Attach for reference
+            if (override.shortName) route.customShortName = override.shortName; // Display Alias
+            // Do NOT overwrite route.shortName to preserve URLs and linking logic
+            if (override.color) route.color = override.color;
+            if (override.textColor) route.textColor = override.textColor;
 
-            // 1. If in 'unhubs', remove it from unhubs (Re-adding existing sibling)
-            if (editState.unhubs && editState.unhubs.includes(targetId)) {
-                editState.unhubs = editState.unhubs.filter(id => id !== targetId);
+            // Complex overrides (destinations, longName) are handled during render/details
+
+            if (override.longName && override.longName[locale]) {
+                route.longName = override.longName[locale];
             }
-            // 2. Else check if already in hubAdds
-            else if (editState.hubAdds.includes(targetId)) {
-                // Remove from adds (Toggle off new selection)
-                editState.hubAdds = editState.hubAdds.filter(id => id !== targetId);
-            }
-            // 3. Else Add
-            else {
-                editState.hubAdds.push(targetId);
-            }
-
-            updateEditMergedList();
-            checkDirtyState();
-            // Do NOT close panel or mode
         }
-    };
-
-    map.on('click', 'stops-layer', editPickHandler);
-
-    bannerEl.addEventListener('click', () => {
-        // Finishing Selection
-        setEditPickMode(null);
-        document.getElementById('edit-toggle-merge').classList.remove('active');
-        document.getElementById('edit-toggle-hub').classList.remove('active');
-        setSheetState(document.getElementById('info-panel'), 'half');
-    });
-}
-
-function updateEditMergedList() {
-    // Show Children
-    const container = document.getElementById('edit-merged-list');
-    container.innerHTML = '';
-
-    // 1. Merged Children (I am the target, these are hidden into me)
-    const mergedChildren = mergeSourcesMap.get(editState.stopId) || [];
-    mergedChildren.forEach(childId => {
-        const span = document.createElement('span');
-        span.className = 'merge-chip';
-        span.style.cssText = 'background:#e5e7eb; padding:2px 6px; border-radius:12px; display:inline-flex; align-items:center; gap:4px';
-        span.innerHTML = `#${childId} <span class="del-btn" style="cursor:pointer; font-weight:bold">×</span>`;
-
-        span.querySelector('.del-btn').addEventListener('click', () => {
-            // Un-merge this child
-            if (!editState.unmerges) editState.unmerges = [];
-            editState.unmerges.push(childId);
-            span.remove();
-            checkDirtyState();
-        });
-        container.appendChild(span);
     });
 
-    // 2. Hub Siblings (We are in the same Hub Group)
-    // We combine:
-    //  - Existing Siblings (Global Config) (Minus 'unhubs')
-    //  - New Siblings (editState.hubAdds)
-
-    const myHubId = hubMap.get(editState.stopId);
-    let currentSiblings = [];
-
-    if (myHubId) {
-        const allMembers = hubSourcesMap.get(myHubId) || [];
-        currentSiblings = allMembers.filter(id => id !== editState.stopId);
-    }
-
-    // Filter out unhubs
-    if (editState.unhubs) {
-        currentSiblings = currentSiblings.filter(id => !editState.unhubs.includes(id));
-    }
-
-    // Add new adds
-    if (editState.hubAdds) {
-        editState.hubAdds.forEach(id => {
-            if (!currentSiblings.includes(id) && id !== editState.stopId) {
-                currentSiblings.push(id);
-            }
-        });
-    }
-
-
-    if (currentSiblings.length > 0) {
-        const label = document.createElement('div');
-        label.style.cssText = 'font-size: 0.75rem; color: #666; margin-top: 4px; width:100%;';
-        label.textContent = 'Hub Siblings:';
-        container.appendChild(label);
-    }
-
-    currentSiblings.forEach(siblingId => {
-        const span = document.createElement('span');
-        span.style.cssText = 'background:#dbeafe; color:#1e40af; padding:2px 6px; border-radius:12px; display:inline-flex; align-items:center; gap:4px';
-        const isNew = editState.hubAdds && editState.hubAdds.includes(siblingId);
-        span.innerHTML = `${siblingId} ${isNew ? '<span style="font-size:0.7em; opacity:0.7">(new)</span>' : ''} <span class="del-btn" style="cursor:pointer; font-weight:bold">×</span>`;
-
-        span.querySelector('.del-btn').addEventListener('click', () => {
-            // If it was a 'hubAdd', just remove from hubAdd
-            if (editState.hubAdds && editState.hubAdds.includes(siblingId)) {
-                editState.hubAdds = editState.hubAdds.filter(id => id !== siblingId);
-            } else {
-                // It's an existing sibling, add to unhubs
-                if (!editState.unhubs) editState.unhubs = [];
-                editState.unhubs.push(siblingId);
-            }
-            // Refresh UI
-            updateEditMergedList(); // Visual refresh only?
-            // Need to actually remove element or re-render
-            // Re-render is safer
-            span.remove();
-            // Actually, re-render whole list to be safe?
-            // Since we manually removed span, let's just check dirty state.
-            checkDirtyState();
-        });
-        container.appendChild(span);
-    });
-
-    // Show Pending Parent (Merge)
-    if (editState.mergeParent) {
-        const span = document.createElement('span');
-        span.style.cssText = 'background:#fee2e2; color:#b91c1c; padding:2px 6px; border-radius:12px; display:inline-flex; align-items:center; gap:4px';
-        span.innerHTML = `→ ${editState.mergeParent} <span class="del-btn" style="cursor:pointer; font-weight:bold">×</span>`;
-        span.querySelector('.del-btn').addEventListener('click', () => {
-            editState.mergeParent = null;
-            span.remove();
-            checkDirtyState();
-        });
-        container.appendChild(span);
-    }
+    console.log(`[Config] Applied overrides to ${updateCount} routes.`);
 }
 
-async function saveEditChanges() {
-    if (!editState.stopId) return;
 
-    const applyBtn = document.getElementById('edit-btn-apply');
-    applyBtn.disabled = true;
-    applyBtn.textContent = 'Saving...';
 
-    // 1. Update Global Config PRE-SAVE (so we send the new state)
-    if (!stopsConfig.overrides) stopsConfig.overrides = {};
-    stopsConfig.overrides[editState.stopId] = { ...editState.overrides };
+// --- Initialize Edit Tools ---
+setupEditTools(map, {
+    getAllStops: () => allStops,
+    getAllRoutes: () => allRoutes,
+    getMergeSourcesMap: () => mergeSourcesMap,
+    getHubMap: () => hubMap,
+    getHubSourcesMap: () => hubSourcesMap,
+    getStopToRoutesMap: () => stopToRoutesMap,
+    getEditState: getEditState
+}, {
+    refreshStopsLayer,
+    updateMapFilterState,
+    setSheetState,
+    renderAllRoutes,
+    checkDirtyState: () => { } // handled internally or not needed
+});
 
-    if (!stopsConfig.merges) stopsConfig.merges = {};
-    if (editState.mergeParent) {
-        stopsConfig.merges[editState.stopId] = editState.mergeParent;
-    } else {
-        delete stopsConfig.merges[editState.stopId];
-    }
-
-    // Process Unmerges (Children removed from this parent)
-    if (editState.unmerges && editState.unmerges.length > 0) {
-        editState.unmerges.forEach(childId => {
-            if (stopsConfig.merges[childId] === editState.stopId) {
-                delete stopsConfig.merges[childId];
-            }
-        });
-    }
-
-    // Process Hubs (New Array Logic)
-    if (!stopsConfig.hubs) stopsConfig.hubs = {};
-
-    // A. Joining/Adding Hubs (editState.hubAdds)
-    if (editState.hubAdds && editState.hubAdds.length > 0) {
-        const sourceId = editState.stopId;
-
-        // Iterate through all added targets
-        editState.hubAdds.forEach(targetId => {
-            // Helper to find Hub ID in current config
-            const findHub = (id) => Object.keys(stopsConfig.hubs).find(k => stopsConfig.hubs[k].includes(id));
-
-            const currentSourceHub = findHub(sourceId);
-            const currentTargetHub = findHub(targetId);
-
-            if (currentSourceHub && currentTargetHub) {
-                // Merge Two Hubs
-                if (currentSourceHub !== currentTargetHub) {
-                    // Move target members to source
-                    stopsConfig.hubs[currentTargetHub].forEach(m => {
-                        if (!stopsConfig.hubs[currentSourceHub].includes(m)) {
-                            stopsConfig.hubs[currentSourceHub].push(m);
-                        }
-                    });
-                    delete stopsConfig.hubs[currentTargetHub];
-                }
-            } else if (currentSourceHub) {
-                // Add target to source
-                if (!stopsConfig.hubs[currentSourceHub].includes(targetId)) {
-                    stopsConfig.hubs[currentSourceHub].push(targetId);
-                }
-            } else if (currentTargetHub) {
-                // Add source to target
-                if (!stopsConfig.hubs[currentTargetHub].includes(sourceId)) {
-                    stopsConfig.hubs[currentTargetHub].push(sourceId);
-                }
-            } else {
-                // New Hub
-                const newHubId = `HUB_${sourceId.replace(/:/g, '_')}`;
-                stopsConfig.hubs[newHubId] = [sourceId, targetId];
-            }
-        });
-    }
-
-    // B. Unhubs (Removing Sibling from My Hub) (editState.unhubs)
-    // My Hub ID:
-    const myHubId = hubMap.get(editState.stopId);
-    if (myHubId && editState.unhubs && editState.unhubs.length > 0) {
-        editState.unhubs.forEach(childId => {
-            if (stopsConfig.hubs[myHubId]) {
-                stopsConfig.hubs[myHubId] = stopsConfig.hubs[myHubId].filter(id => id !== childId);
-                // Cleanup empty hubs?
-                if (stopsConfig.hubs[myHubId].length <= 1) {
-                    // Start dissolving? Or keep 1? 
-                    // Keeping 1 is fine, effectively standard stop.
-                    // Or delete key if empty.
-                }
-            }
-        });
-    }
-
-    // 2. Send to Server
-    try {
-        const res = await fetch('/api/save-stops-config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(stopsConfig, null, 2)
-        });
-
-        if (!res.ok) throw new Error('Save failed');
-
-        // Success UI
-        applyBtn.textContent = 'Saved';
-        applyBtn.classList.add('success');
-        applyBtn.classList.remove('active');
-
-        // Clear Draft
-        if (editSessionCache[editState.stopId]) delete editSessionCache[editState.stopId];
-
-        // Persist "Clean" state
-        stopEditing(true);
-
-        // REFRESH MAP LAYER with new config
-        // Pass true to use the local window.stopsConfig (which we just updated)
-        // rather than fetching from server (which might race)
-        await refreshStopsLayer(true);
-
-        setTimeout(() => {
-            applyBtn.classList.remove('success');
-            applyBtn.textContent = 'Apply';
-            applyBtn.disabled = true;
-            checkDirtyState();
-        }, 1500);
-
-    } catch (err) {
-        console.error('Save error:', err);
-        alert('Failed to save changes: ' + err.message);
-        applyBtn.disabled = false;
-        applyBtn.textContent = 'Apply';
-    }
-}
-
-// Check if current edit state differs from saved config
-function checkDirtyState() {
-    const applyBtn = document.getElementById('edit-btn-apply');
-    if (!applyBtn || !editState.stopId) return;
-
-    const savedOverrides = stopsConfig?.overrides?.[editState.stopId] || {};
-
-    const currentParent = editState.mergeParent || null;
-    const savedParent = stopsConfig?.merges?.[editState.stopId] || null;
-
-    const getVal = (v) => v === undefined || v === null ? '' : v.toString();
-
-    // Compare loosely (string) to avoid float precision issues or type mismatches
-    const latDirty = getVal(editState.overrides.lat) !== getVal(savedOverrides.lat);
-    const lonDirty = getVal(editState.overrides.lon) !== getVal(savedOverrides.lon);
-    const bearDirty = getVal(editState.overrides.bearing) !== getVal(savedOverrides.bearing);
-
-    const mergeDirty = currentParent !== savedParent;
-    const unmergeDirty = editState.unmerges && editState.unmerges.length > 0;
-
-    const currentHub = editState.hubTarget || null;
-    const savedHub = stopsConfig?.hubs?.[editState.stopId] || null;
-    const hubDirty = currentHub !== savedHub;
-
-    const unhubDirty = editState.unhubs && editState.unhubs.length > 0;
-    const hubAddDirty = editState.hubAdds && editState.hubAdds.length > 0;
-
-    const isDirty = latDirty || lonDirty || bearDirty || mergeDirty || unmergeDirty || unhubDirty || hubAddDirty;
-
-    applyBtn.disabled = !isDirty;
-    if (isDirty) {
-        applyBtn.classList.add('active');
-    } else {
-        applyBtn.classList.remove('active');
-    }
-}
-
-// Initialize on Load
-initEditTools();
-
-// Global Hook to open edit
-window.selectDevStop = (id) => {
-    // If dev tools (old) requested strict selection, we can just highlight it.
-    // But since we are integrating, we ignore the old panel logic for now.
-}
+loadRoutesConfig();
 
 /* Map Menu & Simplify Logic */
-
-// Start App
-init();
 

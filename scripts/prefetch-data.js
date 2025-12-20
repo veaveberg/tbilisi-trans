@@ -1,4 +1,3 @@
-
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -13,9 +12,8 @@ async function fetchWithRetry(url, options, retries = 3) {
         try {
             const res = await fetch(url, options);
             if (res.ok) return res;
-            // if (res.status === 404) return res; // Let caller handle 404
             if (i < retries - 1) await sleep(500 * (i + 1));
-            else return res; // Return final response even if error
+            else return res;
         } catch (e) {
             console.warn(`[Retry ${i + 1}/${retries}] Failed to fetch ${url}: ${e.message}`);
             if (i === retries - 1) throw e;
@@ -24,202 +22,172 @@ async function fetchWithRetry(url, options, retries = 3) {
     }
 }
 
-const API_BASE_URL = 'https://transit.ttc.com.ge/pis-gateway/api/v2';
+// Define Sources Configuration (Mirrors src/data/sources.js structure but for Node)
+const SOURCES = [
+    {
+        id: 'tbilisi',
+        apiBase: 'https://transit.ttc.com.ge/pis-gateway/api/v2',
+        // apiBaseV3: 'https://transit.ttc.com.ge/pis-gateway/api/v3' // Not strictly needed for V2 prefetch unless we use V3 details
+        // We use V3 for details/schedules/polylines
+    },
+    {
+        id: 'rustavi',
+        prefix: 'rustavi',
+        apiBase: 'https://rustavi-transit.azrycloud.com/pis-gateway/api/v2'
+    }
+];
+
 const API_KEY = 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f';
 const OUTPUT_DIR = path.join(__dirname, '../public/data');
+
 // Ensure output directory exists
 if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 }
 
-async function fetchAndSave(endpoint, filename) {
-    const url = `${API_BASE_URL}${endpoint}`;
-    console.log(`Fetching ${url}...`);
+async function processSource(source) {
+    console.log(`\n--- Processing Source: ${source.id.toUpperCase()} ---`);
+    const API_BASE_URL = source.apiBase;
+    const v3Base = API_BASE_URL.replace('/v2', '/v3');
+
+    const headers = {
+        'x-api-key': API_KEY,
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Origin': new URL(API_BASE_URL).origin,
+        'Referer': new URL(API_BASE_URL).origin + '/'
+    };
+
+    // 1. Fetch Stops
     try {
-        const res = await fetchWithRetry(url, {
-            headers: {
-                'x-api-key': API_KEY,
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Origin': 'https://transit.ttc.com.ge',
-                'Referer': 'https://transit.ttc.com.ge/'
-            }
-        });
-        // fetchWithRetry throws if fails after retries, or returns res.
-        if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
-        const data = await res.json();
+        console.log(`Fetching Stops from ${API_BASE_URL}/stops...`);
+        const sRes = await fetch(`${API_BASE_URL}/stops`, { headers });
+        if (!sRes.ok) throw new Error(`Failed to fetch stops: ${sRes.status}`);
+        const stopsData = await sRes.json();
 
-        const outputPath = path.join(OUTPUT_DIR, filename);
-        fs.writeFileSync(outputPath, JSON.stringify(data));
-        console.log(`Saved ${filename} (${(fs.statSync(outputPath).size / 1024).toFixed(2)} KB)`);
-    } catch (err) {
-        console.error(`Error processing ${filename}:`, err.message);
-        // In CI (GitHub Actions), we might be IP blocked. 
-        // We should allow the build to proceed if we have committed fallback data.
-        if (process.env.CI || process.env.GITHUB_ACTIONS) {
-            console.warn(`[CI] Ignoring prefetch error for ${filename}. Using existing file if present.`);
-            return;
-        }
-        // Don't exit process, allow other fetches to proceed
-        console.warn(`[Continue] Skipping ${filename} due to error.`);
-        return;
+        // Tag with correct ID if needed? 
+        // Logic in API client sets IDs. Here we should just save raw data 
+        // OR mirror the ID logic. Usually fallback data is raw.
+        // BUT api.js fetchStops logic: fetches raw, then tags with prefix.
+        // So we should save RAW data to match API response.
+
+        fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_stops.json`), JSON.stringify(stopsData));
+        console.log(`Saved ${source.id}_stops.json (${stopsData.length} stops)`);
+    } catch (e) {
+        console.error(`Error fetching stops for ${source.id}:`, e.message);
     }
-}
 
-async function main() {
-    await fetchAndSave('/stops', 'fallback_stops.json');
-    // Fetch routes but keep in memory to augment
+    // 2. Fetch Routes
     let routes = [];
     try {
-        const res = await fetchWithRetry(`${API_BASE_URL}/routes`, {
-            headers: {
-                'x-api-key': API_KEY,
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Origin': 'https://transit.ttc.com.ge',
-                'Referer': 'https://transit.ttc.com.ge/'
-            }
-        });
-        if (!res.ok) throw new Error('Failed to fetch routes');
-        routes = await res.json();
+        console.log(`Fetching Routes from ${API_BASE_URL}/routes...`);
+        const rRes = await fetch(`${API_BASE_URL}/routes`, { headers });
+        if (!rRes.ok) throw new Error(`Failed to fetch routes: ${rRes.status}`);
+        routes = await rRes.json();
     } catch (e) {
-        console.error('Initial routes fetch failed:', e);
-        return;
+        console.error(`Error fetching routes for ${source.id}:`, e.message);
+        return; // Cannot proceed without routes
     }
 
-    console.log(`Processing ${routes.length} routes for Stop Mapping & Metro Fallback...`);
+    console.log(`Processing ${routes.length} routes for Details/Schedules...`);
 
-    const allPolylines = {}; // Consolidate all polylines here
+    const routesDetails = {};
+    const schedules = {};
+    const polylines = {};
 
-
-    // Iterate ALL routes to attach 'stops' list (for Offline Stop->Routes mapping)
     for (const [index, route] of routes.entries()) {
-        if (index % 20 === 0) console.log(`Processing ${index}/${routes.length}...`);
+        if (index % 10 === 0) process.stdout.write(`\r[${source.id}] Processing ${index}/${routes.length}...`);
 
         try {
-            // 1. Fetch Details (V3)
-            const v3Base = API_BASE_URL.replace('/v2', '/v3');
-            const detailsEndpoint = `/routes/${route.id}`;
-            const detailsUrl = `${v3Base}${detailsEndpoint}`;
-
-            const headers = {
-                'x-api-key': API_KEY,
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Origin': 'https://transit.ttc.com.ge',
-                'Referer': 'https://transit.ttc.com.ge/'
-            };
-
+            // A. Fetch V3 Details
+            const detailsUrl = `${v3Base}/routes/${route.id}`;
             const detailsRes = await fetchWithRetry(detailsUrl, { headers });
             if (!detailsRes.ok) continue;
             const details = await detailsRes.json();
+            routesDetails[route.id] = details;
 
-            // 2. Fetch Stops via 'stops-of-patterns' (Required for V3)
-            const stopIds = new Set();
+            // B. Stops of Patterns & Schedules
             if (details.patterns && details.patterns.length > 0) {
-                const suffixes = details.patterns.map(p => p.patternSuffix).join(',');
-                const patternsUrl = `${v3Base}/routes/${route.id}/stops-of-patterns?patternSuffixes=${suffixes}&locale=en`;
+                const uniqueSuffixes = [...new Set(details.patterns.map(p => p.patternSuffix))];
 
+                // Stops of Patterns (Consolidated)
+                const suffixesStr = uniqueSuffixes.join(',');
+                const patternsUrl = `${v3Base}/routes/${route.id}/stops-of-patterns?patternSuffixes=${suffixesStr}&locale=en`;
                 try {
                     const patRes = await fetchWithRetry(patternsUrl, { headers });
                     if (patRes.ok) {
                         const patData = await patRes.json();
+                        details._stopsOfPatterns = patData;
+
+                        // Extract Stop IDs for Route fallback
+                        const stopIds = new Set();
                         if (Array.isArray(patData)) {
                             patData.forEach(item => {
-                                // V3 API Structure: Array of { stop: { id: ... }, patternSuffixes: [...] }
-                                if (item.stop && item.stop.id) {
-                                    stopIds.add(item.stop.id);
-                                }
-                                // Fallback for alternative structures
-                                else if (item.stops) {
-                                    item.stops.forEach(s => stopIds.add(s.id));
-                                }
+                                if (item.stop && item.stop.id) stopIds.add(item.stop.id);
+                                else if (item.stops) item.stops.forEach(s => stopIds.add(s.id));
                             });
                         } else if (patData.patterns) {
                             patData.patterns.forEach(pattern => {
                                 if (pattern.stops) pattern.stops.forEach(s => stopIds.add(s.id));
                             });
                         }
+                        route.stops = Array.from(stopIds);
                     }
-                } catch (e) { /* ignore */ }
-            }
+                } catch (e) { }
 
-            // Fallback to basic details if available
-            if (details.stops) details.stops.forEach(s => stopIds.add(s.id));
+                // Schedules & Polylines per suffix
+                for (const suffix of uniqueSuffixes) {
+                    const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
+                    const key = `${route.id}_${safeSuffix}`;
 
-            route.stops = Array.from(stopIds);
-
-            // 3. Save Details (For ALL routes, to support filtering fallback)
-            // (Previously only for SUBWAY)
-            {
-                // console.log(`Saving Details (and Polylines) for ${route.shortName}...`); // Too verbose
-                const detailsFilename = `fallback_route_details_${route.id}.json`;
-                fs.writeFileSync(path.join(OUTPUT_DIR, detailsFilename), JSON.stringify(details));
-
-                if (details.patterns) {
-                    // A. Schedules (Keep restricted to SUBWAY for now to save space/time? Or all? Let's do all for complete optimistic UI)
-                    // Actually, schedules are large. Let's do Schedules only for SUBWAY and maybe Bus if feasible.
-                    // User asked "fill this prefetch db". Let's try to be generous but maybe limit logs?
-                    // For now, I'll enable Schedules for ALL to ensure consistent experience.
-
-                    for (const p of details.patterns) {
-                        const suffix = p.patternSuffix;
-                        const safeSuffix = suffix.replace(/:/g, '_');
-
-                        // SCHEDULE
-                        const scheduleFilename = `fallback_schedule_${route.id}_${safeSuffix}.json`;
-                        if (!fs.existsSync(path.join(OUTPUT_DIR, scheduleFilename))) { // Skip if exists? No, we want to update.
-                            const scheduleEndpoint = `/routes/${route.id}/schedule?patternSuffix=${suffix}&locale=en`;
-                            const scheduleUrl = `${v3Base}${scheduleEndpoint}`;
-                            try {
-                                const schedRes = await fetchWithRetry(scheduleUrl, { headers });
-                                if (schedRes.ok) {
-                                    const schedData = await schedRes.json();
-                                    fs.writeFileSync(path.join(OUTPUT_DIR, scheduleFilename), JSON.stringify(schedData));
-                                }
-                            } catch (e) { /* ignore */ }
-                        }
-                    }
-
-                    // B. POLYLINES (Consolidated)
-                    // Polyline URL: /routes/{id}/polylines?patternSuffixes={suffixes}
-                    // Usually we fetch all suffixes together.
-                    const suffixes = details.patterns.map(p => p.patternSuffix).join(',');
-
-                    // Key used for consolidated Map: just route ID (simplest lookup)
-                    const polylineKey = `route:${route.id}`;
-
-                    // Construct URL for fetch (using v3Base)
-                    // Here we MUST encode for the actual network request
-                    const polylineUrl = `${v3Base}/routes/${route.id}/polylines?patternSuffixes=${encodeURIComponent(suffixes)}`;
-
+                    // Schedule
+                    const scheduleUrl = `${v3Base}/routes/${route.id}/schedule?patternSuffix=${suffix}&locale=en`;
                     try {
-                        const polyRes = await fetchWithRetry(polylineUrl, { headers });
-                        if (polyRes.ok) {
-                            const polyData = await polyRes.json();
-                            allPolylines[polylineKey] = polyData; // Store in map
-                        }
-                    } catch (e) { console.warn('Polyline fetch failed', e); }
+                        const sRes = await fetchWithRetry(scheduleUrl, { headers });
+                        if (sRes.ok) schedules[key] = await sRes.json();
+                    } catch (e) { }
+
+                    // Polyline
+                    const polylineUrl = `${v3Base}/routes/${route.id}/polylines?patternSuffixes=${suffix}`;
+                    try {
+                        const pRes = await fetchWithRetry(polylineUrl, { headers });
+                        if (pRes.ok) polylines[key] = await pRes.json();
+                    } catch (e) { }
+
+                    await sleep(20);
                 }
             }
-
-            await sleep(50); // Rate limit
-
+            await sleep(50);
         } catch (e) {
-            console.warn(`Error processing route ${route.id}:`, e.message);
+            console.warn(`Error processing route ${route.id}: ${e.message}`);
         }
     }
+    process.stdout.write('\n');
 
-    // Save Augmented Routes
-    fs.writeFileSync(path.join(OUTPUT_DIR, 'fallback_routes.json'), JSON.stringify(routes));
-    console.log(`Saved augmented fallback_routes.json with stop mappings.`);
+    // Save Aggregates
+    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_routes.json`), JSON.stringify(routes)); // Save Augmented Routes
+    console.log(`Saved ${source.id}_routes.json (Augmented with stops)`);
 
-    // Save Consolidated Polylines
-    fs.writeFileSync(path.join(OUTPUT_DIR, 'fallback_polylines.json'), JSON.stringify(allPolylines));
-    console.log(`Saved fallback_polylines.json with ${Object.keys(allPolylines).length} entries.`);
-
-    // --- Metro Pre-fetch (Integrated above) ---
-    // (Removed separate block)
-
-
-    console.log('Pre-fetch complete.');
+    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_routes_details.json`), JSON.stringify(routesDetails));
+    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_schedules.json`), JSON.stringify(schedules));
+    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_polylines.json`), JSON.stringify(polylines));
+    console.log(`Saved detailed data for ${source.id}`);
 }
 
-main();
+async function main() {
+    for (const source of SOURCES) {
+        await processSource(source);
+    }
+    console.log('\nAll sources processed.');
+}
+
+if (process.env.CI || process.env.GITHUB_ACTIONS) {
+    main().catch(e => {
+        console.warn('[CI] Prefetch process failed but allowing build to continue:', e);
+        process.exit(0);
+    });
+} else {
+    main().catch(e => {
+        console.error('Prefetch failed:', e);
+        process.exit(1);
+    });
+}

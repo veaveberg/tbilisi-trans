@@ -150,3 +150,42 @@ export class HistoryManager {
 }
 
 export const historyManager = new HistoryManager();
+
+// --- Navigation History (Moved from main.js) ---
+const historyStack = [];
+
+export function addToHistory(type, data) {
+    // Don't add if it's the same as the current top
+    const top = historyStack[historyStack.length - 1];
+    if (top && top.type === type && top.data.id === data.id) return;
+
+    historyStack.push({ type, data });
+    updateBackButtons();
+    // Save to Recent Cards history (separately from Search History)
+    historyManager.addCard({ type, id: data.id, data });
+}
+
+export function popHistory() {
+    if (historyStack.length <= 1) return null;
+    historyStack.pop(); // Remove current
+    return historyStack[historyStack.length - 1]; // Return previous
+}
+
+export function peekHistory() {
+    if (historyStack.length === 0) return null;
+    return historyStack[historyStack.length - 1];
+}
+
+export function clearHistory() {
+    historyStack.length = 0;
+    updateBackButtons();
+}
+
+export function updateBackButtons() {
+    const hasHistory = historyStack.length > 1;
+    const backPanel = document.getElementById('back-panel');
+    const backRoute = document.getElementById('back-route-info');
+
+    if (backPanel) backPanel.classList.toggle('hidden', !hasHistory);
+    if (backRoute) backRoute.classList.toggle('hidden', !hasHistory);
+}

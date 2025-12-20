@@ -1,5 +1,70 @@
-/* src/metro.js */
 import * as api from './api.js';
+
+let metroTicker = null;
+
+export function startMetroTicker() {
+    if (metroTicker) return;
+    metroTicker = setInterval(() => {
+        const now = Date.now();
+        const elements = document.querySelectorAll('.metro-countdown');
+        elements.forEach(el => {
+            let target = parseInt(el.getAttribute('data-target'));
+            if (!target) return;
+
+            let remainingMs = target - now;
+
+            // If expired, check for blink state or next target
+            if (remainingMs <= 0) {
+                const blinkUntil = parseInt(el.getAttribute('data-blink-until'));
+
+                if (!blinkUntil) {
+                    // Start blinking for 10 seconds
+                    el.setAttribute('data-blink-until', now + 10000);
+                    el.classList.add('led-blink');
+                    el.textContent = '00:00';
+                    return;
+                } else if (now < blinkUntil) {
+                    // Still in blink phase
+                    el.textContent = '00:00';
+                    return;
+                } else {
+                    // Blink finished, move to next target
+                    el.classList.remove('led-blink');
+                    el.removeAttribute('data-blink-until');
+
+                    const queue = el.getAttribute('data-next-targets');
+                    if (queue) {
+                        const targets = queue.split(',');
+                        const nextTarget = targets.shift();
+                        el.setAttribute('data-target', nextTarget);
+                        if (targets.length > 0) el.setAttribute('data-next-targets', targets.join(','));
+                        else el.removeAttribute('data-next-targets');
+
+                        target = parseInt(nextTarget);
+                        remainingMs = target - now;
+                    }
+                }
+            }
+
+            if (remainingMs <= 0) {
+                el.textContent = '00:00';
+                return;
+            }
+
+            const totalSeconds = Math.floor(remainingMs / 1000);
+            const mm = Math.floor(totalSeconds / 60);
+            const ss = totalSeconds % 60;
+            el.textContent = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+        });
+    }, 1000);
+}
+
+export function stopMetroTicker() {
+    if (metroTicker) {
+        clearInterval(metroTicker);
+        metroTicker = null;
+    }
+}
 
 export async function handleMetroStop(stop, panel, nameEl, listEl, {
     allRoutes,
@@ -8,6 +73,9 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
     updateBackButtons
 }) {
     panel.classList.add('metro-mode');
+    // Ensure ticker starts
+    startMetroTicker();
+
     // --- Metro Display Logic ---
     setSheetState(panel, 'half'); // Open panel immediately
     updateBackButtons();
@@ -71,7 +139,7 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
             for (const route of metroRoutes) {
                 try {
                     // 1. Get Route Details to find patterns (directions)
-                    const routeDetails = await api.fetchRouteDetailsV3(route.id);
+                    const routeDetails = await api.fetchRouteDetailsV3(route.id, { strategy: 'cache-first' });
                     const patterns = routeDetails.patterns || [];
 
                     // 2. Fetch Schedule for EACH pattern to cover both directions
@@ -151,13 +219,24 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                 <div class="next-arrival">
                                              ${upcoming.length > 0
                                     ? (() => {
-                                        const diff = upcoming[0].diff;
-                                        const time = upcoming[0].time;
-                                        const displayTime = diff < 60 ? `${diff} min` : time;
+                                        const targets = upcoming.map(u => {
+                                            const [hu, mu] = u.time.split(':').map(Number);
+                                            const tDate = new Date();
+                                            if (hu < 4 && tDate.getHours() >= 4) tDate.setDate(tDate.getDate() + 1);
+                                            else if (hu >= 4 && tDate.getHours() < 4) tDate.setDate(tDate.getDate() - 1);
+                                            const offset = Math.floor(Math.random() * 25) - 12;
+                                            tDate.setHours(hu, mu, 30 + offset, 0);
+                                            return tDate.getTime();
+                                        });
+
+                                        const currentTarget = targets.shift();
+                                        const nextTargets = targets.length > 0 ? `data-next-targets="${targets.join(',')}"` : '';
+
+                                        const mm = String(upcoming[0].diff).padStart(2, '0');
                                         return `<div class="time-container">
-                                                   <div class="time scheduled-time">${displayTime}</div>
-                                                   <div class="scheduled-disclaimer">Scheduled</div>
-                                               </div>`;
+                                                    <div class="led-text scheduled-time metro-countdown" data-target="${currentTarget}" ${nextTargets}>88:88</div>
+                                                    <div class="scheduled-disclaimer">Scheduled</div>
+                                                </div>`;
                                     })()
                                     : `<div class="status-closed">End of Service</div>`
                                 }
@@ -270,7 +349,7 @@ export function processMetroStops(stops, stopBearings = {}) {
             stop.bearing = stopBearings[stop.id] || 0;
         }
 
-        // Robust Metro Check
+        // Metro Check
         const nameMatch = ALL_METRO_NAMES.some(m => stop.name.includes(m));
         const codeMissing = !stop.code || stop.code.length === 0 || !stop.code.match(/^\d+$/);
 
@@ -384,7 +463,8 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
             paint: {
                 'line-color': ['get', 'color'],
                 'line-width': 8,
-                'line-opacity': 0.3
+                'line-opacity': 0.3,
+                'line-emissive-strength': 1 // Standard Style Night Mode Support
             }
         });
         // Try to place under stops if possible, but addStopsToMap in main.js handles ordering usually
@@ -411,12 +491,13 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
                     'interpolate',
                     ['linear'],
                     ['zoom'],
-                    10, 4,
-                    14, 10,
-                    16, 14
+                    10, 5,
+                    14, 13,
+                    16, 17
                 ],
                 'circle-stroke-width': 2,
-                'circle-stroke-color': '#fff'
+                'circle-stroke-color': '#fff',
+                'circle-emissive-strength': 1 // Standard Style Night Mode Support
             }
         });
     }
@@ -431,14 +512,15 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
             layout: {
                 'text-field': ['get', 'name'],
                 'text-size': 14, // Larger font
-                'text-offset': [0, 1.0],
+                'text-offset': [0, 1.2],
                 'text-anchor': 'top',
                 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
             },
             paint: {
                 'text-color': '#000000',
                 'text-halo-color': '#ffffff',
-                'text-halo-width': 2
+                'text-halo-width': 2,
+                'text-emissive-strength': 1 // Standard Style Night Mode Support
             }
         });
     }
@@ -458,9 +540,13 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
                     'interpolate',
                     ['linear'],
                     ['zoom'],
-                    12, 0.4,
-                    16, 0.8
+                    12, 0.6,
+                    16, 1.0
                 ]
+            },
+            paint: {
+                'icon-opacity': 1,
+                'icon-emissive-strength': 1 // Standard Style Night Mode Support
             }
         });
     }

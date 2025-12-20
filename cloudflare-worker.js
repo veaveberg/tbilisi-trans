@@ -1,4 +1,3 @@
-
 export default {
     async fetch(request, env) {
         // Handle CORS Preflight requests directly
@@ -14,8 +13,17 @@ export default {
         }
 
         const url = new URL(request.url);
-        // Forward the path exactly as is.
-        const targetUrl = 'https://transit.ttc.com.ge' + url.pathname + url.search;
+        let targetBase = 'https://transit.ttc.com.ge';
+        let targetPath = url.pathname;
+        const targetSearch = url.search;
+
+        // Routing Logic
+        if (url.pathname.startsWith('/rustavi-proxy')) {
+            targetBase = 'https://rustavi-transit.azrycloud.com';
+            targetPath = url.pathname.replace('/rustavi-proxy', '');
+        }
+
+        const targetUrl = targetBase + targetPath + targetSearch;
 
         const newRequest = new Request(targetUrl, {
             method: request.method,
@@ -23,9 +31,9 @@ export default {
             body: request.body
         });
 
-        // Add required headers for TTC API
-        newRequest.headers.set('Referer', 'https://transit.ttc.com.ge/');
-        newRequest.headers.set('Origin', 'https://transit.ttc.com.ge');
+        // Add required headers for the target API
+        newRequest.headers.set('Referer', targetBase + '/');
+        newRequest.headers.set('Origin', targetBase);
 
         // Ensure we don't send host header of the worker
         newRequest.headers.delete('Host');

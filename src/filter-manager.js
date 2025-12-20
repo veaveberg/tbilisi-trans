@@ -2,9 +2,27 @@ import mapboxgl from 'mapbox-gl';
 import { RouteFilterColorManager } from './color-manager.js';
 import * as api from './api.js';
 import { hydrateRouteDetails } from './fetch.js';
+import { shouldShowRoute } from './settings.js';
 // We need these icons. Assuming Vite setup allows importing them here too.
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg';
+
+// Shared Helper for Path Signature Generation
+export function generatePathSignature(segmentStops, redirectMap, hubMap) {
+    if (!segmentStops || segmentStops.length < 2) return null;
+
+    return segmentStops
+        .map(s => {
+            let id = s.id || s;
+            // Normalize Redirects first
+            if (redirectMap) id = redirectMap.get(id) || id;
+            // Normalize Hubs
+            if (hubMap) return hubMap.get(id) || id;
+            return id;
+        })
+        .filter((id, i, arr) => i === 0 || id !== arr[i - 1]) // Dedup adjacent
+        .join('|');
+}
 
 export class FilterManager {
     constructor({ map, router, dataProvider, uiCallbacks }) {
@@ -106,68 +124,11 @@ export class FilterManager {
         }
 
         // Reachability Logic
-        const originEq = new Set(this.getEquivalentStops(currentStopId));
-        await this.ensureLazyRoutesForStop(currentStopId, originEq);
+        await this.updateReachableStops();
 
-        const stopToRoutesMap = this.dataProvider.getStopToRoutesMap();
-        const routes = new Set();
-        originEq.forEach(oid => {
-            const r = stopToRoutesMap.get(oid) || [];
-            r.forEach(route => routes.add(route));
-        });
-        const originRoutes = Array.from(routes);
+        console.log(`[FilterManager] Pick Mode. Reachable: ${this.state.reachableStopIds.size}`);
 
-        const reachableStopIds = new Set();
-
-        // Fetch Missing Details (using fetch.js helper)
-        const routesNeedingFetch = originRoutes.filter(r => !r._details || !r._details.patterns);
-        if (routesNeedingFetch.length > 0) {
-            console.log(`[FilterManager] Fetching details for ${routesNeedingFetch.length} routes...`);
-            document.body.style.cursor = 'wait';
-            const btn = document.getElementById('filter-routes-toggle'); // ID might be different in button itself vs wrapper? main.js used filter-routes
-            if (btn) btn.style.opacity = '0.5';
-
-            try {
-                await hydrateRouteDetails(routesNeedingFetch);
-            } catch (err) {
-                console.error('[FilterManager] Hydration error', err);
-            } finally {
-                document.body.style.cursor = 'default';
-                if (btn) btn.style.opacity = '1';
-            }
-        }
-
-        // Calculate Reachability
-        const redirectMap = this.dataProvider.getRedirectMap();
-
-        originRoutes.forEach(r => {
-            // Logic extracted from main.js
-            if (r._details && r._details.patterns) {
-                r._details.patterns.forEach(p => {
-                    if (p.stops) {
-                        const idx = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
-                        if (idx !== -1 && idx < p.stops.length - 1) {
-                            p.stops.slice(idx + 1).forEach(s => {
-                                const normId = redirectMap.get(s.id) || s.id;
-                                this.getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
-                            });
-                        }
-                    }
-                });
-            } else if (r._details && r._details.stops) {
-                r._details.stops.forEach(s => {
-                    const normId = redirectMap.get(s.id) || s.id;
-                    if (!originEq.has(normId)) {
-                        this.getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
-                    }
-                });
-            }
-        });
-
-        this.state.reachableStopIds = reachableStopIds;
-        console.log(`[FilterManager] Pick Mode. Reachable: ${reachableStopIds.size}`);
-
-        if (reachableStopIds.size === 0) {
+        if (this.state.reachableStopIds.size === 0) {
             alert("No route data available for filtering (Stops list empty).");
             this.clearFilter(currentStopId);
             return;
@@ -178,29 +139,36 @@ export class FilterManager {
 
     async ensureLazyRoutesForStop(stopId, equivalentStopIdsSet) {
         const stopToRoutesMap = this.dataProvider.getStopToRoutesMap();
+        const hydratedStops = this.dataProvider.getHydratedStops();
         const redirectMap = this.dataProvider.getRedirectMap();
         const allRoutes = this.dataProvider.getAllRoutes();
 
-        let hasKnownRoutes = false;
+        let isAllHydrated = true;
         equivalentStopIdsSet.forEach(oid => {
-            if (stopToRoutesMap.has(oid) && stopToRoutesMap.get(oid).length > 0) hasKnownRoutes = true;
+            if (!hydratedStops.has(oid)) isAllHydrated = false;
         });
 
-        if (!hasKnownRoutes) {
-            console.log(`[FilterManager] No local routes for ${stopId}. Fetching...`);
+        if (!isAllHydrated) {
+            console.log(`[FilterManager] Stop ${stopId} (or equivalents) not fully hydrated. Fetching...`);
             try {
-                const fetchedRoutes = await api.fetchStopRoutes(stopId);
-                if (fetchedRoutes && Array.isArray(fetchedRoutes)) {
-                    const normId = redirectMap.get(stopId) || stopId;
-                    if (!stopToRoutesMap.has(normId)) stopToRoutesMap.set(normId, []);
-                    const currentList = stopToRoutesMap.get(normId);
+                // Fetch for ALL equivalent IDs that are not hydrated
+                const fetchPromises = Array.from(equivalentStopIdsSet).map(async oid => {
+                    if (hydratedStops.has(oid)) return;
 
-                    fetchedRoutes.forEach(fr => {
-                        const canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName));
-                        const routeToAdd = canonical || fr;
-                        if (!currentList.includes(routeToAdd)) currentList.push(routeToAdd);
-                    });
-                }
+                    const fetchedRoutes = await api.fetchStopRoutes(oid, null, { strategy: 'cache-only' });
+                    if (fetchedRoutes && Array.isArray(fetchedRoutes)) {
+                        if (!stopToRoutesMap.has(oid)) stopToRoutesMap.set(oid, []);
+                        const currentList = stopToRoutesMap.get(oid);
+
+                        fetchedRoutes.forEach(fr => {
+                            const canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName));
+                            const routeToAdd = canonical || fr;
+                            if (!currentList.includes(routeToAdd)) currentList.push(routeToAdd);
+                        });
+                        hydratedStops.add(oid);
+                    }
+                });
+                await Promise.all(fetchPromises);
             } catch (e) { console.warn('[FilterManager] Lazy fetch error', e); }
         }
     }
@@ -238,14 +206,14 @@ export class FilterManager {
             const routes = stopToRoutesMap.get(oid) || [];
             routes.forEach(r => originRoutesSet.add(r));
         });
-        const originRoutes = Array.from(originRoutesSet);
+        const originRoutes = Array.from(originRoutesSet).filter(r => shouldShowRoute(r.shortName, r));
 
         // Ensure Hydration (Critical for Fresh Data reload)
         const routesNeedingFetch = originRoutes.filter(r => !r._details || !r._details.patterns);
         if (routesNeedingFetch.length > 0) {
-            console.log(`[FilterManager] Refreshing detected ${routesNeedingFetch.length} unhydrated routes. Hydrating...`);
+            console.log(`[FilterManager] Refreshing detected ${routesNeedingFetch.length} unhydrated routes (Cache-Only). Hydrating...`);
             try {
-                await hydrateRouteDetails(routesNeedingFetch);
+                await hydrateRouteDetails(routesNeedingFetch, { strategy: 'cache-only' });
             } catch (err) { console.error('[FilterManager] Refresh hydration error', err); }
         }
 
@@ -315,6 +283,83 @@ export class FilterManager {
         this.router.updateStop(this.state.originId, true, Array.from(this.state.targetIds));
     }
 
+    async updateReachableStops() {
+        if (!this.state.originId) return;
+
+        // Ensure static data is loaded before proceeding with reachability calculation
+        await api.preloadStaticRoutesDetails();
+
+        const originEq = new Set(this.getEquivalentStops(this.state.originId));
+        await this.ensureLazyRoutesForStop(this.state.originId, originEq);
+
+        const stopToRoutesMap = this.dataProvider.getStopToRoutesMap();
+        const routes = new Set();
+        originEq.forEach(oid => {
+            const r = stopToRoutesMap.get(oid) || [];
+            r.forEach(route => {
+                if (shouldShowRoute(route.shortName, route)) {
+                    routes.add(route);
+                }
+            });
+        });
+        const originRoutes = Array.from(routes);
+
+        // Fetch Missing Details
+        const routesNeedingFetch = originRoutes.filter(r => !r._details || !r._details.patterns);
+        if (routesNeedingFetch.length > 0) {
+            try {
+                await hydrateRouteDetails(routesNeedingFetch, { strategy: 'cache-only' });
+            } catch (err) { console.error('[FilterManager] Hydration error', err); }
+        }
+
+        const reachableStopIds = new Set();
+        const redirectMap = this.dataProvider.getRedirectMap();
+
+        originRoutes.forEach(r => {
+            if (r._details && r._details.patterns) {
+                r._details.patterns.forEach(p => {
+                    if (p.stops) {
+                        const idx = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
+                        if (idx !== -1 && idx < p.stops.length - 1) {
+                            p.stops.slice(idx + 1).forEach(s => {
+                                const normId = redirectMap.get(s.id) || s.id;
+                                this.getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
+                            });
+                        }
+                    }
+                });
+            } else if (r._details && r._details.stops) {
+                r._details.stops.forEach(s => {
+                    const normId = redirectMap.get(s.id) || s.id;
+                    if (!originEq.has(normId)) {
+                        this.getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
+                    }
+                });
+            }
+        });
+
+        this.state.reachableStopIds = reachableStopIds;
+    }
+
+    async recalculateFilter(currentStopId, lastArrivals, lastRoutes) {
+        if (!this.state.picking && !this.state.active) return;
+
+        console.log('[FilterManager] Recalculating filter due to settings update');
+
+        if (this.state.picking) {
+            await this.updateReachableStops();
+            // If some targetIds are no longer reachable, should we remove them?
+            // User didn't specify, but it's safer to keep them or re-run the whole check.
+            // For now, let's keep them but refresh the route filtering.
+        }
+
+        if (this.state.active) {
+            await this.refreshRouteFilter(currentStopId, lastArrivals, lastRoutes);
+        } else {
+            this.updateMapFilterState();
+        }
+    }
+
     clearFilter(currentStopId) {
         this.state.active = false;
         this.state.picking = false;
@@ -323,9 +368,17 @@ export class FilterManager {
         this.state.filteredRoutes = [];
         RouteFilterColorManager.reset();
 
-        // Clear Markers
-        this.destinationMarkers.forEach(marker => marker.remove());
-        this.destinationMarkers.clear();
+        // Clear Markers (Robust)
+        try {
+            if (this.destinationMarkers) {
+                this.destinationMarkers.forEach(marker => {
+                    if (marker && typeof marker.remove === 'function') marker.remove();
+                });
+                this.destinationMarkers.clear();
+            }
+        } catch (e) {
+            console.warn('[FilterManager] Error clearing legacy markers', e);
+        }
 
         // Clear GL Source
         if (this.map.getSource('destination-markers')) {
@@ -341,15 +394,19 @@ export class FilterManager {
         const btn = document.getElementById('filter-routes-toggle');
         if (btn) {
             btn.classList.remove('active');
-            btn.querySelector('.filter-icon').src = iconFilterOutline;
-            btn.querySelector('.filter-text').textContent = 'Filter routes...';
+            const icon = btn.querySelector('.filter-icon');
+            if (icon) icon.src = iconFilterOutline;
+            const text = btn.querySelector('.filter-text');
+            if (text) text.textContent = 'Filter routes...';
         }
 
         // Reset Map Layers
         if (this.map.getLayer('stops-layer')) this.map.setPaintProperty('stops-layer', 'icon-opacity', 1);
+
         if (this.map.getLayer('stops-label-selected')) {
             this.map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', []]]);
         }
+
         if (this.map.getLayer('metro-layer-circle')) {
             this.map.setPaintProperty('metro-layer-circle', 'circle-opacity', 1);
             this.map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', 1);
@@ -360,6 +417,16 @@ export class FilterManager {
             this.map.setPaintProperty('stops-layer-circle', 'circle-opacity', 1);
             this.map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', 1);
             this.map.setPaintProperty('stops-layer-circle', 'circle-radius', this.uiCallbacks.getCircleRadiusExpression(1));
+        }
+
+        // Reset Glow Layer
+        if (this.map.getLayer('stops-layer-glow')) {
+            this.map.setPaintProperty('stops-layer-glow', 'circle-opacity', 0);
+        }
+
+        // Reset Highlight Layer (Opacity back to 1, source determines visibility)
+        if (this.map.getLayer('stops-highlight')) {
+            this.map.setPaintProperty('stops-highlight', 'icon-opacity', 1);
         }
 
         // Refresh View
@@ -395,10 +462,16 @@ export class FilterManager {
             highOpacityIds.delete(editId);
         }
 
+        const isDark = document.body.classList.contains('dark-mode');
+        const dimmedOpacity = isDark ? 0.1 : 0.3; // Light mode needs higher opacity to be visible (black fill)
+
         const opacityExpression = ['match', ['get', 'id']];
         if (editId) opacityExpression.push([editId], 0);
         if (selectedArray.length > 0) opacityExpression.push(selectedArray, 0); // Hide selected from base layer
-        opacityExpression.push(Array.from(highOpacityIds), 1.0, 0.1);
+        if (highOpacityIds.size > 0) {
+            opacityExpression.push(Array.from(highOpacityIds), 1.0);
+        }
+        opacityExpression.push(dimmedOpacity);
 
         const caseExpression = [
             'case',
@@ -422,7 +495,10 @@ export class FilterManager {
 
             // Others -> High/Low
             // High opacity for reachable (but not selected)
-            circleOpacityExpression.push(Array.from(highOpacityIds), 1.0, 0.1);
+            if (highOpacityIds.size > 0) {
+                circleOpacityExpression.push(Array.from(highOpacityIds), 1.0);
+            }
+            circleOpacityExpression.push(dimmedOpacity);
 
             this.map.setPaintProperty('stops-layer-circle', 'circle-opacity', circleOpacityExpression);
             this.map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', circleOpacityExpression);
@@ -444,6 +520,25 @@ export class FilterManager {
             this.map.setPaintProperty('stops-layer-circle', 'circle-radius', radiusExpression);
         }
 
+        // Handle Glow Layer specifically
+        if (this.map.getLayer('stops-layer-glow')) {
+            // If picking/active, hide glow for dimmed stops
+            // High opacity IDs get normal glow (0.6 if dark mode, else 0)
+            // Dimmed IDs get 0
+            const glowOpacity = isDark ? 0.6 : 0;
+
+            const glowExpression = ['match', ['get', 'id']];
+            if (editId) glowExpression.push([editId], 0);
+            if (selectedArray.length > 0) glowExpression.push(selectedArray, 0); // Hide selected
+            if (highOpacityIds.size > 0) {
+                glowExpression.push(Array.from(highOpacityIds), glowOpacity);
+            }
+            // Default (Dimmed) -> 0 glow
+            glowExpression.push(0);
+
+            this.map.setPaintProperty('stops-layer-glow', 'circle-opacity', glowExpression);
+        }
+
         if (this.map.getLayer('stops-label-selected')) {
             if (selectedArray.length > 0) {
                 this.map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', selectedArray]]);
@@ -458,7 +553,7 @@ export class FilterManager {
                 ['in', ['get', 'id'], ['literal', selectedArray]], 0,
                 ['in', ['get', 'id'], ['literal', reachableArray]], 1,
                 ['==', ['get', 'id'], originId], 1,
-                0.1
+                dimmedOpacity
             ];
             this.map.setPaintProperty('metro-layer-circle', 'circle-opacity', finalOpacity);
             this.map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', finalOpacity);
@@ -488,15 +583,9 @@ export class FilterManager {
                 }
             });
 
-            // Click Handler for Destination Markers
-            this.map.on('click', 'destination-markers-layer', (e) => {
-                const feature = e.features[0];
-                if (feature) {
-                    const targetId = feature.properties.id;
-                    // Trigger Unselect (Apply Filter toggles logic)
-                    window.applyFilter(targetId);
-                }
-            });
+            // Click Handler for Destination Markers: REMOVED
+            // Now handled by Unified Click Handler in main.js via proximity sorting.
+            // This ensures click targets exactly match hover targets.
 
             // Cursor
             this.map.on('mouseenter', 'destination-markers-layer', () => {
@@ -571,7 +660,9 @@ export class FilterManager {
         const originRoutesSet = new Set();
         originEq.forEach(oid => {
             const routes = stopToRoutesMap.get(oid) || [];
-            routes.forEach(r => originRoutesSet.add(r));
+            routes.forEach(r => {
+                if (shouldShowRoute(r.shortName, r)) originRoutesSet.add(r);
+            });
         });
 
         const connecting = [];
@@ -664,18 +755,8 @@ export class FilterManager {
         if (!segmentStops || segmentStops.length < 2) return route.id; // Fallback
 
         // Generate Signature: Map to Hubs -> Dedup -> Join
-        const ids = segmentStops
-            .map(s => {
-                let id = s.id || s;
-                // Normalize Redirects first (matching main.js logic)
-                id = redirectMap.get(id) || id;
-                // Normalize Hubs
-                return hubMap.get(id) || id;
-            })
-            .filter((id, i, arr) => i === 0 || id !== arr[i - 1]) // Dedup adjacent
-            .join('|');
-
-        return ids;
+        const signature = generatePathSignature(segmentStops, redirectMap, hubMap);
+        return signature || route.id;
     }
 
     getGradientColors(routes, originId, targetId) {

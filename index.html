@@ -9,7 +9,9 @@
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@500;700&display=swap"
+    rel="stylesheet">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
@@ -17,18 +19,25 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <script>
+    // Immediate Theme Application (Blocking to prevent FOUC)
+    (function () {
+      try {
+        var theme = localStorage.getItem('theme') || 'system';
+        var isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        var isStandalone = window.matchMedia('(display-mode: standalone)').matches;
 
+        if (isDark) {
+          document.documentElement.classList.add('dark-mode');
+          document.documentElement.style.backgroundColor = '#000000'; // Critical for blocking paint
+        }
+      } catch (e) { }
+    })();
+  </script>
   <script>
     // Single Page Apps for GitHub Pages
     // MIT License
     // https://github.com/rafrex/spa-github-pages
-    // This script checks to see if a redirect is present in the query string,
-    // converts it back into the correct url and adds it to the
-    // browser's history using window.history.replaceState(...),
-    // which won't cause the browser to attempt to load the new url.
-    // When the single page app is loaded further down in this file,
-    // the correct url will be waiting in the browser's history for
-    // the single page app to route accordingly.
     (function (l) {
       if (l.search[1] === '/') {
         var decoded = l.search.slice(1).split('&').map(function (s) {
@@ -57,27 +66,11 @@
       display: none;
     }
 
-    /* Initially hide until CSS loads */
-    /* Initially hide until CSS loads - handled by class 'hidden' on element now */
-
     /* Hide UI overlays while loading to prevent unstyled flash */
     body.loading .search-wrapper,
     body.loading #map-controls,
     body.loading .reset-view-btn {
       display: none !important;
-    }
-
-    .offline-notice {
-      background-color: transparent;
-      color: #dc2626;
-      text-align: center;
-      padding: 2px 0;
-      margin: 8px auto 0 auto;
-      font-size: 13px;
-      font-weight: 700;
-      width: 100%;
-      text-shadow: 0 0 10px white, 0 0 5px white;
-      pointer-events: none;
     }
   </style>
 </head>
@@ -107,8 +100,6 @@
         <div id="search-suggestions" class="suggestions hidden"></div>
       </div>
       <div id="filter-instruction" class="filter-instruction hidden" style="display: none;"></div>
-      <div id="offline-notice" class="offline-notice hidden" style="display: none;">Can't get live data from TTC 🤧
-      </div>
     </div>
 
     <!-- Stop Info Panel (Bottom Sheet) -->
@@ -146,6 +137,28 @@
           style="display: flex; gap: 4px; font-size: 12px; color: #6b7280; align-items: center;"></div>
 
         <div style="flex:1"></div>
+
+        <div style="display: flex; gap: 4px; align-items: center; margin-right: 8px;">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <input id="edit-name-en" placeholder="en"
+                style="width: 100px; font-size: 12px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 4px;">
+              <button id="edit-restore-en" class="icon-btn" title="Restore English"
+                style="width:16px; height:16px; padding:0; opacity:0.5;">
+                <img src="/arrow.counterclockwise.circle.fill.svg" alt="Restore" width="16" height="16">
+              </button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <input id="edit-name-ka" placeholder="ქა"
+                style="width: 100px; font-size: 12px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 4px;">
+              <button id="edit-restore-ka" class="icon-btn" title="Restore Georgian"
+                style="width:16px; height:16px; padding:0; opacity:0.5;">
+                <img src="/arrow.counterclockwise.circle.fill.svg" alt="Restore" width="16" height="16">
+              </button>
+            </div>
+          </div>
+        </div>
+
         <button id="edit-btn-apply" class="edit-chip apply-btn" disabled>Apply</button>
       </div>
       <!-- Filter Toggle Row -->
@@ -175,6 +188,9 @@
           <button id="back-route-info" class="icon-btn hidden" title="Back">
             <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
           </button>
+          <button id="btn-edit-route" class="icon-btn hidden" title="Edit Route" style="display: none;">
+            <img src="/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
+          </button>
           <button id="copy-route-link-btn" class="icon-btn" title="Copy Link">
             <img src="/link.circle.fill.svg" alt="Copy Link" width="28" height="28">
           </button>
@@ -183,6 +199,109 @@
           </button>
         </div>
       </div>
+
+
+      <!-- Route Edit Toolbar -->
+      <div id="route-edit-block" class="edit-toolbar hidden"
+        style="display: none; flex-direction: column; height: auto; align-items: stretch; gap: 8px; padding: 10px; border-bottom: 1px solid #eee;">
+
+        <!-- Short Name -->
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <span style="font-size: 12px; width: 60px; color: #666;">Short:</span>
+          <input id="route-edit-short" class="route-edit-input" type="text" autocomplete="new-password"
+            name="route_short_name_ignore" data-lpignore="true" data-form-type="other"
+            style="flex: 1; font-size: 14px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px;">
+          <button id="route-restore-short" class="icon-btn" title="Restore"
+            style="width:16px; height:16px; padding:0; opacity:0.5;">
+            <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
+          </button>
+        </div>
+
+        <!-- Long Name -->
+        <div style="font-size: 11px; font-weight: bold; margin-top: 4px; color: #666;">LONG NAME</div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <span style="font-size: 12px; width: 20px; color: #666;">en:</span>
+          <input id="route-edit-long-en" class="route-edit-input" type="text" autocomplete="new-password"
+            name="route_long_name_en_ignore" data-lpignore="true" data-form-type="other"
+            style="flex: 1; font-size: 12px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px;">
+          <button id="route-restore-long-en" class="icon-btn" title="Restore"
+            style="width:16px; height:16px; padding:0; opacity:0.5;">
+            <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
+          </button>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <span style="font-size: 12px; width: 20px; color: #666;">ქა:</span>
+          <input id="route-edit-long-ka" class="route-edit-input" type="text" autocomplete="new-password"
+            name="route_long_name_ka_ignore" data-lpignore="true" data-form-type="other"
+            style="flex: 1; font-size: 12px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px;">
+          <button id="route-restore-long-ka" class="icon-btn" title="Restore"
+            style="width:16px; height:16px; padding:0; opacity:0.5;">
+            <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
+          </button>
+        </div>
+
+        <!-- Destinations -->
+        <div style="font-size: 11px; font-weight: bold; margin-top: 4px; color: #666;">HEADSIGNS (DESTINATIONS)</div>
+
+        <!-- Forward (Direction 0) -->
+        <div style="display:flex; gap: 4px; align-items:center;">
+          <span
+            style="font-size: 9px; background: #eee; padding: 2px 4px; border-radius: 4px; width: 20px; text-align: center;">DIR<br>0</span>
+          <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
+            <div style="display:flex; gap:4px; align-items: center;">
+              <input id="route-edit-dest0-en" class="route-edit-input" placeholder="en" autocomplete="new-password"
+                name="route_dest0_en_ignore" data-lpignore="true" data-form-type="other"
+                style="flex:1; font-size:12px; padding:2px; border:1px solid #d1d5db; border-radius: 3px;">
+              <button id="route-restore-dest0-en" class="icon-btn" title="Restore"
+                style="width:16px; height:16px; padding:0; opacity:0.5;">
+                <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
+              </button>
+            </div>
+            <div style="display:flex; gap:4px; align-items: center;">
+              <input id="route-edit-dest0-ka" class="route-edit-input" placeholder="ქა" autocomplete="new-password"
+                name="route_dest0_ka_ignore" data-lpignore="true" data-form-type="other"
+                style="flex:1; font-size:12px; padding:2px; border:1px solid #d1d5db; border-radius: 3px;">
+              <button id="route-restore-dest0-ka" class="icon-btn" title="Restore"
+                style="width:16px; height:16px; padding:0; opacity:0.5;">
+                <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Backward (Direction 1) -->
+        <div style="display:flex; gap: 4px; align-items:center;">
+          <span
+            style="font-size: 9px; background: #eee; padding: 2px 4px; border-radius: 4px; width: 20px; text-align: center;">DIR<br>1</span>
+          <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
+            <div style="display:flex; gap:4px; align-items: center;">
+              <input id="route-edit-dest1-en" class="route-edit-input" placeholder="en" autocomplete="new-password"
+                name="route_dest1_en_ignore" data-lpignore="true" data-form-type="other"
+                style="flex:1; font-size:12px; padding:2px; border:1px solid #d1d5db; border-radius: 3px;">
+              <button id="route-restore-dest1-en" class="icon-btn" title="Restore"
+                style="width:16px; height:16px; padding:0; opacity:0.5;">
+                <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
+              </button>
+            </div>
+            <div style="display:flex; gap:4px; align-items: center;">
+              <input id="route-edit-dest1-ka" class="route-edit-input" placeholder="ქა" autocomplete="new-password"
+                name="route_dest1_ka_ignore" data-lpignore="true" data-form-type="other"
+                style="flex:1; font-size:12px; padding:2px; border:1px solid #d1d5db; border-radius: 3px;">
+              <button id="route-restore-dest1-ka" class="icon-btn" title="Restore"
+                style="width:16px; height:16px; padding:0; opacity:0.5;">
+                <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <button id="route-edit-all-routes" class="edit-chip"
+          style="margin-top: 8px; width: 100%; justify-content: center; background: #e5e7eb; color: #374151;">[All
+          Routes] Editor</button>
+        <button id="route-edit-apply" class="edit-chip apply-btn" disabled
+          style="margin-top: 8px; width: 100%; justify-content: center;">Apply Changes</button>
+      </div>
+
       <div class="route-actions">
         <button id="switch-direction" class="switch-btn hidden">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -202,6 +321,26 @@
     <button id="reset-view" class="reset-view-btn hidden">
       <span>📍</span> Return to Tbilisi
     </button>
+
+    <!-- All Routes Editor Modal -->
+    <div id="all-routes-editor" class="hidden">
+      <div class="editor-header">
+        <h2>Route Names Editor</h2>
+        <button id="close-all-routes-editor" class="icon-btn">
+          <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+        </button>
+      </div>
+      <div class="editor-search-bar">
+        <input type="text" id="all-routes-search" placeholder="Filter routes by ID or name...">
+      </div>
+      <div id="all-routes-list" class="editor-list">
+        <!-- Route items injected here -->
+      </div>
+      <div class="editor-footer">
+        <button id="all-routes-save" class="edit-chip apply-btn" disabled>Apply All Changes</button>
+      </div>
+    </div>
+
     <div id="map-menu-popup" class="map-menu-popup hidden">
       <div class="menu-item" id="menu-simplify-toggle-row">
         <div class="menu-icon">
@@ -249,10 +388,30 @@
           <span class="slider round"></span>
         </label>
       </div>
+      <div class="menu-item" id="menu-rustavi-toggle-row">
+        <div class="menu-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9" />
+          </svg>
+        </div>
+        <span class="menu-label">Rustavi buses</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="rustavi-switch">
+          <span class="slider round"></span>
+        </label>
+      </div>
     </div>
 
     <!-- Map Controls (Zoom & Location) -->
     <div id="map-controls">
+      <button id="mini-compass" class="control-btn hidden" aria-label="Reset North">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3l4 9h-8l4-9z" fill="red" stroke="red"></path>
+          <path d="M12 21l-4-9h8l-4 9z" fill="#8E8E93" stroke="#8E8E93"></path>
+        </svg>
+      </button>
       <button id="locate-me" class="control-btn" aria-label="Locate Me">
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

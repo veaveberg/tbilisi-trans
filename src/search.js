@@ -164,7 +164,7 @@ function renderFullHistory(expanded = false) {
         // Create Header with Clear Button
         const header = document.createElement('div');
         header.className = 'suggestion-header';
-        header.style.cssText = 'padding: 12px 16px 4px; font-size: 0.75rem; color: var(--text-light); font-weight: 600; background: #fff; display: flex; justify-content: space-between; align-items: center;';
+        header.style.cssText = 'padding: 12px 16px 4px; font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; background: var(--bg-panel); display: flex; justify-content: space-between; align-items: center;';
 
         const title = document.createElement('span');
         title.innerText = 'RECENTLY SEARCHED';
@@ -172,7 +172,7 @@ function renderFullHistory(expanded = false) {
 
         const clearBtn = document.createElement('span');
         clearBtn.innerText = 'CLEAR ALL';
-        clearBtn.style.cssText = 'font-size: 0.65rem; color: #9ca3af; cursor: pointer; letter-spacing: 0.5px;';
+        clearBtn.style.cssText = 'font-size: 0.65rem; color: var(--text-secondary); cursor: pointer; letter-spacing: 0.5px;';
         clearBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (confirm('Clear search history?')) {
@@ -211,7 +211,7 @@ function renderFullHistory(expanded = false) {
     if (recentCards.length > 0) {
         const cardHeader = document.createElement('div');
         cardHeader.className = 'suggestion-header';
-        cardHeader.style.cssText = 'padding: 12px 16px 4px; font-size: 0.75rem; color: var(--text-light); font-weight: 600; background: #fff; border-top: 1px solid #f3f4f6; margin-top: 4px;';
+        cardHeader.style.cssText = 'padding: 12px 16px 4px; font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; background: var(--bg-panel); border-top: 1px solid var(--border-light); margin-top: 4px;';
         cardHeader.innerText = 'RECENT CARDS';
         container.appendChild(cardHeader);
 
@@ -226,7 +226,7 @@ function renderFullHistory(expanded = false) {
     // Empty State
     if (recentSearches.length === 0 && recentCards.length === 0) {
         container.innerHTML = `
-            <div style="padding: 20px; text-align: center; color: var(--text-light); font-size: 0.9rem;">
+            <div style="padding: 20px; text-align: center; color: var(--text-secondary); font-size: 0.9rem;">
                 <div style="font-size: 1.5rem; margin-bottom: 8px;">🔍</div>
                 <div>Type to search for stops,<br>routes, or addresses</div>
             </div>
@@ -250,20 +250,20 @@ function createSuggestionElement(item, historyType = null) {
 
     if (type === 'route') {
         const route = data;
-        iconHTML = `<div class="suggestion-icon route" style="background: ${isHistory ? '#f3f4f6' : '#dcfce7'}; color: ${isHistory ? '#6b7280' : '#16a34a'};">${isHistory ? '🕒' : '🚌'}</div>`;
+        iconHTML = `<div class="suggestion-icon route" style="background: ${isHistory ? 'var(--bg-secondary)' : 'var(--primary-light)'}; color: ${isHistory ? 'var(--text-secondary)' : 'var(--primary-dark)'};">${isHistory ? '🕒' : '🚌'}</div>`;
         textHTML = `
             <div style="font-weight:600;">Route ${route.shortName}</div>
             <div class="suggestion-subtext">${route.longName}</div>
         `;
     } else if (type === 'stop') {
         const stop = data;
-        iconHTML = `<div class="suggestion-icon stop" style="background: ${isHistory ? '#f3f4f6' : '#e0f2fe'}; color: ${isHistory ? '#6b7280' : '#0284c7'};">${isHistory ? '🕒' : '🚏'}</div>`;
+        iconHTML = `<div class="suggestion-icon stop" style="background: ${isHistory ? 'var(--bg-secondary)' : 'var(--primary-light)'}; color: ${isHistory ? 'var(--text-secondary)' : 'var(--primary)'};">${isHistory ? '🕒' : '🚏'}</div>`;
         textHTML = `
             <div style="font-weight:600;">${stop.name}</div>
             <div class="suggestion-subtext">Code: ${stop.code || 'N/A'}</div>
         `;
     } else if (type === 'place') {
-        iconHTML = `<div class="suggestion-icon place" style="background: ${isHistory ? '#f3f4f6' : '#eef2ff'}; color: ${isHistory ? '#6b7280' : '#4f46e5'};">${isHistory ? '🕒' : '📍'}</div>`;
+        iconHTML = `<div class="suggestion-icon place" style="background: ${isHistory ? 'var(--bg-secondary)' : 'var(--primary-light)'}; color: ${isHistory ? 'var(--text-secondary)' : 'var(--primary)'};">${isHistory ? '🕒' : '📍'}</div>`;
         textHTML = `
             <div style="font-weight:600;">${data.text}</div>
             <div class="suggestion-subtext">${data.place_name}</div>

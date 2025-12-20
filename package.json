@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prefetch": "node scripts/prefetch-data.js",
+    "prefetch": "npm run prefetch:tbilisi && npm run prefetch:rustavi",
+    "prefetch:tbilisi": "node scripts/prefetch-tbilisi.js",
+    "prefetch:rustavi": "node scripts/prefetch-rustavi.js",
     "build": "npm run prefetch && vite build",
     "preview": "vite preview"
   },
@@ -14,6 +16,7 @@
     "mapbox-gl": "^3.1.2"
   },
   "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^1.2.0",
     "vite": "^5.1.4",
     "vite-plugin-pwa": "^1.2.0"
   }

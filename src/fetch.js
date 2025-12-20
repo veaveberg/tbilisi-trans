@@ -6,27 +6,27 @@ import * as api from './api.js';
  * Modifies the route objects in-place by adding `_details`.
  * 
  * @param {Array} routes - Array of route objects from V2 API
- * @param {Function} [onProgress] - Optional callback for progress updates (not used currently but good for future)
+ * @param {Object} [options] - Optional fetch options (e.g. strategy)
  */
-export async function hydrateRouteDetails(routes) {
+export async function hydrateRouteDetails(routes, options = {}) {
     // Filter routes that need fetching
-    const routesNeedingFetch = routes.filter(r => !r._details || !r._details.patterns);
+    const routesNeedingFetch = routes.filter(r => {
+        // If it's already got patterns (e.g. from static preload), it's hydrated enough for filtering
+        if (r._details && (r._details.patterns || r._details.stops)) return false;
+        if (r.patterns && r.patterns.length > 0) return false;
+        return true;
+    });
 
     if (routesNeedingFetch.length === 0) return;
 
-    console.log(`[Fetch] Hydrating details for ${routesNeedingFetch.length} routes...`);
+    // console.log(`[Fetch] Hydrating details for ${routesNeedingFetch.length} routes...`);
 
     // We can run these in parallel
     await Promise.all(routesNeedingFetch.map(async (r) => {
         try {
             // Fetch full route object via V3 API which has patterns and stops
-            const routeDetails = await api.fetchRouteDetailsV3(r.id);
+            const routeDetails = await api.fetchRouteDetailsV3(r.id, options);
             r._details = routeDetails; // Store for usage
-
-            // DEBUG: Custom Logger
-            // if (routesNeedingFetch.indexOf(r) === 0) {
-            //     console.log(`[Debug] V3 Route Details (${r.id}):`, routeDetails);
-            // }
 
             if (routeDetails && routeDetails.patterns) {
                 // Strategy A: Check if stops are already inside patterns (V3 standard)
@@ -40,10 +40,9 @@ export async function hydrateRouteDetails(routes) {
 
                 // Strategy B: Fetch Stops by Suffix if A failed (stops missing in pattern object)
                 if (!foundStopsInPatterns) {
-                    // console.log(`[Debug] No stops in patterns for ${r.id}, fetching by suffix...`);
                     await Promise.all(routeDetails.patterns.map(async (p) => {
                         try {
-                            const stopsData = await api.fetchRouteStopsV3(r.id, p.patternSuffix);
+                            const stopsData = await api.fetchRouteStopsV3(r.id, p.patternSuffix, options);
                             let stopsList = [];
                             if (stopsData && Array.isArray(stopsData)) {
                                 stopsList = stopsData;
@@ -59,8 +58,6 @@ export async function hydrateRouteDetails(routes) {
                     }));
                 }
             } else if (routeDetails && routeDetails.stops) {
-                // Fallback V2 style (unlikely for V3 but safety)
-                // Normalize to expected structure if needed, or consumers handle it
                 r._details.stops = routeDetails.stops;
             }
         } catch (e) {

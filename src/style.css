@@ -1,12 +1,126 @@
+@font-face {
+  font-family: 'Matrix Sans';
+  src: url('/tbilisi-trans/fonts/MatrixSansPrint-Regular.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'DSEG7 Classic';
+  src: url('/tbilisi-trans/fonts/dseg7-classic-latin-700-normal.woff') format('woff');
+  font-weight: 700;
+  font-style: normal;
+}
+
+/* Standard Light Mode Styles (Default) */
+.led-text {
+  font-family: 'Roboto Mono', monospace;
+  /* Mono look for light mode */
+  color: var(--text-main);
+  /* Standard Black/Dark Grey */
+  text-shadow: none;
+  padding: 0;
+  font-size: 1.75rem;
+  /* 28px - Same size as LED */
+  font-weight: 700;
+  line-height: 1;
+  display: inline-block;
+  letter-spacing: -1px;
+  /* Tighter for Roboto Mono */
+}
+
+/* Dark Mode: LED Effect */
+body.dark-mode .led-text {
+  font-family: 'Matrix Sans', monospace;
+  color: #FE622C;
+  text-shadow: 0 0 5px #fe602c48;
+  font-size: 1.75rem;
+  /* LED Size */
+  letter-spacing: 1px;
+}
+
+.scheduled-disclaimer {
+  font-family: 'Inter', sans-serif;
+  /* Keep original font */
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
+
+  /* Light Mode: Standard Grey */
+  color: var(--text-secondary);
+  text-shadow: none;
+}
+
+/* Dark Mode: Amber Disclaimer */
+body.dark-mode .scheduled-disclaimer {
+  color: #FE622C;
+  text-shadow: 0 0 2px #FE622C;
+}
+
 :root {
+  /* Brand */
   --primary: #2563eb;
   --primary-dark: #1d4ed8;
-  --text: #1f2937;
-  --text-light: #6b7280;
-  --bg: #ffffff;
-  --glass-bg: rgba(255, 255, 255, 0.95);
-  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --primary-light: #eff6ff;
+
+  /* Backgrounds */
+  --bg-main: #ffffff;
+  --bg-panel: #ffffff;
+  --bg-secondary: #f3f4f6;
+  --bg-glass: rgba(255, 255, 255, 0.72);
+
+  /* Text */
+  --text-main: #1f2937;
+  --text-secondary: #6b7280;
+  --text-inverse: #ffffff;
+
+  /* Borders / Dividers */
+  --border-light: #e5e7eb;
+
+  /* Shadows */
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  /* Specifics */
   --bottom-sheet-radius: 20px 20px 0 0;
+  --control-bg: #ffffff;
+}
+
+/* Dark Mode Overrides */
+/* Dark Mode Overrides */
+/* Dark Mode Overrides */
+html.dark-mode,
+body.dark-mode {
+  /* Brand - Apple Dark Mode Blue */
+  --primary: #0a84ff;
+  --primary-dark: #60a5fa;
+  --primary-light: #1c1c1e;
+  /* Using dark background for "light" primary surfaces */
+
+  /* Backgrounds - Apple HIG Dark Mode */
+  --bg-main: #000000;
+  /* System Background (Pure Black for OLED) */
+  --bg-panel: #1c1c1e;
+  /* Secondary System Background (Grouped Content) */
+  --bg-secondary: #2c2c2e;
+  /* Tertiary System Background */
+  --bg-glass: rgba(28, 28, 30, 0.85);
+
+  /* Text */
+  --text-main: #ffffff;
+  --text-secondary: #8e8e93;
+  /* System Gray */
+  --text-inverse: #000000;
+
+  /* Borders */
+  --border-light: #38383a;
+  /* Separator Color */
+
+  /* Shadows - Subtler in dark mode, more about depth */
+  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+
+  --control-bg: #1c1c1e;
+  /* Matches Panel */
 }
 
 * {
@@ -18,39 +132,52 @@
 
 html {
   width: 100%;
-  height: 100dvh;
-  overflow: hidden;
-  /* Prevent bounce */
+  height: 100%;
+  /* Force 100% of available window */
   margin: 0;
   padding: 0;
-  background-color: var(--bg);
+  background-color: #000000;
+  /* Force black to avoid white bars */
+  color-scheme: light dark;
 }
 
 body {
-  position: fixed;
-  /* Lock body to viewport */
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100dvh;
-  overflow: hidden;
   margin: 0;
   padding: 0;
-  background-color: var(--bg);
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-main);
   font-family: 'Inter', sans-serif;
-  color: var(--text);
+  color: var(--text-main);
+
+  /* iOS Safari 'Holy Grail' Scroll Fixes */
   overscroll-behavior: none;
-  touch-action: manipulation;
+  touch-action: none;
+  /* Note: Guide says DO NOT use overflow: hidden here */
+
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* Prevent transition flash on load */
+body.loading,
+body.loading * {
+  transition: none !important;
 }
 
 #app {
-  position: absolute;
-  /* Relative to fixed body */
-  top: 0;
-  left: 0;
-  width: 100%;
+  /* The Main Fixed Container */
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+
+  /* Dual Height for Safari */
+  height: 100vh;
+  /* Fallback */
   height: 100dvh;
+  /* Dynamic Viewport */
+
   overflow: hidden;
+  /* App container handles overflow, not body */
 }
 
 #map {
@@ -59,9 +186,12 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
+  background: var(--bg-main);
 }
 
-/* Force Mapbox canvas to fill container (fixes iOS calculation issues) */
+/* Placeholder before map loads */
+
+/* Force Mapbox canvas to fill container */
 .mapboxgl-canvas {
   width: 100% !important;
   height: 100% !important;
@@ -70,14 +200,14 @@ body {
 /* --- Map Controls --- */
 #map-controls {
   position: absolute;
-  bottom: max(100px, 100px + env(safe-area-inset-bottom));
+  bottom: calc(100px + env(safe-area-inset-bottom, 20px));
+  /* Default 20px fallback */
   right: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   align-items: center;
   z-index: 10;
-  /* Below panels (z-index ~100) */
   transition: opacity 0.2s ease;
 }
 
@@ -92,37 +222,52 @@ body {
 /* Adjust position based on panels */
 @media (max-width: 600px) {
   #map-controls {
-    bottom: 250px;
-    /* Make space for the half-sheet (40vh is roughly 300px, so 250 might overly it? Let's try higher) */
-    bottom: 45vh;
-    /* Safe area above the half sheet */
+    bottom: calc(45vh + env(safe-area-inset-bottom));
+    /* Dynamic bottom based on panel */
   }
 }
 
 .control-btn {
   width: 48px;
   height: 48px;
-  background: white;
-  border: none;
+  background: var(--control-bg) !important;
+  border: 1px solid var(--border-light);
+  /* Added subtle border */
   border-radius: 50%;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: var(--text);
+  color: var(--text-main) !important;
   transition: all 0.2s ease;
 }
 
 .control-btn:active {
   transform: scale(0.95);
-  background: #f3f4f6;
+  background: var(--bg-secondary);
 }
 
-/* Specific styling for location active state (can be applied by JS) */
+/* Specific styling for location active state */
 .control-btn.active {
-  color: var(--primary);
-  background: #eff6ff;
+  color: #ffffff !important;
+  background: #007aff !important;
+  /* Apple Blue */
+  border-color: #007aff !important;
+}
+
+#mini-compass {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+#mini-compass svg {
+  transition: transform 0.1s linear;
+}
+
+#mini-compass.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.8);
 }
 
 .zoom-controls {
@@ -131,38 +276,41 @@ body {
   gap: 8px;
 }
 
+
+/* Mapbox Logo & Attribution - Safe Area */
+.mapboxgl-ctrl-bottom-left,
+.mapboxgl-ctrl-bottom-right {
+  bottom: env(safe-area-inset-bottom) !important;
+  transition: bottom 0.3s ease;
+}
+
 /* --- Search Bar --- */
 .search-wrapper {
   position: absolute;
-  top: max(16px, env(safe-area-inset-top) + 16px);
-  /* Respect Notch */
-  left: 0;
-  /* Ensure it sits above map controls and panels */
-  top: 16px;
-  left: 0;
-  right: 0;
-  z-index: 3000;
-  pointer-events: none;
-  /* Let clicks pass through around the search box */
+  top: calc(16px + env(safe-area-inset-top));
+  left: 16px;
+  right: 16px;
+  z-index: 20;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  gap: 0;
-  padding: 0 16px;
-  /* Ensure padding on mobile */
+  gap: 8px;
+  pointer-events: none;
+  /* Let clicks pass through wrapper */
 }
+
+
 
 .search-container {
   pointer-events: auto;
-  background: var(--glass-bg);
+  background: var(--bg-glass);
   backdrop-filter: blur(10px);
+  border: 1px solid var(--border-light);
   border-radius: 12px;
   box-shadow: var(--shadow);
   padding: 8px 12px;
   width: 100%;
   max-width: 450px;
-  /* Match Desktop Panel Width */
   display: flex;
   align-items: center;
   gap: 10px;
@@ -182,7 +330,7 @@ body {
   font-size: 1rem;
   outline: none;
   padding: 4px 0;
-  color: var(--text);
+  color: var(--text-main);
 }
 
 .suggestions {
@@ -190,7 +338,8 @@ body {
   top: calc(100% + 8px);
   left: 0;
   right: 0;
-  background: white;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-light);
   border-radius: 12px;
   box-shadow: var(--shadow);
   max-height: 300px;
@@ -205,10 +354,11 @@ body {
 .suggestion-item {
   padding: 12px 16px;
   cursor: pointer;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid var(--border-light);
   display: flex;
   align-items: center;
   gap: 10px;
+  color: var(--text-main);
 }
 
 .suggestion-item:last-child {
@@ -216,7 +366,7 @@ body {
 }
 
 .suggestion-item:hover {
-  background: #f9fafb;
+  background: var(--bg-secondary);
 }
 
 .suggestion-icon {
@@ -251,10 +401,31 @@ body {
 
 .suggestion-subtext {
   font-size: 0.75rem;
-  color: var(--text-light);
+  color: var(--text-secondary);
 }
 
 /* Clear Buttons */
+.switch-btn {
+  width: 100%;
+  padding: 10px;
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.switch-btn:hover {
+  background: var(--primary-light);
+}
+
 .clear-input-btn {
   background: transparent;
   border: none;
@@ -280,8 +451,7 @@ body {
 .suggestion-delete-btn {
   background: transparent;
   border: none;
-  color: #9ca3af;
-  /* Light grey */
+  color: var(--text-secondary);
   cursor: pointer;
   padding: 8px;
   display: flex;
@@ -290,16 +460,14 @@ body {
   border-radius: 50%;
   margin-left: 4px;
   opacity: 1;
-  /* Always visible on mobile, maybe hover on desktop? User said "all recent items", implies visible. */
   transition: all 0.2s;
   position: relative;
   z-index: 50;
-  /* Ensure above list item */
 }
 
 .suggestion-delete-btn:hover {
-  background: #f3f4f6;
-  color: var(--text);
+  background: var(--bg-secondary);
+  color: var(--text-main);
 }
 
 .suggestion-header {
@@ -310,7 +478,7 @@ body {
 /* --- Panels (Bottom Sheet / Sidebar) --- */
 .panel {
   position: absolute;
-  background: var(--bg);
+  background: var(--bg-panel);
   box-shadow: var(--shadow);
   z-index: 20;
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -320,6 +488,13 @@ body {
   /* Important for dragging */
   transform: translateY(100%);
   /* Start hidden at bottom (Unified for both Desktop & Mobile now) */
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  /* Darker border for contrast */
+  box-shadow: var(--shadow);
+  /* Use the new stronger shadow */
 }
 
 .panel.hidden {
@@ -349,6 +524,8 @@ body {
     /* Main panel doesn't scroll, body does */
     height: 92dvh;
     /* Dynamic viewport height */
+    overflow: visible;
+    /* Allow descendants (like the body) to manage overflow */
   }
 
   /* When dragging, remove transition for instant follow */
@@ -420,7 +597,9 @@ body {
   /* Visible on mobile */
   width: 36px;
   height: 5px;
-  background-color: #d1d5db;
+  width: 36px;
+  height: 5px;
+  background-color: var(--border-light);
   /* Darker grey (grey-300) for visibility */
   border-radius: 4px;
   margin: 12px auto 8px auto;
@@ -437,10 +616,16 @@ body {
    minus header/handle height (approx 80-100px). 
    This applies GLOBALLY now for the unified layout.
 */
-.panel.sheet-half .panel-body {
-  /* Use dvh to account for dynamic address bar */
-  max-height: calc(45dvh - 100px);
+.panel .panel-body {
+  flex: 1;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.panel.sheet-half .panel-body {
+  /* In half-mode, we must strictly cap the height to avoid going off-screen bottom */
+  /* Header (~100px) + Body should be < 40dvh */
+  max-height: calc(40dvh - 120px);
 }
 
 /* Reset for full state */
@@ -461,27 +646,28 @@ body {
 
 /* Route Tiles (All Routes) */
 .all-routes-container {
-  margin-bottom: 12px;
-  padding: 0 20px 16px 20px;
-  /* Header padding */
-  border-bottom: none;
-  background: white;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .route-tiles-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
-  gap: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px;
 }
 
 .route-tile {
-  background: #f0f4f8;
+  background: var(--bg-secondary);
   border: none;
   border-radius: 6px;
-  padding: 4px 2px;
+  padding: 4px 10px;
   font-weight: 600;
   font-size: 0.95rem;
-  color: var(--text);
+  color: var(--text-main);
   cursor: pointer;
   transition: all 0.2s ease;
   text-align: center;
@@ -507,7 +693,7 @@ body {
 /* Panel Header (title + controls inline) */
 .panel-header {
   display: flex;
-  align-items: center;
+  align-items: top;
   justify-content: space-between;
   gap: 12px;
   /* Header specific padding */
@@ -515,12 +701,13 @@ body {
   /* Increased top padding significantly */
   margin-bottom: 12px;
   flex-shrink: 0;
-  background: white;
+  background: transparent;
 }
 
 .panel-header h2 {
   margin: 0;
   flex: 1;
+  color: var(--text-main);
 }
 
 /* Route panel header content */
@@ -532,18 +719,7 @@ body {
   gap: 16px;
 }
 
-.route-info-number {
-  font-size: 2rem;
-  font-weight: 800;
-  color: var(--primary);
-  background: #e0e7ff;
-  padding: 4px 12px;
-  border-radius: 8px;
-  min-width: 60px;
-  text-align: center;
-  line-height: 1;
-  /* Tighten line height for box */
-}
+
 
 .route-info-details {
   display: flex;
@@ -555,17 +731,21 @@ body {
 
 .route-info-details .origin {
   font-weight: 400;
-  color: #6b7280;
-  /* Grey */
+  color: var(--text-secondary);
   font-size: 0.95rem;
 }
 
 .route-info-details .destination {
   font-weight: 700;
-  color: #000000;
-  /* Black */
+  color: var(--text-main);
   font-size: 1.1rem;
-  /* Bigger */
+  /* Ensure it doesn't wrap or get cut off weirdly */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 /* Panel Controls (Back & Close) - Inline with title */
@@ -596,6 +776,12 @@ body {
   /* Darker on hover */
 }
 
+/* Invert icons in dark mode */
+body.dark-mode .icon-btn img {
+  filter: invert(1);
+  opacity: 0.8;
+}
+
 /* Active Filter Button */
 .icon-btn.active {
   opacity: 1;
@@ -606,10 +792,19 @@ body {
 
 /* .icon-btn.active img was empty */
 
-.icon-btn img {
+.control-btn img {
   display: block;
-  /* Remove line-height gaps */
+  filter: brightness(0);
+  /* Black in light mode */
 }
+
+.dark-mode .control-btn img,
+.control-btn.active img {
+  filter: brightness(0) invert(1);
+  /* White in dark mode or active state */
+}
+
+/* Remove line-height gaps */
 
 .icon-btn.hidden {
   display: none;
@@ -625,7 +820,7 @@ body {
 .panel-body {
   flex: 1;
   overflow-y: auto;
-  background: #f2f2f2;
+  background: transparent;
   padding: 20px;
   /* Ensure padding at bottom for safe area scrolling + extra for address bar clearance */
   padding-bottom: calc(env(safe-area-inset-bottom) + 120px);
@@ -633,7 +828,7 @@ body {
 
 /* Metro Mode Overrides */
 .panel.metro-mode .panel-body {
-  background: white;
+  background: transparent;
   overflow-y: hidden;
   /* Optional: if we want to enforce drag over scroll */
 }
@@ -649,16 +844,18 @@ body {
   justify-content: space-between;
   align-items: center;
   padding: 12px;
-  background: #f9fafb;
+  background: var(--bg-panel);
   border-radius: 8px;
   border-left: 4px solid var(--primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  /* Subtle card definition */
   cursor: pointer;
   transition: background 0.2s;
   flex-shrink: 0;
 }
 
 .arrival-item:hover {
-  background: #f3f4f6;
+  background: var(--bg-secondary);
 }
 
 .route-number {
@@ -669,7 +866,7 @@ body {
 
 .destination {
   font-size: 0.875rem;
-  color: var(--text-light);
+  color: var(--text-secondary);
   margin-left: 8px;
   flex: 1;
   white-space: nowrap;
@@ -681,8 +878,8 @@ body {
 .time {
   font-weight: 600;
   font-size: 0.875rem;
-  color: var(--text);
-  background: #e0e7ff;
+  color: var(--text-main);
+  background: var(--primary-light);
   padding: 4px 8px;
   border-radius: 4px;
 }
@@ -698,14 +895,22 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: #f0fdf4;
-  /* Green tint */
-  color: #16a34a;
+  background: #dcfce7;
+  /* Light mode: Pale green */
+  color: #166534;
+  /* Light mode: Dark green text */
   padding: 4px 10px;
   border-radius: 12px;
   font-size: 0.85rem;
   font-weight: 600;
-  border: 1px solid #dcfce7;
+  border: none;
+}
+
+body.dark-mode .metro-hours-badge {
+  background: #064e3b !important;
+  /* Dark mode: Darker green bg */
+  color: #dcfce7 !important;
+  /* Dark mode: Lighter green text */
 }
 
 .metro-hours-badge .icon {
@@ -718,7 +923,7 @@ body {
   align-items: flex-start;
   padding: 0;
   border-radius: 12px;
-  background: #fff;
+  background: var(--bg-panel);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   overflow: hidden;
   border-left-width: 6px;
@@ -729,8 +934,9 @@ body {
   justify-content: space-between;
   align-items: center;
   width: 100%;
+  width: 100%;
   padding: 12px 16px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .metro-card-top .route-info {
@@ -746,17 +952,18 @@ body {
 
 .metro-card-top .destination {
   font-size: 1rem;
+  font-size: 1rem;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--text-main);
   margin: 0;
 }
 
 .metro-card-bottom {
   width: 100%;
   padding: 8px 16px;
-  background: #f9fafb;
+  background: var(--bg-secondary);
   font-size: 0.85rem;
-  color: #6b7280;
+  color: var(--text-secondary);
 }
 
 .first-last-row {
@@ -766,7 +973,7 @@ body {
 }
 
 .first-last-row b {
-  color: #374151;
+  color: var(--text-main);
   font-weight: 600;
 }
 
@@ -791,10 +998,43 @@ body {
 }
 
 .status-closed {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   color: #ef4444;
   font-weight: 600;
 }
+
+/* Force Matrix LED style for Metro in both themes */
+.panel.metro-mode .led-text {
+  font-family: 'DSEG7 Classic', monospace !important;
+  color: #03FF78 !important;
+  text-shadow: 0 0 5px rgba(3, 255, 121, 0.26) !important;
+  font-size: 1.85rem;
+  letter-spacing: 2px;
+}
+
+.panel.metro-mode .scheduled-disclaimer {
+  color: #03FF78 !important;
+  text-shadow: 0 0 5px rgba(3, 255, 120, 0.5) !important;
+  font-style: normal;
+  font-weight: 600;
+  margin-right: 2px;
+}
+
+/* Light Mode: Persistent Black background for the timer box */
+body:not(.dark-mode) .panel.metro-mode .time-container {
+  background: #000;
+  padding: 0;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 130px;
+  height: 60px;
+  flex-shrink: 0;
+}
+
+
 
 .metro-first-last-container {
   display: flex;
@@ -805,6 +1045,17 @@ body {
   background: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
+}
+
+/* Blinking effect for arrival */
+.led-blink {
+  animation: led-blink-anim 1s steps(2, start) infinite;
+}
+
+@keyframes led-blink-anim {
+  to {
+    visibility: hidden;
+  }
 }
 
 .first-last-item {
@@ -860,46 +1111,45 @@ body {
 }
 
 .route-info-number {
-  font-size: 1.5rem;
+  font-size: 1.75rem;
   font-weight: 800;
-  color: var(--primary);
-  background: #e0e7ff;
-  padding: 4px 12px;
-  border-radius: 8px;
+  padding: 6px 16px;
+  border-radius: 10px;
   flex-shrink: 0;
   line-height: 1;
-}
-
-.route-info-details {
-  font-size: 0.9rem;
-  color: var(--text-light);
-  line-height: 1.3;
   display: flex;
-  flex-direction: column;
-  min-width: 0;
-  /* Allow children to truncate */
+  align-items: center;
+  justify-content: center;
 }
 
-.route-info-details .destination {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 700;
-  color: black;
-  font-size: 1rem;
+/* Route Info Header Text */
+#route-info-text,
+#route-info-number {
+  user-select: text !important;
+  cursor: text;
+  pointer-events: auto;
 }
+
+#route-info-text {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+
 
 .route-actions {
   display: flex;
   gap: 8px;
   padding: 0 20px 12px 20px;
   /* Match header padding */
-  background: white;
+  background: var(--bg-panel);
   flex-shrink: 0;
 }
 
 .switch-btn {
-  background: white;
+  background: transparent;
   border: 1px solid var(--primary);
   color: var(--primary);
   padding: 8px 16px;
@@ -915,8 +1165,8 @@ body {
 }
 
 .switch-btn:hover {
-  background: var(--primary);
-  color: white;
+  background: var(--primary-light);
+  color: var(--primary);
 }
 
 .switch-btn.hidden {
@@ -953,9 +1203,9 @@ body.panel-open .controls {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: white;
-  color: var(--text);
-  border: none;
+  background: var(--control-bg) !important;
+  color: var(--text-main) !important;
+  border: 1px solid var(--border-light);
   box-shadow: var(--shadow);
   cursor: pointer;
   display: flex;
@@ -966,7 +1216,7 @@ body.panel-open .controls {
 
 .control-btn:hover {
   transform: scale(1.05);
-  background: #f9fafb;
+  background: var(--bg-secondary);
 }
 
 /* Reset View Button */
@@ -1032,11 +1282,6 @@ body.panel-open .controls {
   font-weight: 500;
 }
 
-.scheduled-disclaimer {
-  font-size: 0.7rem;
-  color: #9ca3af;
-  font-style: italic;
-}
 
 /* Filter Instruction Text */
 .filter-instruction {
@@ -1111,6 +1356,30 @@ body.panel-open .controls {
   /* Grey text */
 }
 
+/* Dark Mode Overrides for Filter Row */
+body.dark-mode .filter-toggle-row .filter-icon {
+  filter: invert(1);
+  /* Make white */
+  opacity: 0.5;
+  /* Dimmed (Greyish) when inactive */
+}
+
+body.dark-mode .filter-toggle-row .filter-text {
+  color: #9ca3af;
+  /* Grey when inactive */
+}
+
+/* Dark Mode Active State */
+body.dark-mode .filter-toggle-row.active .filter-icon {
+  opacity: 1;
+  /* Bright White */
+}
+
+body.dark-mode .filter-toggle-row.active .filter-text {
+  color: #ffffff;
+  /* White when active */
+}
+
 /* Active State */
 .filter-toggle-row.active .filter-icon {
   opacity: 1;
@@ -1155,12 +1424,19 @@ body.panel-open .controls {
   display: flex;
   gap: 8px;
   padding: 12px 16px;
-  background: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
+  background: rgba(243, 244, 246, 0.5);
+  /* Semi-transparent */
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  border-bottom: 1px solid var(--border-light);
   flex-wrap: wrap;
   align-items: center;
   transition: all 0.2s ease;
   margin-bottom: 16px;
+}
+
+body.dark-mode .edit-toolbar {
+  background: rgba(44, 44, 46, 0.5);
 }
 
 .edit-toolbar.hidden {
@@ -1168,9 +1444,9 @@ body.panel-open .controls {
 }
 
 .edit-chip {
-  background: #ffffff;
-  border: 1px solid #d1d5db;
-  color: #374151;
+  background: var(--bg-main);
+  border: 1px solid var(--border-light);
+  color: var(--text-main);
   padding: 6px 12px;
   border-radius: 20px;
   font-size: 0.85rem;
@@ -1287,7 +1563,7 @@ body.panel-open .controls {
   height: 118.8px;
   /* transform-origin: center; (Default) */
   cursor: grab;
-  z-index: 1000;
+  z-index: 10;
   pointer-events: auto;
 }
 
@@ -1344,9 +1620,12 @@ body.panel-open .controls {
   bottom: max(100px, 100px + env(safe-area-inset-bottom));
   right: 80px;
   /* Left of controls (16px + 48px + 16px gap) */
-  background: white;
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow);
   padding: 8px;
   z-index: 2100;
   min-width: 220px;
@@ -1383,14 +1662,14 @@ body.panel-open .controls {
 }
 
 .menu-item:hover {
-  background: #f3f4f6;
+  background: var(--bg-secondary);
 }
 
 .menu-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text);
+  color: var(--text-main);
   width: 24px;
   height: 24px;
 }
@@ -1398,8 +1677,47 @@ body.panel-open .controls {
 .menu-label {
   flex: 1;
   font-weight: 500;
-  color: var(--text);
+  color: var(--text-main);
   font-size: 0.95rem;
+}
+
+/* Theme Segmented Control */
+.theme-segmented-control {
+  display: flex;
+  background: var(--bg-secondary);
+  padding: 2px;
+  border-radius: 8px;
+  gap: 2px;
+}
+
+.theme-option {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.theme-option:hover {
+  opacity: 0.7;
+}
+
+.theme-option.active {
+  background: var(--bg-main);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+/* Dark Mode Override for Segmented Control Active State */
+body.dark-mode .theme-option.active {
+  background: #636366;
+  /* Light gray active state in dark mode */
+  /* Apple uses lighter grey for selected segment in dark mode usually */
+  color: white;
 }
 
 /* Toggle Switch */
@@ -1424,7 +1742,8 @@ body.panel-open .controls {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: #e5e7eb;
+  background-color: #e9e9ea;
+  /* iOS Light Mode OFF */
   transition: .3s;
   border-radius: 34px;
 }
@@ -1454,6 +1773,17 @@ input:checked+.slider:before {
   transform: translateX(20px);
 }
 
+/* Dark Mode Toggle Track */
+body.dark-mode .slider {
+  background-color: #39393d;
+  /* iOS Dark Mode OFF */
+}
+
+body.dark-mode input:checked+.slider {
+  background-color: var(--primary);
+  /* iOS Dark Mode ON (Green usually, but we keep Primary) */
+}
+
 /* Destination Markers (Filtered View) */
 .destination-marker {
   width: 24px;
@@ -1471,4 +1801,211 @@ input:checked+.slider:before {
   transform: scale(1.2);
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
   z-index: 11;
+}
+
+/* Route Edit Inputs */
+.route-edit-input {
+  font-size: 14px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  transition: border-color 0.2s, box-shadow 0.2s;
+  outline: none;
+}
+
+.route-edit-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-light);
+}
+
+/* Dark Mode Input Styles */
+body.dark-mode .route-edit-input {
+  background-color: var(--bg-secondary);
+  border-color: var(--border-light);
+  color: var(--text-main);
+}
+
+body.dark-mode .route-edit-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.3);
+}
+
+/* Ensure placeholder visibility */
+.route-edit-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+/* Route Names Editor Styles */
+#all-routes-editor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-main);
+  z-index: 5000;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) 0;
+}
+
+#all-routes-editor.hidden {
+  display: none;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--border-light);
+  background: var(--bg-panel);
+}
+
+.editor-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.editor-search-bar {
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-light);
+}
+
+#all-routes-search {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  font-size: 1rem;
+  background: var(--control-bg);
+  color: var(--text-main);
+  outline: none;
+}
+
+.editor-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--bg-secondary);
+}
+
+.editor-route-item {
+  background: var(--bg-panel);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.editor-route-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.editor-route-id {
+  font-size: 1.1rem;
+  font-weight: 700;
+  background: var(--primary-light);
+  color: var(--primary);
+  padding: 4px 8px;
+  border-radius: 6px;
+  min-width: 50px;
+  text-align: center;
+}
+
+.editor-route-source {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.editor-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.editor-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.editor-row {
+  display: flex;
+  gap: 8px;
+}
+
+.editor-input {
+  flex: 1;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-main);
+  color: var(--text-main);
+  font-size: 0.9rem;
+}
+
+.editor-input:focus {
+  border-color: var(--primary);
+  outline: none;
+}
+
+.editor-footer {
+  padding: 16px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-light);
+  display: flex;
+  justify-content: center;
+}
+
+/* Dark Mode Adjustments */
+body.dark-mode #all-routes-editor {
+  background: var(--bg-main);
+}
+
+body.dark-mode .editor-header,
+body.dark-mode .editor-footer {
+  background: var(--bg-panel);
+  border-color: var(--border-light);
+}
+
+body.dark-mode .editor-route-item {
+  background: var(--bg-panel);
+}
+
+body.dark-mode .editor-input {
+  background: var(--bg-secondary);
+  border-color: var(--border-light);
+  color: var(--text-main);
+}
+
+.editor-section-header {
+  padding: 24px 8px 8px 8px;
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--text-main);
+  border-bottom: 2px solid var(--border-light);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.editor-section-header:first-child {
+  padding-top: 8px;
 }

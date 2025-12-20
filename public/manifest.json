@@ -3,7 +3,7 @@
     "short_name": "Tbilisi Transit",
     "start_url": "./",
     "display": "standalone",
-    "background_color": "#ffffff",
+    "background_color": "#000000",
     "icons": [
         {
             "src": "/tbilisi-trans/android-chrome-192x192.png",

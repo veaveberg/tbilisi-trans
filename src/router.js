@@ -112,13 +112,10 @@ export const Router = {
                 rawId = p0;
             }
 
-            // Normalize: If numeric (e.g. 803), assume "1:803". 
-            // If already "1:..." or other prefix, keep it.
-            if (rawId && !rawId.includes(':')) {
-                state.stopId = `1:${rawId}`;
-            } else {
-                state.stopId = rawId;
-            }
+            // Normalize: Just use the ID. The application now expects stripped IDs for standard sources.
+            // If the ID comes with a prefix from URL (e.g. r43), keep it.
+            // If it's numeric (801), keep it.
+            state.stopId = rawId;
         }
 
         if (parts.length > 2 && parts[1] === 'filtered') {
@@ -128,11 +125,8 @@ export const Router = {
             if (p2.startsWith('destinations')) {
                 p2 = p2.substring(12);
             }
-            // Normalize Targets too
-            state.targetIds = p2.split('-').filter(id => id.length > 0).map(id => {
-                if (!id.includes(':')) return `1:${id}`;
-                return id;
-            });
+            // Normalize Targets
+            state.targetIds = p2.split('-').filter(id => id.length > 0);
         }
 
         return state;
