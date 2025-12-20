@@ -8,7 +8,8 @@
     "prefetch": "npm run prefetch:tbilisi && npm run prefetch:rustavi",
     "prefetch:tbilisi": "node scripts/prefetch-tbilisi.js",
     "prefetch:rustavi": "node scripts/prefetch-rustavi.js",
-    "build": "npm run prefetch && vite build",
+    "build": "vite build",
+    "build:all": "npm run prefetch && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
