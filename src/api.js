@@ -795,12 +795,22 @@ async function fetchFromSmartSource(configFn, id, options = {}) {
     for (const source of attemptOrder) {
         // Strict Source Check:
         // 1. If ID has a known prefix of ANOTHER source, skip this one.
-        const idPrefix = typeof id === 'string' && id.includes(':') ? id.split(':')[0] : (typeof id === 'string' && id.startsWith('r') ? 'r' : null);
-        if (idPrefix) {
+        const idStr = String(id);
+        const idPrefix = idStr.includes(':') ? idStr.split(':')[0] : (idStr.startsWith('r') ? 'r' : null);
+
+        // If ID has NO prefix, it's implicitly Tbilisi (numeric).
+        if (!idPrefix) {
+            if (source.id !== defaultSource.id) {
+                // console.log(`[SmartFetch] Skipping ${source.id} for numeric ID ${id} (Assumed Tbilisi)`);
+                continue;
+            }
+        }
+        // If ID HAS a prefix, ensure it matches the current source
+        else {
             const idSep = idPrefix === 'r' ? '' : ':';
             const matchedSource = sources.find(s => s.prefix === idPrefix || s.stripPrefix === idPrefix + idSep);
             if (matchedSource && matchedSource.id !== source.id) {
-                // console.log(`[SmartFetch] Skipping ${source.id} for ID ${id} (matches ${matchedSource.id})`);
+                // console.log(`[SmartFetch] Skipping ${source.id} for ID ${id} (Expected ${matchedSource.id})`);
                 continue;
             }
         }

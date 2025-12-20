@@ -237,6 +237,33 @@ geolocate.on('error', (e) => {
 });
 
 // SUCCESS Handler: Sync internal state with actual tracking
+let isOrientationTrackingStarted = false;
+
+function startPersistentOrientationTracking() {
+    if (isOrientationTrackingStarted) return;
+
+    const onOrientation = (e) => {
+        // High priority: Use webkitCompassHeading for iOS (Absolute)
+        // Fallback: alpha if absolute: true
+        let heading = e.webkitCompassHeading;
+        if (heading === undefined || heading === null) {
+            if (e.absolute) heading = 360 - e.alpha;
+        }
+
+        if (heading === undefined || heading === null) return;
+
+        // Apply to map ONLY if we are in HEADING state and NOT interacting
+        if (currentLocationState === LOCATION_STATES.HEADING && !isUserInteracting) {
+            map.setBearing(heading);
+        }
+    };
+
+    window.addEventListener('deviceorientation', onOrientation);
+    window.addEventListener('deviceorientationabsolute', onOrientation);
+    isOrientationTrackingStarted = true;
+    console.log('[Location] Persistent orientation tracking started');
+}
+
 geolocate.on('geolocate', (e) => {
     const coords = e.coords;
     lastUserCoords = { lng: coords.longitude, lat: coords.latitude };
@@ -253,19 +280,10 @@ geolocate.on('geolocate', (e) => {
     // Persistence: If we are in FOLLOW or HEADING mode, ensure the map actually follows
     // even if Mapbox's internal "ACTIVE_LOCK" was broken by zoom/drag.
     // Guard: Don't snap mid-drag (let fuzzy logic handle dragend)
-    if (currentLocationState === LOCATION_STATES.FOLLOW && !isUserInteracting) {
+    if ((currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING) && !isUserInteracting) {
         map.easeTo({
             center: [coords.longitude, coords.latitude],
             duration: 100 // Short duration for a "sticky" feel
-        });
-    }
-
-    // HEADING Mode: Manually rotate map if we have heading data
-    if (currentLocationState === LOCATION_STATES.HEADING && coords.heading !== null && coords.heading !== undefined && !isUserInteracting) {
-        map.easeTo({
-            center: [coords.longitude, coords.latitude],
-            bearing: coords.heading,
-            duration: 100
         });
     }
 });
@@ -380,13 +398,16 @@ export function setupMapControls() {
             } else if (currentLocationState === LOCATION_STATES.FOLLOW) {
                 // To Heading - SYNC for iOS permission chain
                 const attemptHeadingTransition = () => {
-                    let dataReceived = false;
+                    // Start persistent tracking if supported
+                    startPersistentOrientationTracking();
+
+                    // Probe for data support once
+                    let probeReceived = false;
                     const probeHandler = (e) => {
-                        // Check for ANY valid orientation data
                         const hasAlpha = e.alpha !== null && e.alpha !== undefined;
                         const hasHeading = e.webkitCompassHeading !== null && e.webkitCompassHeading !== undefined;
                         if (hasAlpha || hasHeading) {
-                            dataReceived = true;
+                            probeReceived = true;
                             cleanup();
                             console.log('[Location] Heading hardware CONFIRMED');
                             isHeadingSupported = true;
@@ -401,17 +422,14 @@ export function setupMapControls() {
                         window.removeEventListener('deviceorientationabsolute', probeHandler);
                     };
 
-                    // Start Probe
                     window.addEventListener('deviceorientation', probeHandler);
                     window.addEventListener('deviceorientationabsolute', probeHandler);
 
-                    // Timeout: If no data in 1s, it's a "phantom" compass (like some laptops)
                     setTimeout(() => {
-                        if (!dataReceived) {
+                        if (!probeReceived) {
                             cleanup();
-                            console.warn('[Location] Heading probe TIMEOUT - no hardware data');
-                            isHeadingSupported = false; // Mark as unsupported for this session
-                            // Stay in FOLLOW, maybe just re-center
+                            console.warn('[Location] Heading probe TIMEOUT');
+                            isHeadingSupported = false;
                             map.easeTo({ center: [lastUserCoords.lng, lastUserCoords.lat], duration: 500 });
                         }
                     }, 1000);
