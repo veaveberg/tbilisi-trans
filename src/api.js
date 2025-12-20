@@ -261,9 +261,16 @@ async function fetchStaticFallback(endpoint) {
         const urlObj = new URL(endpoint, 'http://dummy.com');
         const pathname = urlObj.pathname;
         const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-        const locale = urlObj.searchParams.get('locale') || 'en';
+        const locale = urlObj.searchParams.get('locale') || 'en'; // Detect Source
+        // Explicitly check for Rustavi in URL or ID prefix
+        let isRustavi = pathname.includes('rustavi') || endpoint.includes('rustavi');
 
-        const isRustavi = pathname.includes('rustavi') || endpoint.includes('rustavi') || endpoint.includes('/r');
+        // Secondary check: ID prefix if available
+        const stopMatch = pathname.match(/\/stops\/([^\/]+)/);
+        const idRouteMatch = pathname.match(/\/routes\/([^\/]+)/);
+        const idInUrl = (stopMatch ? stopMatch[1] : (idRouteMatch ? idRouteMatch[1] : ''));
+        if (decodeURIComponent(idInUrl).startsWith('r')) isRustavi = true;
+
         const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
         const sourceConfig = sources.find(s => s.id === sourceId);
 
@@ -347,8 +354,7 @@ async function fetchStaticFallback(endpoint) {
 
         const routeMatch = pathname.match(/\/routes\/([^\/]+)(?:(\/.*)|$)/);
         if (routeMatch) {
-            const requestedRouteId = decodeURIComponent(routeMatch[1]);
-            const rawRouteId = restoreApiId(requestedRouteId, sourceConfig);
+            const rawRouteId = decodeURIComponent(routeMatch[1]);
             const subPath = routeMatch[2] || '';
 
             if (subPath.startsWith('/schedule')) {
@@ -362,7 +368,7 @@ async function fetchStaticFallback(endpoint) {
                         return lookup || null;
                     }
                 }
-                return [];
+                return null;
             }
 
             if (subPath.startsWith('/polylines')) {
@@ -385,6 +391,7 @@ async function fetchStaticFallback(endpoint) {
                         return foundAny ? result : null;
                     }
                 }
+                return null;
             }
 
             if (subPath.startsWith('/stops-of-patterns')) {
@@ -408,7 +415,7 @@ async function fetchStaticFallback(endpoint) {
                         return processed;
                     }
                 }
-                return [];
+                return null;
             }
 
             if (subPath.startsWith('/stops')) {
@@ -421,7 +428,7 @@ async function fetchStaticFallback(endpoint) {
                         return routeData.stops.map(sid => processId(sid, sourceConfig));
                     }
                 }
-                return [];
+                return null;
             }
 
             if (!subPath || subPath === '/') {
