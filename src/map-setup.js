@@ -187,45 +187,43 @@ let lastUserCoords = null;
 let isUserInteracting = false;
 
 geolocate.on('error', (e) => {
-    // Distinguish between real errors and interruptions
     const error = e.error || e;
     const code = error.code;
     const message = error.message || '';
     const timeSinceClick = Date.now() - lastLocateClickTime;
 
-    // Log diagnostic info
-    console.error('Geolocate error:', { code, message, timeSinceClick, original: e });
+    console.error('[Location] Error:', { code, message, timeSinceClick, original: e });
 
-    // FAST FAIL: If we get an empty error immediately after a click, it's a silent rejection (SSL/iOS)
-    const isSilentRejection = !code && !message && timeSinceClick < 3000;
-
-    if (isSilentRejection) {
-        alert('Geolocation request failed silently. This usually happens on "Not Secure" connections (untrusted SSL) on iOS. Please "Trust" the certificate or use a standard secure connection.');
-        currentLocationState = LOCATION_STATES.OFF;
-        const locateBtn = document.getElementById('locate-me');
-        if (locateBtn) updateLocationIcon(locateBtn);
-        return;
-    }
-
-    // Handle background "empty" interruptions
-    if (!code && !message) {
-        if (!navigator.geolocation) {
-            alert('Geolocation API is not available in this browser/context.');
-        } else {
-            console.log('[Location] Background interruption ignored');
-        }
-        return;
-    }
-
-    // Explicit failures (Denied/Timeout)
+    // State reset
     currentLocationState = LOCATION_STATES.OFF;
     const locateBtn = document.getElementById('locate-me');
     if (locateBtn) updateLocationIcon(locateBtn);
 
-    if (code === 1) {
-        alert('Location access denied. Please enable it in Settings.');
-    } else if (code === 3) {
-        alert('Location request timed out. Please try again.');
+    // 1. Silent rejection check (iOS / Unsecure context)
+    if (!code && !message && timeSinceClick < 3000) {
+        if (!isSecureContext()) {
+            alert('Location request failed. This app requires a secure (HTTPS) connection to access your location. If you are on GitHub Pages, ensure you use https://.');
+        } else {
+            alert('Location request failed silently. This usually happens on iOS if "Location Services" are disabled in System Settings or if the connection is untrusted.');
+        }
+        return;
+    }
+
+    // 2. Background/Ignorable errors
+    if (!code && !message) {
+        console.log('[Location] Background interruption ignored');
+        return;
+    }
+
+    // 3. Explicit W3C Errors
+    if (code === 1) { // PERMISSION_DENIED
+        alert('Location access denied. Please enable location permissions for this site in your browser settings.');
+    } else if (code === 2) { // POSITION_UNAVAILABLE
+        alert('Location unavailable. Your device could not determine its position. Check your GPS/network signal.');
+    } else if (code === 3) { // TIMEOUT
+        alert('Location request timed out. Please try again in a moment.');
+    } else {
+        alert(`Location error (${code || 'unknown'}): ${message || 'No details'}`);
     }
 });
 
@@ -361,14 +359,6 @@ export function setupMapControls() {
                 locateBtn.innerHTML = LOCATION_ICONS.SLASHED;
                 return;
             }
-
-            // Diagnostic Probe: Test raw API before Mapbox
-            console.log('[Location] Running diagnostic probe...');
-            navigator.geolocation.getCurrentPosition(
-                (pos) => console.log('[Location] Probe Success', pos.coords),
-                (err) => console.warn('[Location] Probe Failed', err),
-                { timeout: 2000, enableHighAccuracy: false }
-            );
 
             // 2. Action Logic
             if (currentLocationState === LOCATION_STATES.OFF) {

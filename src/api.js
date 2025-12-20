@@ -93,6 +93,12 @@ export function onApiStatusChange(callback) {
 }
 
 function updateApiStatus(ok, code, text) {
+    // Avoid marking "Offline" for transient 500s that might be rate limits or temporary instability
+    if (!ok && code >= 500 && code < 600) {
+        // Just log, don't kill the green dot yet unless it persists
+        console.warn(`[API] Transient Server Error ${code}: ${text}`);
+    }
+
     if (apiStatus.ok === ok && apiStatus.code === code) return;
 
     apiStatus = { ok, code, text };
@@ -101,7 +107,7 @@ function updateApiStatus(ok, code, text) {
 
 export function getApiStatusColor(code) {
     if (code === 200) return 'green';
-    if (code >= 500) return 'yellow';
+    if (code >= 500) return 'yellow'; // Show warning for server errors
     if (code === 0 || code === 'offline') return 'red';
     return 'yellow';
 }
@@ -562,6 +568,7 @@ export async function fetchWithRetry(url, options = {}, retries = 3, backoff = 1
     try {
         const res = await fetch(url, options);
         if (retries > 0 && res.status >= 500 && res.status < 600) {
+            console.warn(`[API] 500 Error on ${url}. Retrying... (${retries} left)`);
             updateApiStatus(false, res.status, res.statusText);
             await new Promise(r => setTimeout(r, backoff));
             return fetchWithRetry(url, options, retries - 1, backoff * 2);
@@ -570,6 +577,7 @@ export async function fetchWithRetry(url, options = {}, retries = 3, backoff = 1
         return res;
     } catch (err) {
         if (retries > 0) {
+            console.warn(`[API] Network Error on ${url}. Retrying... (${retries} left)`, err.message);
             await new Promise(r => setTimeout(r, backoff));
             return fetchWithRetry(url, options, retries - 1, backoff * 2);
         }

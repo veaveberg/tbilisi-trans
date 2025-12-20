@@ -80,9 +80,12 @@ const saveStopsPlugin = () => ({
     }
 });
 
+// detect mkcert files
+const hasCert = fs.existsSync('./localhost+3.pem') && fs.existsSync('./localhost+3-key.pem');
+
 export default defineConfig({
     plugins: [
-        basicSsl(),
+        hasCert ? null : basicSsl(),
         saveStopsPlugin(),
         VitePWA({
             registerType: 'autoUpdate',
@@ -134,6 +137,10 @@ export default defineConfig({
             ignored: ['**/stops_config.json', '**/src/data/stops_config.json', '**/routes_config.json', '**/src/data/routes_config.json']
         },
         host: true, // Allow LAN access
+        https: hasCert ? {
+            key: fs.readFileSync('./localhost+3-key.pem'),
+            cert: fs.readFileSync('./localhost+3.pem'),
+        } : true,
         proxy: {
             '/pis-gateway': {
                 target: 'https://transit.ttc.com.ge',

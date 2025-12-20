@@ -20,6 +20,12 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <script>
+    // Force HTTPS redirect (Critical for geolocation in PWA/Web)
+    if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      window.location.href = window.location.href.replace('http:', 'https:');
+    }
+  </script>
+  <script>
     // Immediate Theme Application (Blocking to prevent FOUC)
     (function () {
       try {

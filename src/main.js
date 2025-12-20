@@ -479,7 +479,7 @@ window.addEventListener('themeChanged', (e) => {
     // We defer this slightly to ensure standard colors apply first if needed
     setTimeout(() => updateMapTheme(), 50);
 
-    const refreshUI = () => {
+    const refreshUI = (options = {}) => {
         setTimeout(() => {
             const stopPanelVisible = !document.getElementById('info-panel').classList.contains('hidden');
             const routePanelVisible = !document.getElementById('route-info').classList.contains('hidden');
@@ -487,7 +487,7 @@ window.addEventListener('themeChanged', (e) => {
             if (window.currentStopId && window.lastArrivals && stopPanelVisible) {
                 renderArrivals(window.lastArrivals, window.currentStopId);
             }
-            if (window.currentRoute && routePanelVisible) {
+            if (window.currentRoute && routePanelVisible && !options.skipRoute) {
                 updateRouteView(window.currentRoute, { suppressPanel: true });
             }
         }, 100);
@@ -520,7 +520,7 @@ window.addEventListener('themeChanged', (e) => {
         }
 
         restoreMapLayers();
-        refreshUI();
+        refreshUI({ skipRoute: true });
     });
 });
 
@@ -2520,7 +2520,13 @@ async function updateRouteView(route, options = {}) {
             }
         }
         // Set initial state to avoid flicker while data fetches
-        document.getElementById('route-info-text').innerHTML = '<div class="loading">Loading details...</div>';
+        // Optimization: Only show "Loading" if we are actually switching routes OR don't have existing content
+        const routeTextEl = document.getElementById('route-info-text');
+        const hasValidContent = routeTextEl.querySelector('.route-patterns-list') || routeTextEl.querySelector('.headsign-row');
+        if (route.id !== window.lastUpdatedRouteId || !hasValidContent) {
+            routeTextEl.innerHTML = '<div class="loading">Loading details...</div>';
+            window.lastUpdatedRouteId = route.id;
+        }
 
         if (!options.suppressPanel) {
             setSheetState(infoCard, 'half'); // Default to half open
