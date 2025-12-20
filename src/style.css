@@ -1530,8 +1530,6 @@ body.dark-mode .edit-toolbar {
 /* Edit Button in Header */
 #btn-edit-stop {
   opacity: 0.4;
-  display: flex !important;
-  /* Force show */
 }
 
 #btn-edit-stop:hover {

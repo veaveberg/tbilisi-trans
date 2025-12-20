@@ -555,9 +555,22 @@ export async function loadImages(map) {
 
     const images = [
         {
-            id: 'bus-arrow',
+            // Layer 1: White circle background - provides the "stroke" effect
+            id: 'bus-circle-bg',
+            sdf: false,
+            svg: `<svg width="${30 * ICON_SCALE}" height="${30 * ICON_SCALE}" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg"><circle cx="15" cy="15" r="13" fill="white" stroke="white" stroke-width="4"/></svg>`
+        },
+        {
+            // Layer 2: Colored solid circle - SDF for dynamic route coloring
+            id: 'bus-circle',
             sdf: true,
-            svg: `<svg width="${24 * ICON_SCALE}" height="${24 * ICON_SCALE}" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L4.5 20.29L5.21 21L12 18L18.79 21L19.5 20.29L12 2Z" fill="#ef4444" /></svg>`
+            svg: `<svg width="${26 * ICON_SCALE}" height="${26 * ICON_SCALE}" viewBox="0 0 26 26" xmlns="http://www.w3.org/2000/svg"><circle cx="13" cy="13" r="13" fill="black"/></svg>`
+        },
+        {
+            // Layer 3: White arrow foreground - non-SDF for crisp edges
+            id: 'bus-arrow-fg',
+            sdf: false,
+            svg: `<svg width="${26 * ICON_SCALE}" height="${26 * ICON_SCALE}" viewBox="0 0 26 26" xmlns="http://www.w3.org/2000/svg"><path d="M12.56 8.09L8.17 15.46C7.86 15.98 8.11 16.67 8.68 16.67H17.75C18.32 16.67 18.59 16.02 18.25 15.46L13.89 8.09C13.58 7.55 12.86 7.58 12.56 8.09Z" fill="white"/></svg>`
         },
         {
             id: 'stop-icon',
@@ -861,23 +874,49 @@ export async function updateLiveBuses(routeId, patternSuffix, color) {
             map.getSource('live-buses').setData(busGeoJSON);
         } else {
             map.addSource('live-buses', { type: 'geojson', data: busGeoJSON });
+            // Layer 1: White circle background for stroke effect
+            map.addLayer({
+                id: 'live-buses-bg',
+                type: 'symbol',
+                source: 'live-buses',
+                layout: {
+                    'icon-image': 'bus-circle-bg',
+                    'icon-size': 1.1,
+                    'icon-allow-overlap': true,
+                    'icon-ignore-placement': true,
+                    'icon-rotate': ['get', 'heading'],
+                    'icon-rotation-alignment': 'map'
+                }
+            });
+            // Layer 2: Colored solid circle
+            map.addLayer({
+                id: 'live-buses-circle',
+                type: 'symbol',
+                source: 'live-buses',
+                layout: {
+                    'icon-image': 'bus-circle',
+                    'icon-size': 1.0,
+                    'icon-allow-overlap': true,
+                    'icon-ignore-placement': true,
+                    'icon-rotate': ['get', 'heading'],
+                    'icon-rotation-alignment': 'map'
+                },
+                paint: {
+                    'icon-color': ['get', 'color']
+                }
+            });
+            // Layer 3: White arrow on top
             map.addLayer({
                 id: 'live-buses-arrow',
                 type: 'symbol',
                 source: 'live-buses',
                 layout: {
-                    'icon-image': 'bus-arrow',
-                    'icon-size': 1.2,
+                    'icon-image': 'bus-arrow-fg',
+                    'icon-size': 1.0,
                     'icon-allow-overlap': true,
+                    'icon-ignore-placement': true,
                     'icon-rotate': ['get', 'heading'],
                     'icon-rotation-alignment': 'map'
-                },
-                paint: {
-                    'icon-color': ['get', 'color'],
-                    'icon-halo-color': '#ffffff',
-                    'icon-halo-width': 4,
-                    'icon-halo-blur': 0,
-                    'icon-emissive-strength': 1
                 }
             });
         }

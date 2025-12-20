@@ -3123,7 +3123,7 @@ function clearRoute() {
     if (busUpdateInterval) clearInterval(busUpdateInterval);
 
     // Clear all route layers
-    ['route', 'route-stops', 'live-buses-circle', 'live-buses-arrow'].forEach(id => {
+    ['route', 'route-stops', 'live-buses-bg', 'live-buses-circle', 'live-buses-arrow'].forEach(id => {
         if (map.getLayer(id)) map.removeLayer(id);
     });
     // Remove source separately if needed or just leave it

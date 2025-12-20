@@ -44,6 +44,20 @@ export function setupEditTools(map, dataProvider, uiCallbacks) {
     _dataProvider = dataProvider;
     _uiCallbacks = uiCallbacks;
 
+    const stopEditBtn = document.getElementById('btn-edit-stop');
+    const routeEditBtn = document.getElementById('btn-edit-route');
+
+    const isDev = import.meta.env.DEV || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+    if (!isDev) {
+        if (stopEditBtn) stopEditBtn.style.setProperty('display', 'none', 'important');
+        if (routeEditBtn) routeEditBtn.style.setProperty('display', 'none', 'important');
+        return;
+    }
+
+    if (stopEditBtn) stopEditBtn.style.display = 'flex';
+    if (routeEditBtn) routeEditBtn.style.display = 'flex';
+
     initEditTools();
     initRouteEditTools();
 
