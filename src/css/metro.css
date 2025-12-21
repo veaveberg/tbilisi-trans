@@ -1,0 +1,214 @@
+/* --- Metro Specific UI --- */
+.led-text {
+    font-family: 'Roboto Mono', monospace;
+    color: var(--text-main);
+    text-shadow: none;
+    padding: 0;
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1;
+    display: inline-block;
+    letter-spacing: -1px;
+}
+
+body.dark-mode .led-text {
+    font-family: 'Matrix Sans', monospace;
+    color: #FE622C;
+    text-shadow: 0 0 5px #fe602c48;
+    font-size: 1.75rem;
+    letter-spacing: 1px;
+}
+
+.panel.metro-mode .panel-body {
+    background: transparent;
+    overflow-y: hidden;
+}
+
+.metro-header {
+    margin-bottom: 16px;
+}
+
+.metro-hours-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #dcfce7;
+    color: #166534;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border: none;
+}
+
+body.dark-mode .metro-hours-badge {
+    background: #064e3b !important;
+    color: #dcfce7 !important;
+}
+
+.metro-hours-badge .icon {
+    font-size: 1rem;
+}
+
+.metro-consolidated-item {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 0;
+    border-radius: 12px;
+    background: var(--bg-panel);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    border-left-width: 6px;
+}
+
+.metro-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.metro-card-top .route-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.metro-card-top .route-number {
+    font-size: 1.5rem;
+}
+
+.metro-card-top .destination {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-main);
+    margin: 0;
+}
+
+.metro-card-bottom {
+    width: 100%;
+    padding: 8px 16px;
+    background: var(--bg-secondary);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.first-last-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.first-last-row b {
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.separator {
+    color: #d1d5db;
+}
+
+.next-arrival {
+    text-align: right;
+}
+
+.next-arrival-chip {
+    font-weight: 700;
+    color: #111827;
+    font-size: 1.1rem;
+}
+
+.small-time {
+    font-size: 0.8rem;
+    color: #9ca3af;
+    font-weight: 400;
+}
+
+.status-closed {
+    font-size: 0.85rem;
+    color: #ef4444;
+    font-weight: 600;
+}
+
+.panel.metro-mode .led-text {
+    font-family: 'DSEG7 Classic', monospace !important;
+    color: #03FF78 !important;
+    text-shadow: 0 0 5px rgba(3, 255, 121, 0.26) !important;
+    font-size: 1.85rem;
+    letter-spacing: 2px;
+}
+
+.panel.metro-mode .scheduled-disclaimer {
+    color: #03FF78 !important;
+    text-shadow: 0 0 5px rgba(3, 255, 120, 0.5) !important;
+    font-style: normal;
+    font-weight: 600;
+    margin-right: 2px;
+}
+
+body:not(.dark-mode) .panel.metro-mode .time-container {
+    background: #000;
+    padding: 0;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 130px;
+    height: 60px;
+    flex-shrink: 0;
+}
+
+.metro-first-last-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 12px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+
+.led-blink {
+    animation: led-blink-anim 1s steps(2, start) infinite;
+}
+
+@keyframes led-blink-anim {
+    to {
+        visibility: hidden;
+    }
+}
+
+.first-last-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.direction-label {
+    font-size: 0.8rem;
+    color: var(--text-light);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.times-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.9rem;
+    color: var(--text);
+}
+
+.times-row span b {
+    color: var(--primary);
+    font-weight: 700;
+}
+
+.arrival-chip {
+    display: inline-block;
+    margin-left: 4px;
+}

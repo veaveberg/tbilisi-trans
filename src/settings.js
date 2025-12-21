@@ -3,7 +3,8 @@ import { onApiStatusChange, getApiStatusColor } from './api.js';
 export const settings = {
     simplifyNumbers: false,
     showMinibuses: true,
-    showRustaviBuses: true
+    showRustaviBuses: true,
+    pageScale: 1.0
 };
 
 // Start logic
@@ -176,9 +177,76 @@ export function initSettings({ onUpdate }) {
     // Given the constraints, I'll append a new row to the menu programmatically.
 
     addDarkModeToggle();
+    addPageScaleAdjuster();
 
     // Online Status Indicator
     initOnlineStatus();
+}
+
+function addPageScaleAdjuster() {
+    const menuPopup = document.getElementById('map-menu-popup');
+    if (!menuPopup) return;
+
+    if (document.getElementById('page-scale-row')) return;
+
+    const row = document.createElement('div');
+    row.id = 'page-scale-row';
+    row.className = 'menu-row scale-adjuster-row';
+    row.style.cssText = 'padding: 10px 16px; border-top: 1px solid var(--border-light);';
+
+    // Load initial scale
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const defaultScale = isMobile ? 1.25 : 1.0;
+    const storedScale = localStorage.getItem('pageScale');
+    settings.pageScale = storedScale ? parseFloat(storedScale) : defaultScale;
+
+    row.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span style="font-weight:500; font-size:14px; color:var(--text-main);">Page Zoom</span>
+            <span id="page-scale-value" style="font-family:ui-monospace; font-size:12px; font-weight:600; color:var(--primary);">${Math.round(settings.pageScale * 100)}%</span>
+        </div>
+        <div class="scale-slider-container">
+            <input type="range" id="page-scale-slider" list="tickmarks" min="0.8" max="1.5" step="0.05" value="${settings.pageScale}" style="width: 100%; cursor: pointer;">
+            <datalist id="tickmarks">
+                ${Array.from({ length: 15 }, (_, i) => 0.8 + i * 0.05).map(v => `<option value="${v.toFixed(2)}"></option>`).join('')}
+            </datalist>
+            <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px; color: var(--text-secondary);">
+                <span>80%</span>
+                <span>100%</span>
+                <span>125%</span>
+                <span>150%</span>
+            </div>
+        </div>
+    `;
+
+    // Insert before online status if possible
+    const statusRow = Array.from(menuPopup.children).find(c => c.innerHTML.includes('APP'));
+    if (statusRow) {
+        menuPopup.insertBefore(row, statusRow);
+    } else {
+        menuPopup.appendChild(row);
+    }
+
+    const slider = row.querySelector('#page-scale-slider');
+    const valueDisplay = row.querySelector('#page-scale-value');
+
+    slider.addEventListener('input', (e) => {
+        const value = parseFloat(e.target.value);
+        valueDisplay.textContent = `${Math.round(value * 100)}%`;
+    });
+
+    slider.addEventListener('change', (e) => {
+        const value = parseFloat(e.target.value);
+        settings.pageScale = value;
+
+        localStorage.setItem('pageScale', value);
+        window.dispatchEvent(new CustomEvent('pageScaleChange', { detail: value }));
+    });
+
+    // Initial trigger
+    setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('pageScaleChange', { detail: settings.pageScale }));
+    }, 100);
 }
 
 function addDarkModeToggle() {

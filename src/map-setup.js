@@ -2,7 +2,6 @@ import mapboxgl from 'mapbox-gl';
 import * as api from './api.js';
 import * as metro from './metro.js';
 import stopBearings from './data/stop_bearings.json';
-import './style.css';
 
 // Initialize Map
 mapboxgl.accessToken = api.MAPBOX_TOKEN;
@@ -185,6 +184,7 @@ map.addControl(geolocate);
 let lastLocateClickTime = 0;
 let lastUserCoords = null;
 let isUserInteracting = false;
+let isUserRotating = false;
 
 geolocate.on('error', (e) => {
     const error = e.error || e;
@@ -238,6 +238,7 @@ geolocate.on('error', (e) => {
 
 // SUCCESS Handler: Sync internal state with actual tracking
 let isOrientationTrackingStarted = false;
+let latestHeading = null;
 
 function startPersistentOrientationTracking() {
     if (isOrientationTrackingStarted) return;
@@ -251,9 +252,10 @@ function startPersistentOrientationTracking() {
         }
 
         if (heading === undefined || heading === null) return;
+        latestHeading = heading;
 
-        // Apply to map ONLY if we are in HEADING state and NOT interacting
-        if (currentLocationState === LOCATION_STATES.HEADING && !isUserInteracting) {
+        // Apply to map ONLY if we are in HEADING state and NOT manually rotating
+        if (currentLocationState === LOCATION_STATES.HEADING && !isUserRotating) {
             map.setBearing(heading);
         }
     };
@@ -267,20 +269,16 @@ function startPersistentOrientationTracking() {
 geolocate.on('geolocate', (e) => {
     const coords = e.coords;
     lastUserCoords = { lng: coords.longitude, lat: coords.latitude };
-    console.log('[Location] Success! Fix received:', coords);
-
-    // Only set to FOLLOW/Active when we actually have a marker on screen
-    if (currentLocationState === LOCATION_STATES.OFF) {
-        currentLocationState = LOCATION_STATES.FOLLOW;
-    }
+    // We no longer auto-set FOLLOW here, as it overrides the user's manual OFF state.
+    // The state is managed by locateBtn clicks and fuzzy snap-back logic.
 
     const locateBtn = document.getElementById('locate-me');
     if (locateBtn) updateLocationIcon(locateBtn);
 
     // Persistence: If we are in FOLLOW or HEADING mode, ensure the map actually follows
     // even if Mapbox's internal "ACTIVE_LOCK" was broken by zoom/drag.
-    // Guard: Don't snap mid-drag (let fuzzy logic handle dragend)
-    if ((currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING) && !isUserInteracting) {
+    // Guard: Don't snap mid-drag or mid-rotation (let fuzzy logic handle end)
+    if ((currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING) && !isUserInteracting && !isUserRotating) {
         map.easeTo({
             center: [coords.longitude, coords.latitude],
             duration: 100 // Short duration for a "sticky" feel
@@ -299,11 +297,15 @@ geolocate.on('trackuserlocationend', () => {
     // determine when to actually turn off the blue marker icon.
 });
 
-const LOCATION_STATES = {
+export const LOCATION_STATES = {
     OFF: 'OFF',
     FOLLOW: 'FOLLOW',
     HEADING: 'HEADING'
 };
+
+export function isTrackingActive() {
+    return currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING;
+}
 
 const LOCATION_ICONS = {
     OFF: `<img src="/tbilisi-trans/location.svg" width="24" height="24">`,
@@ -485,8 +487,13 @@ export function setupMapControls() {
     }
 
     // Fuzzy Re-centering / Unfollow handler
+    let isReCentering = false;
     const handleInteractionEnd = () => {
-        isUserInteracting = false;
+        // If some other interaction is still active, don't snap back yet
+        if (isUserInteracting || isUserRotating || isReCentering) return;
+
+        const previousState = currentLocationState;
+
         if (!lastUserCoords || currentLocationState === LOCATION_STATES.OFF) return;
 
         // Pixel-based snapback (consistent across zoom levels)
@@ -496,15 +503,39 @@ export function setupMapControls() {
         const dy = userPixel.y - centerPixel.y;
         const pixelDist = Math.sqrt(dx * dx + dy * dy);
 
-        // If within 40px, snap back to FOLLOW
+        // If within 40px, snap back to the state we were in (FOLLOW or HEADING)
+        // Guard: If distance is negligible (< 1px), don't trigger easeTo to avoid event loops/spam
         if (pixelDist < 40) {
-            console.log('[Location] Fuzzy match! Snapping back to FOLLOW (Distance:', Math.round(pixelDist), 'px)');
-            currentLocationState = LOCATION_STATES.FOLLOW;
-            updateLocationIcon(locateBtn);
-            map.easeTo({
-                center: [lastUserCoords.lng, lastUserCoords.lat],
-                duration: 500
-            });
+            if (pixelDist > 1) {
+                // Silencing fuzzy match log as well to avoid spam during drag
+                currentLocationState = previousState;
+                updateLocationIcon(locateBtn);
+
+                const options = {
+                    center: [lastUserCoords.lng, lastUserCoords.lat],
+                    duration: 500
+                };
+
+                // If in heading mode, also snap bearing back immediately
+                if (currentLocationState === LOCATION_STATES.HEADING && latestHeading !== null) {
+                    options.bearing = latestHeading;
+                }
+
+                isReCentering = true;
+                map.easeTo({
+                    ...options,
+                    essential: true
+                });
+
+                // Reset after the transition
+                map.once('moveend', () => {
+                    isReCentering = false;
+                });
+            } else {
+                // Already centered enough, just restore state silently
+                currentLocationState = previousState;
+                updateLocationIcon(locateBtn);
+            }
         } else {
             // Truly dragged or zoomed away
             console.log('[Location] Detaching (Distance:', Math.round(pixelDist), 'px)');
@@ -514,19 +545,44 @@ export function setupMapControls() {
     };
 
     // Manual interruption detection
-    map.on('dragstart', () => {
-        isUserInteracting = true;
-        if (currentLocationState !== LOCATION_STATES.OFF) {
-            console.log('[Location] Drag started while tracking');
+    // Note: We use e.originalEvent to distinguish manual gestures from zoom buttons
+    map.on('dragstart', (e) => {
+        if (e.originalEvent) {
+            isUserInteracting = true;
+            console.log('[Location] Manual drag started');
         }
     });
 
-    map.on('zoomstart', () => {
-        isUserInteracting = true;
+    map.on('rotatestart', (e) => {
+        if (e.originalEvent) {
+            isUserRotating = true;
+            console.log('[Location] Manual rotation started');
+        }
     });
 
-    map.on('zoomend', handleInteractionEnd);
-    map.on('dragend', handleInteractionEnd);
+    map.on('zoomstart', (e) => {
+        if (e.originalEvent) {
+            isUserInteracting = true;
+            console.log('[Location] Manual zoom started');
+        }
+    });
+
+    map.on('zoomend', () => {
+        isUserInteracting = false;
+        handleInteractionEnd();
+    });
+    map.on('dragend', () => {
+        isUserInteracting = false;
+        handleInteractionEnd();
+    });
+    map.on('rotateend', () => {
+        isUserRotating = false;
+        handleInteractionEnd();
+    });
+
+    map.on('pitchstart', () => {
+        // Tilting allowed as per user request
+    });
 }
 
 function getDistance(c1, c2) {

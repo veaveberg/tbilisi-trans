@@ -1,4 +1,11 @@
-import './style.css';
+import './css/base.css';
+import './css/map-ui.css';
+import './css/search.css';
+import './css/panels.css';
+import './css/transit.css';
+import './css/metro.css';
+import './css/editor.css';
+import './css/components.css';
 import mapboxgl from 'mapbox-gl';
 
 import { Router } from './router.js';
@@ -6,7 +13,7 @@ import * as api from './api.js';
 import { LoopUtils } from './loop-utils.js';
 import * as metro from './metro.js';
 const { handleMetroStop } = metro;
-import { map, setupMapControls, getMapHash, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, setupHoverHandlers, setupClickHandlers, setMapFocus } from './map-setup.js';
+import { map, setupMapControls, getMapHash, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, setupHoverHandlers, setupClickHandlers, setMapFocus, isTrackingActive } from './map-setup.js';
 import stopBearings from './data/stop_bearings.json';
 import { db } from './db.js';
 import { historyManager, addToHistory, popHistory, clearHistory, updateBackButtons, peekHistory } from './history.js';
@@ -28,6 +35,13 @@ let stopToRoutesMap = new Map();
 const hydratedStops = new Set();
 let lastRouteUpdateId = 0;
 const redirectMap = new Map();
+
+// --- Mobile Detection & Zoom Adjust ---
+const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+window.addEventListener('pageScaleChange', (e) => {
+    const scale = e.detail;
+    document.documentElement.style.setProperty('--ui-scale', scale);
+});
 const hubMap = new Map();
 const hubSourcesMap = new Map();
 const mergeSourcesMap = new Map();
@@ -100,7 +114,9 @@ api.fetchRoutes().then(onRoutesLoaded);
 
 map.on('moveend', () => {
     // Only update hash if no specialized view is active (Stop or Route)
-    if (!window.currentStopId && !window.currentRoute) {
+    // AND only if we are not in an active tracking mode (Heading/Follow)
+    // This avoids history.replaceState spam (100+ times / 10s) during GPS updates.
+    if (!window.currentStopId && !window.currentRoute && !isTrackingActive()) {
         Router.updateMapLocation(getMapHash());
     }
 });
@@ -2500,7 +2516,7 @@ async function updateRouteView(route, options = {}) {
         const numberEl = document.getElementById('route-info-number');
         const displayColor = getRouteDisplayColor(route);
 
-        numberEl.textContent = simplifyNumber(route.customShortName || route.shortName);
+        numberEl.textContent = route.customShortName || route.shortName;
         numberEl.style.color = displayColor;
         numberEl.style.backgroundColor = `color-mix(in srgb, ${displayColor}, transparent 88%)`;
 
@@ -2837,6 +2853,7 @@ async function updateRouteView(route, options = {}) {
 function setSheetState(panel, state) {
     // states: hidden, collapsed, peek, half, full
     panel.classList.remove('hidden', 'sheet-half', 'sheet-full', 'sheet-collapsed', 'sheet-peek');
+    document.body.classList.remove('sheet-half', 'sheet-full', 'sheet-collapsed', 'sheet-peek');
 
     if (state === 'hidden') {
         panel.classList.add('hidden');
@@ -2851,17 +2868,21 @@ function setSheetState(panel, state) {
         }
     } else if (state === 'collapsed') {
         panel.classList.add('sheet-collapsed');
+        document.body.classList.add('sheet-collapsed');
         panel.classList.remove('hidden');
     } else if (state === 'peek') {
         panel.classList.add('sheet-peek');
+        document.body.classList.add('sheet-peek');
         panel.classList.remove('hidden');
         panel.style.display = ''; // Reset
     } else if (state === 'half') {
         panel.classList.add('sheet-half');
+        document.body.classList.add('sheet-half');
         panel.classList.remove('hidden');
         panel.style.display = ''; // Reset
     } else if (state === 'full') {
         panel.classList.add('sheet-full');
+        document.body.classList.add('sheet-full');
         panel.classList.remove('hidden');
     }
 

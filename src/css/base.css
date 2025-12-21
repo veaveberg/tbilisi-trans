@@ -1,0 +1,142 @@
+@font-face {
+    font-family: 'Matrix Sans';
+    src: url('/tbilisi-trans/fonts/MatrixSansPrint-Regular.woff2') format('woff2');
+    font-weight: normal;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'DSEG7 Classic';
+    src: url('/tbilisi-trans/fonts/dseg7-classic-latin-700-normal.woff') format('woff');
+    font-weight: 700;
+    font-style: normal;
+}
+
+:root {
+    /* Brand */
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --primary-light: #eff6ff;
+
+    /* Backgrounds */
+    --bg-main: #ffffff;
+    --bg-panel: #ffffff;
+    --bg-secondary: #f3f4f6;
+    --bg-glass: rgba(255, 255, 255, 0.72);
+
+    /* Text */
+    --text-main: #1f2937;
+    --text-secondary: #6b7280;
+    --text-inverse: #ffffff;
+
+    /* Borders / Dividers */
+    --border-light: #e5e7eb;
+
+    /* Shadows */
+    --shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.06);
+
+    /* Specifics */
+    --bottom-sheet-radius: 20px 20px 0 0;
+    --control-bg: #ffffff;
+}
+
+/* Dark Mode Overrides */
+html.dark-mode,
+body.dark-mode {
+    /* Brand - Apple Dark Mode Blue */
+    --primary: #0a84ff;
+    --primary-dark: #60a5fa;
+    --primary-light: #1c1c1e;
+
+    /* Backgrounds - Apple HIG Dark Mode */
+    --bg-main: #000000;
+    --bg-panel: #1c1c1e;
+    --bg-secondary: #2c2c2e;
+    --bg-glass: rgba(28, 28, 30, 0.85);
+
+    /* Text */
+    --text-main: #ffffff;
+    --text-secondary: #8e8e93;
+    --text-inverse: #000000;
+
+    /* Borders */
+    --border-light: #38383a;
+
+    /* Shadows */
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+
+    --control-bg: #1c1c1e;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html {
+    width: 100%;
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+    background-color: #000000;
+    color-scheme: light dark;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100vh;
+    background-color: var(--bg-main);
+    font-family: 'Inter', sans-serif;
+    color: var(--text-main);
+    overscroll-behavior: none;
+    touch-action: none;
+    transition: background-color 0.3s, color 0.3s;
+}
+
+body.loading,
+body.loading * {
+    transition: none !important;
+}
+
+#app {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+#map {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--bg-main);
+}
+
+#ui-wrapper {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 20;
+}
+
+#ui-wrapper>* {
+    pointer-events: auto;
+}
+
+.mapboxgl-canvas {
+    width: 100% !important;
+    height: 100% !important;
+}

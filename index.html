@@ -85,370 +85,348 @@
   <div id="app">
     <div id="map"></div>
 
-    <!-- Search Bar -->
-    <div class="search-wrapper">
-      <div class="search-container">
-        <div class="search-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="8"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-          </svg>
+    <div id="ui-wrapper">
+      <!-- Search Bar -->
+      <div class="search-wrapper">
+        <div class="search-container">
+          <div class="search-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+          </div>
+          <input type="text" id="search-input" placeholder="Search stops or routes..." />
+          <button id="search-clear" class="clear-input-btn hidden" title="Clear">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+          <div id="search-suggestions" class="suggestions hidden"></div>
         </div>
-        <input type="text" id="search-input" placeholder="Search stops or routes..." />
-        <button id="search-clear" class="clear-input-btn hidden" title="Clear">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-        <div id="search-suggestions" class="suggestions hidden"></div>
+        <div id="filter-instruction" class="filter-instruction hidden" style="display: none;"></div>
       </div>
-      <div id="filter-instruction" class="filter-instruction hidden" style="display: none;"></div>
-    </div>
 
-    <!-- Stop Info Panel (Bottom Sheet) -->
-    <div id="info-panel" class="panel hidden">
-      <div class="drag-handle"></div>
-      <div class="panel-header">
-        <h2 id="stop-name">Select a stop</h2>
-        <div class="panel-controls">
-          <button id="back-panel" class="icon-btn hidden" title="Back">
-            <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+
+      <div id="info-panel" class="panel hidden">
+        <div class="drag-handle"></div>
+        <div class="panel-header">
+          <h2 id="stop-name">Select a stop</h2>
+          <div class="panel-controls">
+            <button id="back-panel" class="icon-btn hidden" title="Back">
+              <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+            </button>
+
+            <button id="btn-edit-stop" class="icon-btn hidden" title="Edit Stop" style="display: none;">
+              <img src="/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
+            </button>
+
+            <button id="copy-link-btn" class="icon-btn" title="Copy Link">
+              <img src="/link.circle.fill.svg" alt="Copy Link" width="28" height="28">
+            </button>
+
+            <button id="close-panel" class="icon-btn" title="Close">
+              <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+            </button>
+          </div>
+        </div>
+
+        <!-- Edit Toolbar (Hidden by default) -->
+        <div id="stop-edit-block" class="edit-toolbar hidden">
+          <button id="edit-toggle-loc" class="edit-chip">Location</button>
+          <button id="edit-toggle-rot" class="edit-chip">Rotation</button>
+          <button id="edit-toggle-merge" class="edit-chip">Merge into...</button>
+          <button id="edit-toggle-hub" class="edit-chip">Hub with...</button>
+
+          <div id="edit-merged-list" class="edit-row"></div>
+
+          <div class="edit-spacer"></div>
+
+          <div class="edit-col">
+            <div class="edit-row">
+              <input id="edit-name-en" class="route-edit-input compact" placeholder="en">
+              <button id="edit-restore-en" class="edit-restore-btn" title="Restore English">
+                <img src="/arrow.counterclockwise.circle.fill.svg" alt="Restore">
+              </button>
+            </div>
+            <div class="edit-row">
+              <input id="edit-name-ka" class="route-edit-input compact" placeholder="ქა">
+              <button id="edit-restore-ka" class="edit-restore-btn" title="Restore Georgian">
+                <img src="/arrow.counterclockwise.circle.fill.svg" alt="Restore">
+              </button>
+            </div>
+          </div>
+
+          <button id="edit-btn-apply" class="edit-chip apply-btn" disabled>Apply</button>
+        </div>
+        <!-- Filter Toggle Row -->
+        <button id="filter-routes-toggle" class="filter-toggle-row">
+          <img class="filter-icon" src="/line.3.horizontal.decrease.circle.svg" alt="Filter" width="24" height="24">
+          <span class="filter-text">Filter routes...</span>
+        </button>
+
+        <div id="header-extension"></div> <!-- Container for All Routes, Metro badge etc. -->
+
+        <div id="arrivals-list" class="arrivals-list panel-body">
+          <!-- Arrivals will be injected here -->
+        </div>
+        <!-- stop-id-display removed -->
+
+      </div> <!-- Close info-panel -->
+
+      <!-- Route Info Panel (Bottom Sheet) -->
+      <div id="route-info" class="panel hidden route-panel">
+        <div class="drag-handle"></div>
+        <div class="panel-header">
+          <div class="route-info-header-content">
+            <div id="route-info-number" class="route-info-number"></div>
+            <div id="route-info-text" class="route-info-details"></div>
+          </div>
+          <div class="panel-controls">
+            <button id="back-route-info" class="icon-btn hidden" title="Back">
+              <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+            </button>
+            <button id="btn-edit-route" class="icon-btn hidden" title="Edit Route" style="display: none;">
+              <img src="/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
+            </button>
+            <button id="copy-route-link-btn" class="icon-btn" title="Copy Link">
+              <img src="/link.circle.fill.svg" alt="Copy Link" width="28" height="28">
+            </button>
+            <button id="close-route-info" class="icon-btn" title="Close">
+              <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+            </button>
+          </div>
+        </div>
+
+
+        <!-- Route Edit Toolbar -->
+        <div id="route-edit-block" class="edit-toolbar vertical hidden">
+
+          <!-- Short Name -->
+          <div class="edit-row full-width">
+            <span class="edit-label-sm" style="width: 60px;">Short:</span>
+            <input id="route-edit-short" class="route-edit-input" type="text" autocomplete="new-password"
+              name="route_short_name_ignore" data-lpignore="true" data-form-type="other">
+            <button id="route-restore-short" class="edit-restore-btn" title="Restore">
+              <img src="/arrow.counterclockwise.circle.fill.svg">
+            </button>
+          </div>
+
+          <!-- Long Name -->
+          <div class="edit-label-sm">LONG NAME</div>
+          <div class="edit-row full-width">
+            <span class="edit-badge-mini">en</span>
+            <input id="route-edit-long-en" class="route-edit-input compact" type="text" autocomplete="new-password"
+              name="route_long_name_en_ignore" data-lpignore="true" data-form-type="other">
+            <button id="route-restore-long-en" class="edit-restore-btn" title="Restore">
+              <img src="/arrow.counterclockwise.circle.fill.svg">
+            </button>
+          </div>
+          <div class="edit-row full-width">
+            <span class="edit-badge-mini">ქა</span>
+            <input id="route-edit-long-ka" class="route-edit-input compact" type="text" autocomplete="new-password"
+              name="route_long_name_ka_ignore" data-lpignore="true" data-form-type="other">
+            <button id="route-restore-long-ka" class="edit-restore-btn" title="Restore">
+              <img src="/arrow.counterclockwise.circle.fill.svg">
+            </button>
+          </div>
+
+          <!-- Destinations -->
+          <div class="edit-label-sm">HEADSIGNS (DESTINATIONS)</div>
+
+          <!-- Forward (Direction 0) -->
+          <div class="edit-row full-width">
+            <span class="edit-badge-mini" style="height: 32px; display: flex; align-items: center;">DIR 0</span>
+            <div class="edit-col edit-spacer">
+              <div class="edit-row">
+                <input id="route-edit-dest0-en" class="route-edit-input compact" placeholder="en"
+                  autocomplete="new-password" name="route_dest0_en_ignore" data-lpignore="true" data-form-type="other">
+                <button id="route-restore-dest0-en" class="edit-restore-btn" title="Restore">
+                  <img src="/arrow.counterclockwise.circle.fill.svg">
+                </button>
+              </div>
+              <div class="edit-row">
+                <input id="route-edit-dest0-ka" class="route-edit-input compact" placeholder="ქა"
+                  autocomplete="new-password" name="route_dest0_ka_ignore" data-lpignore="true" data-form-type="other">
+                <button id="route-restore-dest0-ka" class="edit-restore-btn" title="Restore">
+                  <img src="/arrow.counterclockwise.circle.fill.svg">
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Backward (Direction 1) -->
+          <div class="edit-row full-width">
+            <span class="edit-badge-mini" style="height: 32px; display: flex; align-items: center;">DIR 1</span>
+            <div class="edit-col edit-spacer">
+              <div class="edit-row">
+                <input id="route-edit-dest1-en" class="route-edit-input compact" placeholder="en"
+                  autocomplete="new-password" name="route_dest1_en_ignore" data-lpignore="true" data-form-type="other">
+                <button id="route-restore-dest1-en" class="edit-restore-btn" title="Restore">
+                  <img src="/arrow.counterclockwise.circle.fill.svg">
+                </button>
+              </div>
+              <div class="edit-row">
+                <input id="route-edit-dest1-ka" class="route-edit-input compact" placeholder="ქა"
+                  autocomplete="new-password" name="route_dest1_ka_ignore" data-lpignore="true" data-form-type="other">
+                <button id="route-restore-dest1-ka" class="edit-restore-btn" title="Restore">
+                  <img src="/arrow.counterclockwise.circle.fill.svg">
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <button id="route-edit-all-routes" class="edit-chip full-width" style="margin-top: 8px;">[All Routes]
+            Editor</button>
+          <button id="route-edit-apply" class="edit-chip apply-btn full-width" disabled style="margin-top: 4px;">Apply
+            Changes</button>
+        </div>
+
+        <div class="route-actions">
+          <button id="switch-direction" class="switch-btn hidden">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="17 1 21 5 17 9"></polyline>
+              <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+              <polyline points="7 23 3 19 7 15"></polyline>
+              <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+            </svg>
+            Switch Direction
           </button>
+        </div>
+        <div id="route-info-body" class="panel-body"></div>
+      </div>
 
-          <button id="btn-edit-stop" class="icon-btn hidden" title="Edit Stop" style="display: none;">
-            <img src="/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
-          </button>
 
-          <button id="copy-link-btn" class="icon-btn" title="Copy Link">
-            <img src="/link.circle.fill.svg" alt="Copy Link" width="28" height="28">
-          </button>
+      <button id="reset-view" class="reset-view-btn hidden">
+        <span>📍</span> Return to Tbilisi
+      </button>
 
-          <button id="close-panel" class="icon-btn" title="Close">
+      <!-- All Routes Editor Modal -->
+      <div id="all-routes-editor" class="hidden">
+        <div class="editor-header">
+          <h2>Route Names Editor</h2>
+          <button id="close-all-routes-editor" class="icon-btn">
             <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
           </button>
         </div>
-      </div>
-
-      <!-- Edit Toolbar (Hidden by default) -->
-      <div id="stop-edit-block" class="edit-toolbar hidden" style="display: none;">
-        <button id="edit-toggle-loc" class="edit-chip">Location</button>
-        <button id="edit-toggle-rot" class="edit-chip">Rotation</button>
-        <button id="edit-toggle-merge" class="edit-chip">Merge into...</button>
-        <button id="edit-toggle-hub" class="edit-chip">Hub with...</button>
-
-        <div id="edit-merged-list"
-          style="display: flex; gap: 4px; font-size: 12px; color: #6b7280; align-items: center;"></div>
-
-        <div style="flex:1"></div>
-
-        <div style="display: flex; gap: 4px; align-items: center; margin-right: 8px;">
-          <div style="display: flex; flex-direction: column; gap: 4px;">
-            <div style="display: flex; align-items: center; gap: 4px;">
-              <input id="edit-name-en" placeholder="en"
-                style="width: 100px; font-size: 12px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 4px;">
-              <button id="edit-restore-en" class="icon-btn" title="Restore English"
-                style="width:16px; height:16px; padding:0; opacity:0.5;">
-                <img src="/arrow.counterclockwise.circle.fill.svg" alt="Restore" width="16" height="16">
-              </button>
-            </div>
-            <div style="display: flex; align-items: center; gap: 4px;">
-              <input id="edit-name-ka" placeholder="ქა"
-                style="width: 100px; font-size: 12px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 4px;">
-              <button id="edit-restore-ka" class="icon-btn" title="Restore Georgian"
-                style="width:16px; height:16px; padding:0; opacity:0.5;">
-                <img src="/arrow.counterclockwise.circle.fill.svg" alt="Restore" width="16" height="16">
-              </button>
-            </div>
-          </div>
+        <div class="editor-search-bar">
+          <input type="text" id="all-routes-search" placeholder="Filter routes by ID or name...">
         </div>
-
-        <button id="edit-btn-apply" class="edit-chip apply-btn" disabled>Apply</button>
-      </div>
-      <!-- Filter Toggle Row -->
-      <button id="filter-routes-toggle" class="filter-toggle-row">
-        <img class="filter-icon" src="/line.3.horizontal.decrease.circle.svg" alt="Filter" width="24" height="24">
-        <span class="filter-text">Filter routes...</span>
-      </button>
-
-      <div id="header-extension"></div> <!-- Container for All Routes, Metro badge etc. -->
-
-      <div id="arrivals-list" class="arrivals-list panel-body">
-        <!-- Arrivals will be injected here -->
-      </div>
-      <!-- stop-id-display removed -->
-
-    </div> <!-- Close info-panel -->
-
-    <!-- Route Info Panel (Bottom Sheet) -->
-    <div id="route-info" class="panel hidden route-panel">
-      <div class="drag-handle"></div>
-      <div class="panel-header">
-        <div class="route-info-header-content">
-          <div id="route-info-number" class="route-info-number"></div>
-          <div id="route-info-text" class="route-info-details"></div>
+        <div id="all-routes-list" class="editor-list">
+          <!-- Route items injected here -->
         </div>
-        <div class="panel-controls">
-          <button id="back-route-info" class="icon-btn hidden" title="Back">
-            <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
-          </button>
-          <button id="btn-edit-route" class="icon-btn hidden" title="Edit Route" style="display: none;">
-            <img src="/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
-          </button>
-          <button id="copy-route-link-btn" class="icon-btn" title="Copy Link">
-            <img src="/link.circle.fill.svg" alt="Copy Link" width="28" height="28">
-          </button>
-          <button id="close-route-info" class="icon-btn" title="Close">
-            <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
-          </button>
+        <div class="editor-footer">
+          <button id="all-routes-save" class="edit-chip apply-btn" disabled>Apply All Changes</button>
         </div>
-      </div>
+      </div> <!-- Close all-routes-editor -->
 
-
-      <!-- Route Edit Toolbar -->
-      <div id="route-edit-block" class="edit-toolbar hidden"
-        style="display: none; flex-direction: column; height: auto; align-items: stretch; gap: 8px; padding: 10px; border-bottom: 1px solid #eee;">
-
-        <!-- Short Name -->
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <span style="font-size: 12px; width: 60px; color: #666;">Short:</span>
-          <input id="route-edit-short" class="route-edit-input" type="text" autocomplete="new-password"
-            name="route_short_name_ignore" data-lpignore="true" data-form-type="other"
-            style="flex: 1; font-size: 14px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px;">
-          <button id="route-restore-short" class="icon-btn" title="Restore"
-            style="width:16px; height:16px; padding:0; opacity:0.5;">
-            <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
-          </button>
-        </div>
-
-        <!-- Long Name -->
-        <div style="font-size: 11px; font-weight: bold; margin-top: 4px; color: #666;">LONG NAME</div>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <span style="font-size: 12px; width: 20px; color: #666;">en:</span>
-          <input id="route-edit-long-en" class="route-edit-input" type="text" autocomplete="new-password"
-            name="route_long_name_en_ignore" data-lpignore="true" data-form-type="other"
-            style="flex: 1; font-size: 12px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px;">
-          <button id="route-restore-long-en" class="icon-btn" title="Restore"
-            style="width:16px; height:16px; padding:0; opacity:0.5;">
-            <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
-          </button>
-        </div>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <span style="font-size: 12px; width: 20px; color: #666;">ქა:</span>
-          <input id="route-edit-long-ka" class="route-edit-input" type="text" autocomplete="new-password"
-            name="route_long_name_ka_ignore" data-lpignore="true" data-form-type="other"
-            style="flex: 1; font-size: 12px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px;">
-          <button id="route-restore-long-ka" class="icon-btn" title="Restore"
-            style="width:16px; height:16px; padding:0; opacity:0.5;">
-            <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
-          </button>
-        </div>
-
-        <!-- Destinations -->
-        <div style="font-size: 11px; font-weight: bold; margin-top: 4px; color: #666;">HEADSIGNS (DESTINATIONS)</div>
-
-        <!-- Forward (Direction 0) -->
-        <div style="display:flex; gap: 4px; align-items:center;">
-          <span
-            style="font-size: 9px; background: #eee; padding: 2px 4px; border-radius: 4px; width: 20px; text-align: center;">DIR<br>0</span>
-          <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
-            <div style="display:flex; gap:4px; align-items: center;">
-              <input id="route-edit-dest0-en" class="route-edit-input" placeholder="en" autocomplete="new-password"
-                name="route_dest0_en_ignore" data-lpignore="true" data-form-type="other"
-                style="flex:1; font-size:12px; padding:2px; border:1px solid #d1d5db; border-radius: 3px;">
-              <button id="route-restore-dest0-en" class="icon-btn" title="Restore"
-                style="width:16px; height:16px; padding:0; opacity:0.5;">
-                <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
-              </button>
-            </div>
-            <div style="display:flex; gap:4px; align-items: center;">
-              <input id="route-edit-dest0-ka" class="route-edit-input" placeholder="ქა" autocomplete="new-password"
-                name="route_dest0_ka_ignore" data-lpignore="true" data-form-type="other"
-                style="flex:1; font-size:12px; padding:2px; border:1px solid #d1d5db; border-radius: 3px;">
-              <button id="route-restore-dest0-ka" class="icon-btn" title="Restore"
-                style="width:16px; height:16px; padding:0; opacity:0.5;">
-                <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Backward (Direction 1) -->
-        <div style="display:flex; gap: 4px; align-items:center;">
-          <span
-            style="font-size: 9px; background: #eee; padding: 2px 4px; border-radius: 4px; width: 20px; text-align: center;">DIR<br>1</span>
-          <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
-            <div style="display:flex; gap:4px; align-items: center;">
-              <input id="route-edit-dest1-en" class="route-edit-input" placeholder="en" autocomplete="new-password"
-                name="route_dest1_en_ignore" data-lpignore="true" data-form-type="other"
-                style="flex:1; font-size:12px; padding:2px; border:1px solid #d1d5db; border-radius: 3px;">
-              <button id="route-restore-dest1-en" class="icon-btn" title="Restore"
-                style="width:16px; height:16px; padding:0; opacity:0.5;">
-                <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
-              </button>
-            </div>
-            <div style="display:flex; gap:4px; align-items: center;">
-              <input id="route-edit-dest1-ka" class="route-edit-input" placeholder="ქა" autocomplete="new-password"
-                name="route_dest1_ka_ignore" data-lpignore="true" data-form-type="other"
-                style="flex:1; font-size:12px; padding:2px; border:1px solid #d1d5db; border-radius: 3px;">
-              <button id="route-restore-dest1-ka" class="icon-btn" title="Restore"
-                style="width:16px; height:16px; padding:0; opacity:0.5;">
-                <img src="/arrow.counterclockwise.circle.fill.svg" width="16" height="16">
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <button id="route-edit-all-routes" class="edit-chip"
-          style="margin-top: 8px; width: 100%; justify-content: center; background: #e5e7eb; color: #374151;">[All
-          Routes] Editor</button>
-        <button id="route-edit-apply" class="edit-chip apply-btn" disabled
-          style="margin-top: 8px; width: 100%; justify-content: center;">Apply Changes</button>
-      </div>
-
-      <div class="route-actions">
-        <button id="switch-direction" class="switch-btn hidden">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="17 1 21 5 17 9"></polyline>
-            <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
-            <polyline points="7 23 3 19 7 15"></polyline>
-            <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
-          </svg>
-          Switch Direction
-        </button>
-      </div>
-      <div id="route-info-body" class="panel-body"></div>
-    </div>
-
-
-    <button id="reset-view" class="reset-view-btn hidden">
-      <span>📍</span> Return to Tbilisi
-    </button>
-
-    <!-- All Routes Editor Modal -->
-    <div id="all-routes-editor" class="hidden">
-      <div class="editor-header">
-        <h2>Route Names Editor</h2>
-        <button id="close-all-routes-editor" class="icon-btn">
-          <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
-        </button>
-      </div>
-      <div class="editor-search-bar">
-        <input type="text" id="all-routes-search" placeholder="Filter routes by ID or name...">
-      </div>
-      <div id="all-routes-list" class="editor-list">
-        <!-- Route items injected here -->
-      </div>
-      <div class="editor-footer">
-        <button id="all-routes-save" class="edit-chip apply-btn" disabled>Apply All Changes</button>
-      </div>
-    </div>
-
-    <div id="map-menu-popup" class="map-menu-popup hidden">
-      <div class="menu-item" id="menu-simplify-toggle-row">
-        <div class="menu-icon">
+      <!-- Map Controls (Zoom & Location) -->
+      <div id="map-controls">
+        <button id="mini-compass" class="control-btn hidden" aria-label="Reset North">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <text x="12" y="16" text-anchor="middle" font-size="10" font-family="sans-serif" font-weight="bold"
-              fill="currentColor" stroke="none">3××</text>
-            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <path d="M12 3l4 9h-8l4-9z" fill="red" stroke="red"></path>
+            <path d="M12 21l-4-9h8l-4 9z" fill="#8E8E93" stroke="#8E8E93"></path>
           </svg>
-        </div>
-        <span class="menu-label">Simple numbers</span>
-        <label class="toggle-switch">
-          <input type="checkbox" id="simplify-switch">
-          <span class="slider round"></span>
-        </label>
-      </div>
-      <div class="menu-item" id="menu-minibus-toggle-row">
-        <div class="menu-icon">
-          <svg width="24" height="24" viewBox="0 0 82 38" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path
-              d="M50.3389 22.2466L47.9009 22.1026C47.6176 22.0859 47.3743 22.3021 47.3575 22.5855C47.3408 22.8689 47.557 23.1122 47.8404 23.1289L50.2783 23.2728C50.5617 23.2896 50.805 23.0734 50.8217 22.79C50.8385 22.5066 50.6223 22.2633 50.3389 22.2466Z"
-              fill="currentColor" />
-            <path
-              d="M41.9706 21.1475H39.5284C39.2445 21.1475 39.0144 21.3776 39.0144 21.6615C39.0144 21.9454 39.2445 22.1755 39.5284 22.1755H41.9706C42.2545 22.1755 42.4847 21.9454 42.4847 21.6615C42.4847 21.3776 42.2545 21.1475 41.9706 21.1475Z"
-              fill="currentColor" />
-            <ellipse cx="19.4192" cy="32.3256" rx="4.64675" ry="4.68735" fill="currentColor" />
-            <path
-              d="M38.9962 0C43.6258 1.55325e-05 46.7882 0.372426 49.5206 1.3125C52.2425 2.24908 54.3674 3.69931 56.8888 5.44336C59.6935 7.3835 62.4197 10.3315 64.6749 12.6523C65.85 13.8617 66.9066 14.9164 67.878 15.7344C68.8828 16.5803 69.5934 16.9956 70.0538 17.1387C71.8387 17.6927 73.9861 18.2962 75.7013 18.9922C76.5741 19.3464 77.468 19.7752 78.2345 20.3154C78.9382 20.8115 79.7144 21.5277 80.1632 22.5449L80.2491 22.752L80.4122 23.1992C80.8208 24.3604 81.3878 26.3094 81.4845 28.2217C81.5392 29.3044 81.4598 30.6351 80.8995 31.8467C80.2769 33.1927 79.111 34.259 77.4064 34.6172C77.0165 34.699 76.4999 34.7327 76.0636 34.7539C75.5605 34.7784 74.9236 34.7951 74.1778 34.8066C74.0167 34.8091 73.8496 34.8095 73.6769 34.8115C73.9803 34.0422 74.1495 33.2036 74.1495 32.3252C74.1495 31.4363 73.9765 30.5883 73.6661 29.8115C73.8158 29.8098 73.9607 29.8098 74.1007 29.8076C74.8217 29.7965 75.3966 29.7804 75.8204 29.7598C76.1451 29.7439 76.3109 29.7299 76.3683 29.7246C76.4393 29.5538 76.526 29.1611 76.4913 28.4746C76.4217 27.0974 75.9313 25.4879 75.6026 24.6084C75.5705 24.5745 75.498 24.5034 75.3546 24.4023C75.0326 24.1754 74.5323 23.9139 73.8204 23.625C72.3656 23.0347 70.5766 22.5361 68.5724 21.9141C67.1382 21.4689 65.8074 20.5271 64.6583 19.5596C63.4755 18.5636 62.2639 17.3459 61.089 16.1367C58.6437 13.6203 56.3406 11.1432 54.044 9.55469C51.4644 7.77034 49.872 6.72074 47.8937 6.04004C45.9256 5.36295 43.4028 5.00002 38.9962 5H8.79991C7.48636 5.0002 6.39672 6.01802 6.3087 7.33301L5.00303 26.8652C4.94579 27.724 5.60558 28.4405 6.44541 28.4639C8.77259 28.5281 11.2468 28.5932 13.8224 28.6621C13.1429 29.7163 12.7472 30.9741 12.7472 32.3252C12.7472 32.7746 12.7918 33.2139 12.8751 33.6387C10.5899 33.5773 8.38984 33.5194 6.30772 33.4619C2.61026 33.3597 -0.230408 30.2024 0.0147507 26.5322L1.32041 7C1.58357 3.06313 4.84993 0.000204841 8.79991 0H38.9962ZM25.1954 28.958C33.5761 29.1701 42.3121 29.379 50.172 29.5371C54.1707 29.6175 57.9401 29.6838 61.3185 29.7334C60.9881 30.5311 60.8058 31.4067 60.8058 32.3252C60.8058 33.1734 60.9623 33.9849 61.2462 34.7324C57.8536 34.6826 54.074 34.6166 50.0714 34.5361C42.4567 34.383 34.0231 34.1825 25.8868 33.9775C26.0191 33.4489 26.0909 32.8953 26.0909 32.3252C26.0909 31.0982 25.7642 29.9485 25.1954 28.958Z"
-              fill="currentColor" />
-            <ellipse cx="67.4773" cy="32.3256" rx="4.64675" ry="4.68735" fill="currentColor" />
-            <path
-              d="M47.0228 11.045C47.0228 9.73694 48.3326 8.81003 49.5237 9.35066C51.7436 10.3583 56.7913 15.2135 60.804 19.1749C61.4394 19.8021 60.9937 20.8829 60.1009 20.8829H57.6693C55.3246 20.8828 51.6022 19.8496 48.9788 18.9825C47.7935 18.5907 47.0228 17.4682 47.0228 16.2198V11.045Z"
-              fill="currentColor" />
-            <path
-              d="M23.2367 16.4629C23.1494 17.4987 22.2832 18.295 21.2438 18.295H11.0687C10.1718 18.295 9.33413 17.8463 8.83722 17.0997C8.20746 16.1533 7.96241 15.0019 8.15168 13.8809L8.6634 10.8516C8.90716 9.40796 10.1573 8.35066 11.6214 8.35066H21.7446C22.9154 8.35066 23.8359 9.35191 23.7376 10.5186L23.2367 16.4629Z"
-              fill="currentColor" />
-            <path
-              d="M40.1722 8.35066C41.8289 8.35066 43.172 9.69395 43.1722 11.3507V15.295C43.1721 16.9517 41.829 18.295 40.1722 18.295H27.7648C26.594 18.295 25.6735 17.2938 25.7718 16.1271L26.2727 10.1827C26.36 9.14694 27.2262 8.35066 28.2656 8.35066H40.1722Z"
-              fill="currentColor" />
+        </button>
+        <button id="locate-me" class="control-btn" aria-label="Locate Me">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="3 11 22 2 13 21 11 13 3 11"></polygon>
           </svg>
+        </button>
+        <div class="zoom-controls">
+          <button id="zoom-in" class="control-btn" aria-label="Zoom In">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+          <button id="zoom-out" class="control-btn" aria-label="Zoom Out">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
         </div>
-        <span class="menu-label">Show minibuses</span>
-        <label class="toggle-switch">
-          <input type="checkbox" id="minibus-switch">
-          <span class="slider round"></span>
-        </label>
-      </div>
-      <div class="menu-item" id="menu-rustavi-toggle-row">
-        <div class="menu-icon">
-          <svg width="21" height="21" viewBox="0 0 27.4219 28.8184" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path
-              d="M3.32031 28.8184L4.78516 28.8184C5.71289 28.8184 6.42578 28.1055 6.42578 27.1875L6.42578 25.1172C8.84766 25.293 11.2695 25.3906 13.5254 25.3906C15.7812 25.3906 18.2129 25.3027 20.6348 25.127L20.6348 27.1875C20.6348 28.1055 21.3477 28.8184 22.2754 28.8184L23.7402 28.8184C24.668 28.8184 25.3809 28.0957 25.3809 27.1875L25.3809 3.125C25.3809 1.54297 24.4531 0.664062 22.8223 0.478516C20.1367 0.166016 16.7676 0 13.5254 0C10.293 0 6.93359 0.15625 4.24805 0.478516C2.60742 0.664062 1.67969 1.54297 1.67969 3.125L1.67969 27.1875C1.67969 28.0957 2.39258 28.8184 3.32031 28.8184ZM5.19531 16.9434C4.39453 16.8262 3.99414 16.3672 3.99414 15.5176L3.99414 4.17969C3.99414 3.23242 4.44336 2.72461 5.3418 2.62695C10.7422 2.07031 16.377 2.07031 21.7383 2.62695C22.6367 2.72461 23.0762 3.23242 23.0762 4.17969L23.0762 15.5176C23.0762 16.3672 22.6758 16.8262 21.875 16.9434C16.6504 17.666 10.3418 17.6562 5.19531 16.9434ZM6.04492 22.3438C5.16602 22.3438 4.51172 21.6895 4.51172 20.8203C4.51172 19.9414 5.16602 19.2871 6.04492 19.2871C6.91406 19.2871 7.56836 19.9414 7.56836 20.8203C7.56836 21.6895 6.91406 22.3438 6.04492 22.3438ZM10.7031 21.8457C10.0879 21.8457 9.6582 21.416 9.6582 20.8008C9.6582 20.1855 10.0879 19.7656 10.7031 19.7656L16.3184 19.7656C16.9336 19.7656 17.3633 20.1855 17.3633 20.8008C17.3633 21.416 16.9336 21.8457 16.3184 21.8457ZM21.0254 22.3438C20.1465 22.3438 19.502 21.6895 19.502 20.8203C19.502 19.9414 20.1465 19.2871 21.0254 19.2871C21.8945 19.2871 22.5488 19.9414 22.5488 20.8203C22.5488 21.6895 21.8945 22.3438 21.0254 22.3438ZM1.67969 11.5625L1.67969 4.61914L1.10352 4.61914C0.439453 4.61914 0 5.0293 0 5.64453L0 10.5371C0 11.1523 0.439453 11.5625 1.10352 11.5625ZM25.3809 11.5625L25.957 11.5625C26.6211 11.5625 27.0605 11.1523 27.0605 10.5371L27.0605 5.64453C27.0605 5.0293 26.6211 4.61914 25.957 4.61914L25.3809 4.61914Z"
-              fill="currentColor" />
+        <button id="menu-btn" class="control-btn" aria-label="Menu" style="margin-top: 0px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="4" y1="12" x2="20" y2="12"></line>
+            <line x1="4" y1="6" x2="20" y2="6"></line>
+            <line x1="4" y1="18" x2="20" y2="18"></line>
           </svg>
-        </div>
-        <span class="menu-label">Rustavi buses</span>
-        <label class="toggle-switch">
-          <input type="checkbox" id="rustavi-switch">
-          <span class="slider round"></span>
-        </label>
-      </div>
-    </div>
+        </button>
 
-    <!-- Map Controls (Zoom & Location) -->
-    <div id="map-controls">
-      <button id="mini-compass" class="control-btn hidden" aria-label="Reset North">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 3l4 9h-8l4-9z" fill="red" stroke="red"></path>
-          <path d="M12 21l-4-9h8l-4 9z" fill="#8E8E93" stroke="#8E8E93"></path>
-        </svg>
-      </button>
-      <button id="locate-me" class="control-btn" aria-label="Locate Me">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="3 11 22 2 13 21 11 13 3 11"></polygon>
-        </svg>
-      </button>
-      <div class="zoom-controls">
-        <button id="zoom-in" class="control-btn" aria-label="Zoom In">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </button>
-        <button id="zoom-out" class="control-btn" aria-label="Zoom Out">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </button>
-      </div>
-      <button id="menu-btn" class="control-btn" aria-label="Menu" style="margin-top: 0px;">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="4" y1="12" x2="20" y2="12"></line>
-          <line x1="4" y1="6" x2="20" y2="6"></line>
-          <line x1="4" y1="18" x2="20" y2="18"></line>
-        </svg>
-      </button>
-    </div>
+        <div id="map-menu-popup" class="map-menu-popup hidden">
+          <div class="menu-item" id="menu-simplify-toggle-row">
+            <div class="menu-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <text x="12" y="16" text-anchor="middle" font-size="10" font-family="sans-serif" font-weight="bold"
+                  fill="currentColor" stroke="none">3××</text>
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+              </svg>
+            </div>
+            <span class="menu-label">Simple numbers</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="simplify-switch">
+              <span class="slider round"></span>
+            </label>
+          </div>
+          <div class="menu-item" id="menu-minibus-toggle-row">
+            <div class="menu-icon">
+              <svg width="24" height="24" viewBox="0 0 82 38" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M50.3389 22.2466L47.9009 22.1026C47.6176 22.0859 47.3743 22.3021 47.3575 22.5855C47.3408 22.8689 47.557 23.1122 47.8404 23.1289L50.2783 23.2728C50.5617 23.2896 50.805 23.0734 50.8217 22.79C50.8385 22.5066 50.6223 22.2633 50.3389 22.2466Z"
+                  fill="currentColor" />
+                <path
+                  d="M41.9706 21.1475H39.5284C39.2445 21.1475 39.0144 21.3776 39.0144 21.6615C39.0144 21.9454 39.2445 22.1755 39.5284 22.1755H41.9706C42.2545 22.1755 42.4847 21.9454 42.4847 21.6615C42.4847 21.3776 42.2545 21.1475 41.9706 21.1475Z"
+                  fill="currentColor" />
+                <ellipse cx="19.4192" cy="32.3256" rx="4.64675" ry="4.68735" fill="currentColor" />
+                <path
+                  d="M38.9962 0C43.6258 1.55325e-05 46.7882 0.372426 49.5206 1.3125C52.2425 2.24908 54.3674 3.69931 56.8888 5.44336C59.6935 7.3835 62.4197 10.3315 64.6749 12.6523C65.85 13.8617 66.9066 14.9164 67.878 15.7344C68.8828 16.5803 69.5934 16.9956 70.0538 17.1387C71.8387 17.6927 73.9861 18.2962 75.7013 18.9922C76.5741 19.3464 77.468 19.7752 78.2345 20.3154C78.9382 20.3154 79.7144 21.5277 80.1632 22.5449L80.2491 22.752L80.4122 23.1992C80.8208 24.3604 81.3878 26.3094 81.4845 28.2217C81.5392 29.3044 81.4598 30.6351 80.8995 31.8467C80.2769 33.1927 79.111 34.259 77.4064 34.6172C77.0165 34.699 76.4999 34.7327 76.0636 34.7539C75.5605 34.7784 74.9236 34.7951 74.1778 34.8066C74.0167 34.8091 73.8496 34.8095 73.6769 34.8115C73.9803 34.0422 74.1495 33.2036 74.1495 32.3252C74.1495 31.4363 73.9765 30.5883 73.6661 29.8115C73.8158 29.8098 73.9607 29.8098 74.1007 29.8076C74.8217 29.7965 75.3966 29.7804 75.8204 29.7598C76.1451 29.7439 76.3109 29.7299 76.3683 29.7246C76.4393 29.5538 76.526 29.1611 76.4913 28.4746C76.4217 27.0974 75.9313 25.4879 75.6026 24.6084C75.5705 24.5745 75.498 24.5034 75.3546 24.4023C75.0326 24.1754 74.5323 23.9139 73.8204 23.625C72.3656 23.0347 70.5766 22.5361 68.5724 21.9141C67.1382 21.4689 65.8074 20.5271 64.6583 19.5596C63.4755 18.5636 62.2639 17.3459 61.089 16.1367C58.6437 13.6203 56.3406 11.1432 54.044 9.55469C51.4644 7.77034 49.872 6.72074 47.8937 6.04004C45.9256 5.36295 43.4028 5.00002 38.9962 5H8.79991C7.48636 5.0002 6.39672 6.01802 6.3087 7.33301L5.00303 26.8652C4.94579 27.724 5.60558 28.4405 6.44541 28.4639C8.77259 28.5281 11.2468 28.5932 13.8224 28.6621C13.1429 29.7163 12.7472 30.9741 12.7472 32.3252C12.7472 32.7746 12.7918 33.2139 12.8751 33.6387C10.5899 33.5773 8.38984 33.5194 6.30772 33.4619C2.61026 33.3597 -0.230408 30.2024 0.0147507 26.5322L1.32041 7C1.58357 3.06313 4.84993 0.000204841 8.79991 0H38.9962ZM25.1954 28.958C33.5761 29.1701 42.3121 29.379 50.172 29.5371C54.1707 29.6175 57.9401 29.6838 61.3185 29.7334C60.9881 30.5311 60.8058 31.4067 60.8058 32.3252C60.8058 33.1734 60.9623 33.9849 61.2462 34.7324C57.8536 34.6826 54.074 34.6166 50.0714 34.5361C42.4567 34.383 34.0231 34.1825 25.8868 33.9775C26.0191 33.4489 26.0909 32.8953 26.0909 32.3252C26.0909 31.0982 25.7642 29.9485 25.1954 28.958Z"
+                  fill="currentColor" />
+                <ellipse cx="67.4773" cy="32.3256" rx="4.64675" ry="4.68735" fill="currentColor" />
+                <path
+                  d="M47.0228 11.045C47.0228 9.73694 48.3326 8.81003 49.5237 9.35066C51.7436 10.3583 56.7913 15.2135 60.804 19.1749C61.4394 19.8021 60.9937 20.8829 60.1009 20.8829H57.6693C55.3246 20.8828 51.6022 19.8496 48.9788 18.9825C47.7935 18.5907 47.0228 17.4682 47.0228 16.2198V11.045Z"
+                  fill="currentColor" />
+                <path
+                  d="M23.2367 16.4629C23.1494 17.4987 22.2832 18.295 21.2438 18.295H11.0687C10.1718 18.295 9.33413 17.8463 8.83722 17.0997C8.20746 16.1533 7.96241 15.0019 8.15168 13.8809L8.6634 10.8516C8.90716 9.40796 10.1573 8.35066 11.6214 8.35066H21.7446C22.9154 8.35066 23.8359 9.35191 23.7376 10.5186L23.2367 16.4629Z"
+                  fill="currentColor" />
+                <path
+                  d="M40.1722 8.35066C41.8289 8.35066 43.172 9.69395 43.1722 11.3507V15.295C43.1721 16.9517 41.829 18.295 40.1722 18.295H27.7648C26.594 18.295 25.6735 17.2938 25.7718 16.1271L26.2727 10.1827C26.36 9.14694 27.2262 8.35066 28.2656 8.35066H40.1722Z"
+                  fill="currentColor" />
+              </svg>
+            </div>
+            <span class="menu-label">Show minibuses</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="minibus-switch">
+              <span class="slider round"></span>
+            </label>
+          </div>
+          <div class="menu-item" id="menu-rustavi-toggle-row">
+            <div class="menu-icon">
+              <svg width="21" height="21" viewBox="0 0 27.4219 28.8184" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M3.32031 28.8184L4.78516 28.8184C5.71289 28.8184 6.42578 28.1055 6.42578 27.1875L6.42578 25.1172C8.84766 25.293 11.2695 25.3906 13.5254 25.3906C15.7812 25.3906 18.2129 25.3027 20.6348 25.127L20.6348 27.1875C20.6348 28.1055 21.3477 28.8184 22.2754 28.8184L23.7402 28.8184C24.668 28.8184 25.3809 28.0957 25.3809 27.1875L25.3809 3.125C25.3809 1.54297 24.4531 0.664062 22.8223 0.478516C20.1367 0.166016 16.7676 0 13.5254 0C10.293 0 6.93359 0.15625 4.24805 0.478516C2.60742 0.664062 1.67969 1.54297 1.67969 3.125L1.67969 27.1875C1.67969 28.0957 2.39258 28.8184 3.32031 28.8184ZM5.19531 16.9434C4.39453 16.8262 3.99414 16.3672 3.99414 15.5176L3.99414 4.17969C3.99414 3.23242 4.44336 2.72461 5.3418 2.62695C10.7422 2.07031 16.377 2.07031 21.7383 2.62695C22.6367 2.72461 23.0762 3.23242 23.0762 4.17969L23.0762 15.5176C23.0762 16.3672 22.6758 16.8262 21.875 16.9434C16.6504 17.666 10.3418 17.6562 5.19531 16.9434ZM6.04492 22.3438C5.16602 22.3438 4.51172 21.6895 4.51172 20.8203C4.51172 19.9414 5.16602 19.2871 6.04492 19.2871C6.91406 19.2871 7.56836 19.9414 7.56836 20.8203C7.56836 21.6895 6.91406 22.3438 6.04492 22.3438ZM10.7031 21.8457C10.0879 21.8457 9.6582 21.416 9.6582 20.8008C9.6582 20.1855 10.0879 19.7656 10.7031 19.7656L16.3184 19.7656C16.9336 19.7656 17.3633 20.1855 17.3633 20.8008C17.3633 21.416 16.9336 21.8457 16.3184 21.8457ZM21.0254 22.3438C20.1465 22.3438 19.502 21.6895 19.502 20.8203C19.502 19.9414 20.1465 19.2871 21.0254 19.2871C21.8945 19.2871 22.5488 19.9414 22.5488 20.8203C22.5488 21.6895 21.8945 22.3438 21.0254 22.3438ZM1.67969 11.5625L1.67969 4.61914L1.10352 4.61914C0.439453 4.61914 0 5.0293 0 5.64453L0 10.5371C0 11.1523 0.439453 11.5625 1.10352 11.5625ZM25.3809 11.5625L25.957 11.5625C26.6211 11.5625 27.0605 11.1523 27.0605 10.5371L27.0605 5.64453C27.0605 5.0293 26.6211 4.61914 25.957 4.61914L25.3809 4.61914Z"
+                  fill="currentColor" />
+              </svg>
+            </div>
+            <span class="menu-label">Rustavi buses</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="rustavi-switch">
+              <span class="slider round"></span>
+            </label>
+          </div>
+        </div>
+      </div> <!-- Close map-controls -->
+
+    </div><!-- Close ui-wrapper -->
   </div> <!-- Close app -->
   <script type="module" src="/src/main.js"></script>
 </body>
