@@ -176,23 +176,25 @@ export function initSettings({ onUpdate }) {
     // Actually, I should probably check if index.html has it. 
     // Given the constraints, I'll append a new row to the menu programmatically.
 
-    addDarkModeToggle();
-    addPageScaleAdjuster();
+    addMapSection();
+    addInterfaceSection();
+    init3DToggleButton();
 
     // Online Status Indicator
     initOnlineStatus();
 }
 
-function addPageScaleAdjuster() {
+function addInterfaceSection() {
     const menuPopup = document.getElementById('map-menu-popup');
     if (!menuPopup) return;
 
-    if (document.getElementById('page-scale-row')) return;
+    // Check if already exists
+    if (document.getElementById('interface-section')) return;
 
-    const row = document.createElement('div');
-    row.id = 'page-scale-row';
-    row.className = 'menu-row scale-adjuster-row';
-    row.style.cssText = 'padding: 10px 16px; border-top: 1px solid var(--border-light);';
+    const section = document.createElement('div');
+    section.id = 'interface-section';
+    section.className = 'menu-section';
+    section.style.cssText = 'padding: 10px 16px; border-top: 1px solid var(--border-light);';
 
     // Load initial scale
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -200,113 +202,132 @@ function addPageScaleAdjuster() {
     const storedScale = localStorage.getItem('pageScale');
     settings.pageScale = storedScale ? parseFloat(storedScale) : defaultScale;
 
-    row.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <span style="font-weight:500; font-size:14px; color:var(--text-main);">Page Zoom</span>
-            <span id="page-scale-value" style="font-family:ui-monospace; font-size:12px; font-weight:600; color:var(--primary);">${Math.round(settings.pageScale * 100)}%</span>
+    // Use stored theme or system default
+    const currentTheme = localStorage.getItem('theme') || 'system';
+
+    section.innerHTML = `
+        <div style="font-weight:600; font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">Interface</div>
+        
+        <div class="theme-segmented-control" style="margin-bottom: 12px;">
+            <div class="theme-option" data-value="system">Auto</div>
+            <div class="theme-option" data-value="light">Light</div>
+            <div class="theme-option" data-value="dark">Dark</div>
         </div>
-        <div class="scale-slider-container">
-            <input type="range" id="page-scale-slider" list="tickmarks" min="0.8" max="1.5" step="0.05" value="${settings.pageScale}" style="width: 100%; cursor: pointer;">
-            <datalist id="tickmarks">
-                ${Array.from({ length: 15 }, (_, i) => 0.8 + i * 0.05).map(v => `<option value="${v.toFixed(2)}"></option>`).join('')}
-            </datalist>
-            <div style="display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px; color: var(--text-secondary);">
-                <span>80%</span>
-                <span>100%</span>
-                <span>125%</span>
-                <span>150%</span>
-            </div>
+        
+        <div class="custom-slider-container">
+            <div class="custom-slider-track"></div>
+            <div class="custom-slider-thumb" id="page-scale-thumb"></div>
         </div>
+        <div id="page-scale-value" class="custom-slider-value"></div>
     `;
 
-    // Insert before online status if possible
-    const statusRow = Array.from(menuPopup.children).find(c => c.innerHTML.includes('APP'));
+    // Insert at the end of settings rows but before status
+    const statusRow = Array.from(menuPopup.children).find(c => c.innerHTML && c.innerHTML.includes('APP'));
     if (statusRow) {
-        menuPopup.insertBefore(row, statusRow);
+        menuPopup.insertBefore(section, statusRow);
     } else {
-        menuPopup.appendChild(row);
+        menuPopup.appendChild(section);
     }
 
-    const slider = row.querySelector('#page-scale-slider');
-    const valueDisplay = row.querySelector('#page-scale-value');
+    // Theme Segmented Control Logic
+    const options = section.querySelectorAll('.theme-option');
 
-    slider.addEventListener('input', (e) => {
-        const value = parseFloat(e.target.value);
-        valueDisplay.textContent = `${Math.round(value * 100)}%`;
+    function updateActiveState(theme) {
+        options.forEach(opt => {
+            opt.classList.toggle('active', opt.dataset.value === theme);
+        });
+    }
+
+    updateActiveState(currentTheme);
+
+    options.forEach(opt => {
+        opt.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const newTheme = opt.dataset.value;
+            updateActiveState(newTheme);
+            localStorage.setItem('theme', newTheme);
+            window.dispatchEvent(new CustomEvent('manualThemeChange', { detail: newTheme }));
+        });
     });
 
-    slider.addEventListener('change', (e) => {
-        const value = parseFloat(e.target.value);
-        settings.pageScale = value;
+    // Custom Slider Logic
+    const sliderContainer = section.querySelector('.custom-slider-container');
+    const track = section.querySelector('.custom-slider-track');
+    const thumb = section.querySelector('#page-scale-thumb');
+    const valueDisplay = section.querySelector('#page-scale-value');
 
-        localStorage.setItem('pageScale', value);
-        window.dispatchEvent(new CustomEvent('pageScaleChange', { detail: value }));
-    });
+    const minVal = 0.8;
+    const maxVal = 1.5;
+    let currentValue = settings.pageScale;
+    let isDragging = false;
+
+    function valueToPercent(val) {
+        return (val - minVal) / (maxVal - minVal);
+    }
+
+    function percentToValue(pct) {
+        return minVal + pct * (maxVal - minVal);
+    }
+
+    function updateSliderUI() {
+        const percent = valueToPercent(currentValue);
+        // Position thumb
+        thumb.style.left = `${percent * 100}%`;
+        // Position label - use a span inside for transform centering
+        valueDisplay.innerHTML = `<span style="left: ${percent * 100}%">${Math.round(currentValue * 100)}%</span>`;
+    }
+
+    function handlePointerDown(e) {
+        isDragging = true;
+        thumb.classList.add('active');
+        document.body.style.userSelect = 'none';
+        handlePointerMove(e);
+    }
+
+    function handlePointerMove(e) {
+        if (!isDragging) return;
+
+        const rect = sliderContainer.getBoundingClientRect();
+        let x = (e.clientX || e.touches?.[0]?.clientX) - rect.left;
+        let percent = x / rect.width;
+        percent = Math.max(0, Math.min(1, percent));
+
+        // Snap to steps
+        const step = 0.05;
+        let newValue = percentToValue(percent);
+        newValue = Math.round(newValue / step) * step;
+        newValue = Math.max(minVal, Math.min(maxVal, newValue));
+
+        currentValue = newValue;
+        updateSliderUI();
+    }
+
+    function handlePointerUp() {
+        if (!isDragging) return;
+        isDragging = false;
+        thumb.classList.remove('active');
+        document.body.style.userSelect = '';
+
+        settings.pageScale = currentValue;
+        localStorage.setItem('pageScale', currentValue);
+        window.dispatchEvent(new CustomEvent('pageScaleChange', { detail: currentValue }));
+    }
+
+    // Event listeners
+    sliderContainer.addEventListener('mousedown', handlePointerDown);
+    sliderContainer.addEventListener('touchstart', handlePointerDown, { passive: true });
+    document.addEventListener('mousemove', handlePointerMove);
+    document.addEventListener('touchmove', handlePointerMove, { passive: true });
+    document.addEventListener('mouseup', handlePointerUp);
+    document.addEventListener('touchend', handlePointerUp);
+
+    // Initial UI
+    updateSliderUI();
 
     // Initial trigger
     setTimeout(() => {
         window.dispatchEvent(new CustomEvent('pageScaleChange', { detail: settings.pageScale }));
     }, 100);
-}
-
-function addDarkModeToggle() {
-    const menuPopup = document.getElementById('map-menu-popup');
-    if (!menuPopup) return;
-
-    // Check if already exists
-    if (document.getElementById('theme-switch-row')) return;
-
-    const row = document.createElement('div');
-    row.id = 'theme-switch-row';
-    row.className = 'menu-row';
-    row.style.cssText = 'padding: 6px 8px; display: flex; align-items: center; justify-content: space-between; cursor: pointer;';
-
-    // Use stored theme or system default logic
-    const currentTheme = localStorage.getItem('theme') || 'system';
-
-    row.innerHTML = `
-        <div style="display:flex; align-items:center; gap:12px;">
-            <span style="font-weight:500; font-size:14px; color:var(--text-main);">Theme</span>
-        </div>
-        <div class="theme-segmented-control">
-            <div class="theme-option" data-value="system">Auto</div>
-            <div class="theme-option" data-value="light">Light</div>
-            <div class="theme-option" data-value="dark">Dark</div>
-        </div>
-    `;
-
-    menuPopup.appendChild(row);
-
-    // Logic for Segmented Control
-    const options = row.querySelectorAll('.theme-option');
-
-    function updateActiveState(theme) {
-        options.forEach(opt => {
-            if (opt.dataset.value === theme) {
-                opt.classList.add('active');
-            } else {
-                opt.classList.remove('active');
-            }
-        });
-    }
-
-    // Initial State
-    updateActiveState(currentTheme);
-
-    // Event Listeners
-    options.forEach(opt => {
-        opt.addEventListener('click', (e) => {
-            e.stopPropagation(); // Prevent menu close? Or row click? Row has generic handler?
-            // Row has no click handler in addDarkModeToggle currently, but we attached one for other rows.
-            // Wait, this function creates the row.
-
-            const newTheme = opt.dataset.value;
-            updateActiveState(newTheme);
-
-            localStorage.setItem('theme', newTheme);
-            window.dispatchEvent(new CustomEvent('manualThemeChange', { detail: newTheme }));
-        });
-    });
 }
 
 function initOnlineStatus() {
@@ -369,3 +390,194 @@ function initOnlineStatus() {
     updateAppStatus();
 }
 
+function addMapSection() {
+    const menuPopup = document.getElementById('map-menu-popup');
+    if (!menuPopup) return;
+
+    // Check if already exists
+    if (document.getElementById('map-section')) return;
+
+    // Load stored values
+    const show3DBuildings = localStorage.getItem('show3DBuildings') !== 'false'; // Default true
+    const show3DTerrain = localStorage.getItem('show3DTerrain') !== 'false'; // Default true
+
+    const section = document.createElement('div');
+    section.id = 'map-section';
+    section.className = 'menu-section';
+    section.style.cssText = 'padding: 10px 0 0 0; border-top: 1px solid var(--border-light);';
+
+    section.innerHTML = `
+        <div style="font-weight:600; font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; padding: 0 12px;">Map</div>
+        
+        <div class="menu-item" id="menu-3d-buildings-row">
+            <div class="menu-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="4" y="2" width="16" height="20" rx="2" ry="2"></rect>
+                    <path d="M9 22v-4h6v4"></path>
+                    <path d="M8 6h.01"></path>
+                    <path d="M16 6h.01"></path>
+                    <path d="M12 6h.01"></path>
+                    <path d="M12 10h.01"></path>
+                    <path d="M12 14h.01"></path>
+                    <path d="M16 10h.01"></path>
+                    <path d="M16 14h.01"></path>
+                    <path d="M8 10h.01"></path>
+                    <path d="M8 14h.01"></path>
+                </svg>
+            </div>
+            <span class="menu-label">3D Buildings</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="buildings-3d-switch" ${show3DBuildings ? 'checked' : ''}>
+                <span class="slider round"></span>
+            </label>
+        </div>
+        
+        <div class="menu-item" id="menu-3d-terrain-row">
+            <div class="menu-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 3l4 8 5-5 5 15H2L8 3z"></path>
+                </svg>
+            </div>
+            <span class="menu-label">3D Terrain</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="terrain-3d-switch" ${show3DTerrain ? 'checked' : ''}>
+                <span class="slider round"></span>
+            </label>
+        </div>
+        
+        <div class="menu-item" id="menu-exaggerate-row" style="display: ${show3DTerrain ? 'flex' : 'none'}; padding-left: 48px;">
+            <span class="menu-label">Exaggerate elevation</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="exaggerate-switch" ${localStorage.getItem('exaggerateTerrain') === 'true' ? 'checked' : ''}>
+                <span class="slider round"></span>
+            </label>
+        </div>
+    `;
+
+    // Insert before Interface section if it exists, otherwise before status
+    const interfaceSection = document.getElementById('interface-section');
+    if (interfaceSection) {
+        menuPopup.insertBefore(section, interfaceSection);
+    } else {
+        const statusRow = Array.from(menuPopup.children).find(c => c.innerHTML && c.innerHTML.includes('APP'));
+        if (statusRow) {
+            menuPopup.insertBefore(section, statusRow);
+        } else {
+            menuPopup.appendChild(section);
+        }
+    }
+
+    // 3D Buildings Switch Logic
+    const buildingsSwitch = document.getElementById('buildings-3d-switch');
+    if (buildingsSwitch) {
+        buildingsSwitch.addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            localStorage.setItem('show3DBuildings', enabled);
+            window.dispatchEvent(new CustomEvent('map3DBuildingsChange', { detail: enabled }));
+        });
+
+        const row = document.getElementById('menu-3d-buildings-row');
+        if (row) {
+            row.addEventListener('click', (e) => {
+                if (e.target.closest('.toggle-switch')) return;
+                buildingsSwitch.checked = !buildingsSwitch.checked;
+                buildingsSwitch.dispatchEvent(new Event('change'));
+            });
+        }
+    }
+
+    // Exaggeration Row reference
+    const exaggerateRow = document.getElementById('menu-exaggerate-row');
+    const exaggerateSwitch = document.getElementById('exaggerate-switch');
+
+    // 3D Terrain Switch Logic
+    const terrainSwitch = document.getElementById('terrain-3d-switch');
+    if (terrainSwitch) {
+        terrainSwitch.addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            localStorage.setItem('show3DTerrain', enabled);
+            window.dispatchEvent(new CustomEvent('map3DTerrainChange', { detail: enabled }));
+
+            // Show/hide exaggeration toggle
+            if (exaggerateRow) {
+                exaggerateRow.style.display = enabled ? 'flex' : 'none';
+            }
+        });
+
+        const row = document.getElementById('menu-3d-terrain-row');
+        if (row) {
+            row.addEventListener('click', (e) => {
+                if (e.target.closest('.toggle-switch')) return;
+                terrainSwitch.checked = !terrainSwitch.checked;
+                terrainSwitch.dispatchEvent(new Event('change'));
+            });
+        }
+    }
+
+    // Exaggeration Switch Logic
+    if (exaggerateSwitch) {
+        exaggerateSwitch.addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            localStorage.setItem('exaggerateTerrain', enabled);
+            window.dispatchEvent(new CustomEvent('mapExaggerateChange', { detail: enabled }));
+        });
+
+        if (exaggerateRow) {
+            exaggerateRow.addEventListener('click', (e) => {
+                if (e.target.closest('.toggle-switch')) return;
+                exaggerateSwitch.checked = !exaggerateSwitch.checked;
+                exaggerateSwitch.dispatchEvent(new Event('change'));
+            });
+        }
+    }
+
+    // Dispatch initial state
+    setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('map3DBuildingsChange', { detail: show3DBuildings }));
+        window.dispatchEvent(new CustomEvent('map3DTerrainChange', { detail: show3DTerrain }));
+    }, 100);
+}
+
+function init3DToggleButton() {
+    const toggleBtn = document.getElementById('toggle-3d');
+    const label = toggleBtn?.querySelector('.toggle-3d-label');
+    if (!toggleBtn || !label) return;
+
+    // Update label based on pitch
+    function updateLabel() {
+        if (!window.map) return;
+        const pitch = window.map.getPitch();
+        label.textContent = pitch > 5 ? '2D' : '3D';
+    }
+
+    // Initial state
+    if (window.map) {
+        updateLabel();
+        window.map.on('pitch', updateLabel);
+    } else {
+        // Wait for map to be available
+        const checkMap = setInterval(() => {
+            if (window.map) {
+                clearInterval(checkMap);
+                updateLabel();
+                window.map.on('pitch', updateLabel);
+            }
+        }, 100);
+    }
+
+    toggleBtn.addEventListener('click', () => {
+        if (!window.map) return;
+        const currentPitch = window.map.getPitch();
+        const newPitch = currentPitch > 5 ? 0 : 60; // Increased to 60 for more dramatic 3D view
+
+        // Dispatch event to signal we're programmatically pitching
+        window.dispatchEvent(new CustomEvent('programmaticPitch', { detail: true }));
+
+        window.map.easeTo({ pitch: newPitch, duration: 500 });
+
+        // Clear the signal after animation
+        window.map.once('moveend', () => {
+            window.dispatchEvent(new CustomEvent('programmaticPitch', { detail: false }));
+        });
+    });
+}

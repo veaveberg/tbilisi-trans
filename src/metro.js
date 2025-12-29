@@ -80,7 +80,8 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
     setSheetState(panel, 'half'); // Open panel immediately
     updateBackButtons();
 
-    nameEl.textContent = stop.name.replace('M/S', '').replace('Metro Station', '').trim() || 'Metro Station';
+    // Use helper for consistent naming
+    nameEl.textContent = cleanMetroName(stop.name);
 
     // Add Open Hours Badge
     const headerContainer = document.createElement('div');
@@ -113,7 +114,7 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
 
         if (metroRoutes.length === 0) {
             // Fallback for Station Square etc
-            const targetName = stop.name.replace('M/S', '').replace('Metro Station', '').replace(/[12]$/, '').trim();
+            const targetName = cleanMetroName(stop.name).replace(/[12]$/, '');
             const subwayRoutes = allRoutes.filter(r => r.mode === 'SUBWAY');
 
             if (targetName.includes('Station Square')) {
@@ -159,11 +160,11 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                         if (!scheduleGroup) return;
 
                         // Find stops for this station
-                        const targetName = stop.name.replace('M/S', '').replace('Metro Station', '').replace(/[12]$/, '').trim();
+                        const targetName = cleanMetroName(stop.name).replace(/[12]$/, '');
 
                         const matchingStops = scheduleGroup.stops.filter(s => {
                             if (s.id === stop.id) return true;
-                            const sName = s.name.replace('M/S', '').replace('Metro Station', '').replace(/[12]$/, '').trim();
+                            const sName = cleanMetroName(s.name).replace(/[12]$/, '');
                             return sName === targetName || sName.includes(targetName) || targetName.includes(sName);
                         });
 
@@ -195,7 +196,7 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                             let headsign = pattern.headsign || "Unknown Direction";
                             headsign = headsign.replace(/ [12]$/, '').trim();
 
-                            const currentStopName = stop.name.replace('M/S', '').replace('Metro Station', '').replace(/[12]$/, '').trim();
+                            const currentStopName = cleanMetroName(stop.name).replace(/[12]$/, '');
                             if (headsign === currentStopName || headsign.includes(currentStopName) || currentStopName.includes(headsign)) {
                                 headsign = "Arriving trains";
                             }
@@ -338,6 +339,22 @@ function getLineCoordinates(orderList, features) {
 
 // --- Main Exports ---
 
+export function cleanMetroName(name) {
+    if (!name) return 'Metro Station';
+    return name
+        .replace('M/S', '')
+        .replace('Metro Station', '')
+        .replace('Station Square 1', 'Station Square')
+        .replace('Station Square 2', 'Station Square')
+        .replace('Univercity', 'University')
+        .replace('Technacal', 'Technical')
+        .replace('Techinacal', 'Technical') // Specific typo fix for user
+        .replace('Grmaghele', 'Ghrmaghele')
+        .replace('Sarajisvhili', 'Sarajishvili')
+        .replace('Saradjishvili', 'Sarajishvili')
+        .trim() || 'Metro Station';
+}
+
 export function processMetroStops(stops, stopBearings = {}) {
     const busStops = [];
     const metroFeatures = [];
@@ -360,18 +377,7 @@ export function processMetroStops(stops, stopBearings = {}) {
 
         if (isMetro) {
             // Clean Name
-            let displayName = stop.name
-                .replace('M/S', '')
-                .replace('Metro Station', '')
-                .replace('Station Square 1', 'Station Square')
-                .replace('Station Square 2', 'Station Square')
-                .replace('Univercity', 'University')
-                .replace('Technacal', 'Technical')
-                .replace('Techinacal', 'Technical')
-                .replace('Grmaghele', 'Ghrmaghele')
-                .replace('Sarajisvhili', 'Sarajishvili')
-                .replace('Saradjishvili', 'Sarajishvili')
-                .trim();
+            let displayName = cleanMetroName(stop.name);
 
             if (seenMetroNames.has(displayName)) return;
             seenMetroNames.add(displayName);
@@ -456,6 +462,7 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
             id: 'metro-lines-layer',
             type: 'line',
             source: 'metro-lines-manual',
+            slot: 'top', // Render above 3D buildings
             layout: {
                 'line-join': 'round',
                 'line-cap': 'round'
@@ -464,6 +471,8 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
                 'line-color': ['get', 'color'],
                 'line-width': 8,
                 'line-opacity': 0.3,
+                'line-z-offset': 100, // Elevate above 3D buildings
+                'line-occlusion-opacity': 1, // Prevent occlusion by 3D buildings
                 'line-emissive-strength': 1 // Standard Style Night Mode Support
             }
         });
@@ -474,7 +483,8 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
     if (!map.getSource('metro-stops')) {
         map.addSource('metro-stops', {
             type: 'geojson',
-            data: { type: 'FeatureCollection', features: metroFeatures }
+            data: { type: 'FeatureCollection', features: metroFeatures },
+            promoteId: 'id' // Required for feature-state
         });
     }
 
@@ -491,13 +501,41 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
                     'interpolate',
                     ['linear'],
                     ['zoom'],
-                    10, 5,
-                    14, 13,
-                    16, 17
+                    10, 3,
+                    14, 8,
+                    16, 12
                 ],
                 'circle-stroke-width': 2,
                 'circle-stroke-color': '#fff',
                 'circle-emissive-strength': 1 // Standard Style Night Mode Support
+            }
+        });
+    }
+
+    // Metro Hover Overlay (White Tint)
+    if (!map.getLayer('metro-layer-overlay')) {
+        map.addLayer({
+            id: 'metro-layer-overlay',
+            type: 'circle',
+            source: 'metro-stops',
+            // No filter: Apply overlay to ALL metro stops including Station Square
+            paint: {
+                'circle-color': '#ffffff',
+                'circle-radius': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    10, 3,
+                    14, 8,
+                    16, 12
+                ],
+                'circle-opacity': [
+                    'case',
+                    ['boolean', ['feature-state', 'hover'], false],
+                    0.5, // 50% white tint on hover
+                    0
+                ],
+                'circle-stroke-width': 0
             }
         });
     }
@@ -511,10 +549,24 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
             minzoom: 12, // Visible earlier
             layout: {
                 'text-field': ['get', 'name'],
-                'text-size': 14, // Larger font
-                'text-offset': [0, 1.2],
+                'text-size': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    12, 10,
+                    16, 14
+                ],
+                'text-offset': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    12, ['literal', [0, 1.1]], // Reduced from 1.2, closer to original 1.0
+                    16, ['literal', [0, 1.6]]  // Reduced from 1.8
+                ],
                 'text-anchor': 'top',
                 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                'text-allow-overlap': true,    // Fix for Station Square
+                'text-ignore-placement': true  // Ensure it shows over icons
             },
             paint: {
                 'text-color': '#000000',
@@ -546,7 +598,15 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
             },
             paint: {
                 'icon-opacity': 1,
-                'icon-emissive-strength': 1 // Standard Style Night Mode Support
+                'icon-emissive-strength': 1,
+                'icon-halo-color': '#ffffff',
+                'icon-halo-width': 4,
+                'icon-halo-opacity': [
+                    'case',
+                    ['boolean', ['feature-state', 'hover'], false],
+                    0.5,
+                    0
+                ]
             }
         });
     }

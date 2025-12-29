@@ -13,7 +13,7 @@ import * as api from './api.js';
 import { LoopUtils } from './loop-utils.js';
 import * as metro from './metro.js';
 const { handleMetroStop } = metro;
-import { map, setupMapControls, getMapHash, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, setupHoverHandlers, setupClickHandlers, setMapFocus, isTrackingActive } from './map-setup.js';
+import { map, setupMapControls, getMapHash, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, setupHoverHandlers, setupClickHandlers, setMapFocus, isTrackingActive, isUserInteractingWithMap, stopTracking, setMapLightPreset } from './map-setup.js';
 import stopBearings from './data/stop_bearings.json';
 import { db } from './db.js';
 import { historyManager, addToHistory, popHistory, clearHistory, updateBackButtons, peekHistory } from './history.js';
@@ -112,12 +112,31 @@ api.fetchRoutes({ strategy: 'cache-only' }).then(onRoutesLoaded);
 // 2. Fresh Load (Network) - Updates Data/UI
 api.fetchRoutes().then(onRoutesLoaded);
 
+let lastMapHashUpdate = 0;
 map.on('moveend', () => {
     // Only update hash if no specialized view is active (Stop or Route)
-    // AND only if we are not in an active tracking mode (Heading/Follow)
-    // This avoids history.replaceState spam (100+ times / 10s) during GPS updates.
-    if (!window.currentStopId && !window.currentRoute && !isTrackingActive()) {
-        Router.updateMapLocation(getMapHash());
+    if (!window.currentStopId && !window.currentRoute) {
+        const now = Date.now();
+        const isTracking = isTrackingActive();
+        const isManual = isUserInteractingWithMap();
+
+        // If it's a manual interaction (zoom/pan), update immediately even if in Follow mode
+        if (isManual) {
+            Router.updateMapLocation(getMapHash());
+            lastMapHashUpdate = now;
+        }
+        // If it's a programmatic Follow mode move, throttle to once every 10 seconds
+        else if (isTracking) {
+            if (now - lastMapHashUpdate > 10000) {
+                Router.updateMapLocation(getMapHash());
+                lastMapHashUpdate = now;
+            }
+        }
+        // Standard idle panning (should be covered by isManual, but for completeness)
+        else {
+            Router.updateMapLocation(getMapHash());
+            lastMapHashUpdate = now;
+        }
     }
 });
 
@@ -211,8 +230,60 @@ const ALL_STOP_LAYERS = [
     'stops-layer-hit-target',
     'metro-layer-circle',
     'metro-layer-label',
-    'metro-transfer-layer'
+    'metro-transfer-layer',
+    'metro-layer-overlay'
 ];
+
+// Explicit Metro Hover Logic (Pop Effect / Overlay)
+// Explicit Metro Hover Logic (Pop Effect / Overlay)
+function addMetroHoverLogic(map, filterManager) {
+    if (!map.getLayer('metro-layer-circle')) return;
+
+    let hoveredStateId = null;
+    const targets = ['metro-layer-circle', 'metro-layer-overlay', 'metro-layer-label', 'metro-transfer-layer'];
+
+    map.on('mouseenter', targets, (e) => {
+        // Disable Metro Hover if Filter is Active (Metro is not "reachable")
+        // Debug
+        // console.log('[MetroHover] Filter Active?', filterManager?.state?.active, filterManager?.state?.picking);
+
+        if (filterManager && (filterManager.state.active || filterManager.state.picking)) return;
+
+        map.getCanvas().style.cursor = 'pointer';
+        if (e.features.length > 0) {
+            const feature = e.features[0];
+
+            if (hoveredStateId !== null) {
+                map.setFeatureState(
+                    { source: 'metro-stops', id: hoveredStateId },
+                    { hover: false }
+                );
+            }
+            hoveredStateId = e.features[0].id; // Use implicit ID for consistency
+            map.setFeatureState(
+                { source: 'metro-stops', id: hoveredStateId },
+                { hover: true }
+            );
+
+            // Debug: Verify State
+            // const state = map.getFeatureState({ source: 'metro-stops', id: hoveredStateId });
+            // console.log('Metro Hover Set:', hoveredStateId, state); 
+        }
+    });
+
+    map.on('mouseleave', targets, () => {
+        map.getCanvas().style.cursor = '';
+        if (hoveredStateId !== null) {
+            map.setFeatureState(
+                { source: 'metro-stops', id: hoveredStateId },
+                { hover: false }
+            );
+        }
+        hoveredStateId = null;
+    });
+}
+// Call this after map load or in Setup
+
 
 const uiCallbacks = {
     renderArrivals,
@@ -243,8 +314,13 @@ setupHoverHandlers({
                 }
             });
         }
-    }
+    },
+    filterManager: filterManager // Pass Manager
 });
+
+// Init Metro Hover
+addMetroHoverLogic(map, filterManager);
+
 
 // Initialize Click Handlers
 setupClickHandlers({
@@ -346,6 +422,20 @@ async function initializeMapData(stopsData, routesData) {
         // This fixes the issue where "Fresh Load" resets the layer styles, undoing deep link dimming.
         if (window.currentStopId) {
             setMapFocus(true);
+
+            // Also restore stop highlight marker (may have been cleared by addStopsToMap)
+            const highlightStop = allStops.find(s => String(s.id) === String(window.currentStopId));
+            if (highlightStop && highlightStop.lon && highlightStop.lat && map.getSource('selected-stop')) {
+                map.getSource('selected-stop').setData({
+                    type: 'FeatureCollection',
+                    features: [{
+                        type: 'Feature',
+                        geometry: { type: 'Point', coordinates: [highlightStop.lon, highlightStop.lat] },
+                        properties: highlightStop
+                    }]
+                });
+                if (map.getLayer('stops-highlight')) map.moveLayer('stops-highlight');
+            }
         }
     }, 100);
 
@@ -428,6 +518,17 @@ map.on('load', () => {
 
 // --- Map Initialization ---
 map.on('load', async () => {
+    // Initialize Theme Manager FIRST (Before any UI rendering to prevent theme flicker)
+    themeManager = new ThemeManager(map);
+    themeManager.init();
+
+    // Listen for Manual Changes from Settings
+    window.addEventListener('manualThemeChange', (e) => {
+        const newTheme = e.detail;
+        console.log('[Theme] Manual Switch:', newTheme);
+        themeManager.setTheme(newTheme);
+    });
+
     // A. FAST PATH (Cache/Static) - Instant Load
     const loadFast = async () => {
         try {
@@ -464,80 +565,31 @@ map.on('load', async () => {
 
     await loadFast();
     loadFresh();
-
-    // Initialize Theme Manager (After Map Load)
-    themeManager = new ThemeManager(map);
-    themeManager.init();
-
-    // Listen for Manual Changes from Settings
-    window.addEventListener('manualThemeChange', (e) => {
-        const newTheme = e.detail;
-        console.log('[Theme] Manual Switch:', newTheme);
-        themeManager.setTheme(newTheme);
-    });
 });
 
 // ---// Theme Switching Listener
 window.addEventListener('themeChanged', (e) => {
-    const { theme, style, lightPreset } = e.detail;
-    console.log(`[Theme] Manual Switch: ${theme} (Preset: ${lightPreset})`);
+    const { theme, lightPreset } = e.detail;
+    console.log(`[Theme] Switching to: ${theme} (Preset: ${lightPreset})`);
 
-    // Smart Update for Mapbox Standard
-    const currentStyle = map.getStyle();
+    // 1. Update the map's light preset
+    setMapLightPreset(lightPreset);
 
-    // Check if we are already using standard style
-    // Robust check: Check if current style is 'standard' OR has 'basemap' config
-    // Note: getStyle().name might be 'Standard' or URL might match.
-    // Simpler: Check if we are targeting 'standard' and we assume we are already on 'standard' due to map-setup config.
-    // But initially we might load it via URL.
-
-    // Update Custom Label Colors (Metro, etc.)
-    // We defer this slightly to ensure standard colors apply first if needed
+    // 2. Update custom label colors (Metro, etc.) after a brief delay
     setTimeout(() => updateMapTheme(), 50);
 
-    const refreshUI = (options = {}) => {
-        setTimeout(() => {
-            const stopPanelVisible = !document.getElementById('info-panel').classList.contains('hidden');
-            const routePanelVisible = !document.getElementById('route-info').classList.contains('hidden');
+    // 3. Refresh UI elements if panels are open
+    setTimeout(() => {
+        const stopPanelVisible = !document.getElementById('info-panel').classList.contains('hidden');
+        const routePanelVisible = !document.getElementById('route-info').classList.contains('hidden');
 
-            if (window.currentStopId && window.lastArrivals && stopPanelVisible) {
-                renderArrivals(window.lastArrivals, window.currentStopId);
-            }
-            if (window.currentRoute && routePanelVisible && !options.skipRoute) {
-                updateRouteView(window.currentRoute, { suppressPanel: true });
-            }
-        }, 100);
-    };
-
-    // Dynamic Config Update (Seamless)
-    if (style.includes('standard') && map.setFog && map.setConfigProperty) {
-        try {
-            map.setConfigProperty('basemap', 'lightPreset', lightPreset);
-            console.log(`[Theme] Updated lightPreset to ${lightPreset}`);
-            refreshUI();
-            return; // SUCCESS - No layer reload needed
-        } catch (err) {
-            console.warn('[Theme] Config update failed (not standard style?), falling back to setStyle:', err);
+        if (window.currentStopId && window.lastArrivals && stopPanelVisible) {
+            renderArrivals(window.lastArrivals, window.currentStopId);
         }
-    }
-
-    // Fallback: Full Style Reload (Destructive)
-    console.log(`[Theme] Switching Map Style to: ${style}`);
-    map.setStyle(style);
-
-    // Wait for style.load to restore layers
-    map.once('style.load', () => {
-        console.log('[Theme] Style loaded. Restoring layers...');
-        // If we switched TO standard, we should apply preset now
-        if (style.includes('standard') && map.setConfigProperty) {
-            try {
-                map.setConfigProperty('basemap', 'lightPreset', lightPreset);
-            } catch (e) { console.warn('Failed to set preset after load', e); }
+        if (window.currentRoute && routePanelVisible) {
+            updateRouteView(window.currentRoute, { suppressPanel: true });
         }
-
-        restoreMapLayers();
-        refreshUI({ skipRoute: true });
-    });
+    }, 100);
 });
 
 function restoreMapLayers() {
@@ -664,10 +716,11 @@ async function handleDeepLinks() {
                 const filterBtn = document.getElementById('filter-routes-toggle');
                 if (filterBtn) filterBtn.classList.add('active');
             } else {
-                // Standard Stop View
+                // Standard Stop View (or nested route - suppress panel if route follows)
                 // addToStack=true: Ensure Stop is in internal history so "Back" works
                 // updateURL=false: Deep link URL is already set, don't overwrite yet
-                await showStopInfo(stop, true, true, false);
+                // suppressPanel: If we have a nested route, don't show stop panel - only set up state
+                await showStopInfo(stop, true, !state.shortName, false, { suppressPanel: !!state.shortName });
             }
 
             // Handle Nested Route (Bus) found in URL
@@ -687,11 +740,13 @@ async function handleDeepLinks() {
 
                         // Show Route
                         // addToStack=true: Add Route to history (Stop -> Route)
-                        // fromStopId: Helps with potential context/animations
+                        // fromStopId: Helps with direction matching
+                        // centerOnStop: Fly to stop location since we're coming from a deep link
                         await showRouteOnMap(route, true, {
                             initialDirectionIndex: state.direction,
                             fromStopId: stop.id,
-                            startZoom: intendedStopZoom // Pass intended zoom for history
+                            startZoom: intendedStopZoom,
+                            centerOnStop: { lat: stop.lat, lon: stop.lon } // Fly to stop on deep link
                         });
                     } else {
                         console.warn(`[DeepLink] Route ${state.shortName} not found in allRoutes.`);
@@ -996,7 +1051,11 @@ map.on('moveend', () => {
 });
 
 
-async function showStopInfo(stop, addToStack = true, flyToStop = false, updateURL = true) {
+async function showStopInfo(stop, addToStack = true, flyToStop = false, updateURL = true, options = {}) {
+    const { suppressPanel = false } = options;
+
+    // Stop location tracking if we are selecting something specific
+    stopTracking();
     if (!stop) return;
 
     if (stop.id) window.currentStopId = stop.id;
@@ -1051,13 +1110,46 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                 geometry: { type: 'Point', coordinates: [stop.lon, stop.lat] },
                 properties: stop
             };
-            if (map.getSource('selected-stop')) {
-                map.getSource('selected-stop').setData({
-                    type: 'FeatureCollection',
-                    features: [feature]
+
+            // Ensure source and layer exist (may not exist yet during early deep link processing)
+            if (!map.getSource('selected-stop')) {
+                map.addSource('selected-stop', {
+                    type: 'geojson',
+                    data: { type: 'FeatureCollection', features: [] }
                 });
-                if (map.getLayer('stops-highlight')) map.moveLayer('stops-highlight');
             }
+            if (!map.getLayer('stops-highlight')) {
+                map.addLayer({
+                    id: 'stops-highlight',
+                    type: 'symbol',
+                    source: 'selected-stop',
+                    layout: {
+                        'icon-image': [
+                            'case',
+                            ['>', ['get', 'bearing'], 0], 'stop-selected-icon',
+                            'stop-icon'
+                        ],
+                        'icon-size': [
+                            'case',
+                            ['==', ['get', 'mode'], 'SUBWAY'], 1.5,
+                            1.2
+                        ],
+                        'icon-allow-overlap': true,
+                        'icon-ignore-placement': true,
+                        'icon-rotate': ['coalesce', ['get', 'bearing'], 0],
+                        'icon-rotation-alignment': 'map'
+                    },
+                    paint: {
+                        'icon-opacity': 1
+                    }
+                });
+            }
+
+            map.getSource('selected-stop').setData({
+                type: 'FeatureCollection',
+                features: [feature]
+            });
+            if (map.getLayer('stops-highlight')) map.moveLayer('stops-highlight');
         } else {
             const refreshedStop = allStops.find(s => s.id === stop.id);
             if (refreshedStop && refreshedStop.lat) {
@@ -1067,6 +1159,11 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                 return showStopInfo(stop, addToStack, flyToStop, updateURL);
             }
         }
+    }
+
+    // If suppressPanel is true, we skip all UI rendering - just set up state and highlight
+    if (suppressPanel) {
+        return;
     }
 
     const panel = document.getElementById('info-panel');
@@ -1343,6 +1440,15 @@ function renderAllRoutes(routesInput, arrivals) {
             });
             tilesContainer.appendChild(tile);
         });
+
+        // Add invisible spacers to fill the last row (prevents last row chips from stretching)
+        // We add enough spacers to fill a full row (max ~10 items at 42px min-width in 450px container)
+        for (let i = 0; i < 10; i++) {
+            const spacer = document.createElement('div');
+            spacer.className = 'route-tile-spacer';
+            spacer.setAttribute('aria-hidden', 'true');
+            tilesContainer.appendChild(spacer);
+        }
 
         container.appendChild(tilesContainer);
         return container;
@@ -2457,6 +2563,8 @@ let currentPatternIndex = 0;
 // busUpdateInterval declared at top scope
 
 async function showRouteOnMap(route, addToStack = true, options = {}) {
+    // Stop location tracking if we are selecting something specific
+    stopTracking();
     // Snapshot current Zoom into the previous state (the Stop view) 
     // This allows "Back" to restore the exact zoom level.
     const top = peekHistory();
@@ -2472,19 +2580,7 @@ async function showRouteOnMap(route, addToStack = true, options = {}) {
     window.currentRoute = route; // Crucial for Edit Tools
     currentPatternIndex = 0; // Reset to default
 
-    if (!map.isStyleLoaded()) {
-        console.log('[Router] Style not loaded. Waiting...');
-        await Promise.race([
-            new Promise(resolve => map.once('style.load', () => {
-                console.log('[Router] Style loaded event fired.');
-                resolve();
-            })),
-            new Promise(resolve => setTimeout(() => {
-                console.warn('[Router] Style load timed out (4s). Proceeding anyway...');
-                resolve();
-            }, 4000))
-        ]);
-    }
+    // Style wait removed - we're inside map.on('load') so style should be ready
 
     await updateRouteView(route, options);
 
@@ -2764,13 +2860,21 @@ async function updateRouteView(route, options = {}) {
                 });
             }
 
-            // Gentle Zoom Out (No Panning)
-            // If zoomed in close (>14.5), ease to 14. Otherwise keep current view.
-            if (map.getZoom() > 14.5) {
+            // Map View: Center on stop if coming from deep link, otherwise gentle zoom
+            if (options.centerOnStop && options.centerOnStop.lat && options.centerOnStop.lon) {
+                // Deep link: fly to the stop location at route-appropriate zoom
+                const offsetY = -(window.innerHeight * 0.1);
+                map.flyTo({
+                    center: [options.centerOnStop.lon, options.centerOnStop.lat],
+                    zoom: 14, // Route-appropriate zoom (slightly zoomed out from stop's default 16)
+                    offset: [0, offsetY],
+                    duration: 1500
+                });
+            } else if (map.getZoom() > 14.5) {
+                // Normal click: Gentle Zoom Out (No Panning)
                 map.easeTo({ zoom: 14, duration: 800 });
-            } else {
-                // Do nothing (preserve center and zoom)
             }
+            // else: Do nothing (preserve center and zoom)
         }
 
         // 3. Fetch Stops for "Bumps" / Beads
@@ -2836,7 +2940,58 @@ async function updateRouteView(route, options = {}) {
             busUpdateInterval = setInterval(() => updateLiveBuses(route.id, patternSuffix, liveColor), 5000);
         }
 
-        // Force Stop Highlight to Top
+        // Force Stop Highlight to Top and reapply data if needed
+        // (Race condition fix: highlight may have been set before style was ready)
+        if (options.fromStopId) {
+            const highlightStop = allStops.find(s => String(s.id) === String(options.fromStopId));
+            if (highlightStop && highlightStop.lon && highlightStop.lat) {
+                // Ensure source exists
+                if (!map.getSource('selected-stop')) {
+                    map.addSource('selected-stop', {
+                        type: 'geojson',
+                        data: { type: 'FeatureCollection', features: [] }
+                    });
+                }
+                // Ensure layer exists
+                if (!map.getLayer('stops-highlight')) {
+                    map.addLayer({
+                        id: 'stops-highlight',
+                        type: 'symbol',
+                        source: 'selected-stop',
+                        layout: {
+                            'icon-image': [
+                                'case',
+                                ['>', ['get', 'bearing'], 0], 'stop-selected-icon',
+                                'stop-icon'
+                            ],
+                            'icon-size': [
+                                'case',
+                                ['==', ['get', 'mode'], 'SUBWAY'], 1.5,
+                                1.2
+                            ],
+                            'icon-allow-overlap': true,
+                            'icon-ignore-placement': true,
+                            'icon-rotate': ['coalesce', ['get', 'bearing'], 0],
+                            'icon-rotation-alignment': 'map'
+                        },
+                        paint: {
+                            'icon-opacity': 1
+                        }
+                    });
+                }
+                // Set the highlight feature data
+                map.getSource('selected-stop').setData({
+                    type: 'FeatureCollection',
+                    features: [{
+                        type: 'Feature',
+                        geometry: { type: 'Point', coordinates: [highlightStop.lon, highlightStop.lat] },
+                        properties: highlightStop
+                    }]
+                });
+            }
+        }
+
+        // Move highlight layer to top
         if (map.getLayer('stops-highlight')) {
             map.moveLayer('stops-highlight');
         }

@@ -81,6 +81,17 @@ body.panel-open #map-controls {
     transform: scale(0.8);
 }
 
+/* 2D/3D Toggle Button */
+#toggle-3d {
+    font-weight: 700;
+    font-size: 13px;
+}
+
+.toggle-3d-label {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', sans-serif;
+    letter-spacing: -0.2px;
+}
+
 .zoom-controls {
     display: flex;
     flex-direction: column;
@@ -138,43 +149,123 @@ body.panel-open #map-controls {
     box-shadow: var(--shadow);
 }
 
-/* --- Scale Slider Styling --- */
-.scale-slider-container {
-    padding: 4px 0;
+/* --- Custom Scale Slider Styling --- */
+.custom-slider-container {
+    position: relative;
+    height: 24px;
+    cursor: pointer;
+    touch-action: none;
+    margin: 0 6px;
+    /* Keep thumb within menu bounds */
 }
 
-#page-scale-slider {
-    -webkit-appearance: none;
-    appearance: none;
+.custom-slider-track {
+    position: absolute;
+    top: 50%;
+    left: 0px;
+    /* Less inset for wider track */
+    right: 0px;
+    /* Less inset for wider track */
     height: 6px;
-    background: var(--bg-secondary);
+    background: rgba(120, 120, 128, 0.2);
+    mix-blend-mode: multiply;
     border-radius: 3px;
-    outline: none;
+    transform: translateY(-50%);
 }
 
-#page-scale-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
+.custom-slider-thumb {
+    position: absolute;
+    top: 50%;
     width: 24px;
     height: 24px;
     background: #ffffff;
     border: 1px solid var(--border-light);
     border-radius: 50%;
-    cursor: pointer;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    transition: transform 0.1s ease;
+    transform: translate(-50%, -50%);
+    cursor: grab;
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
 }
 
-#page-scale-slider::-webkit-slider-thumb:active {
-    transform: scale(1.1);
+.custom-slider-thumb:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
-body.dark-mode #page-scale-slider::-webkit-slider-thumb {
+.custom-slider-thumb.active {
+    cursor: grabbing;
+    transform: translate(-50%, -50%) scale(1.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+body.dark-mode .custom-slider-thumb {
     background: #ffffff;
     border-color: #38383a;
+}
+
+body.dark-mode .custom-slider-track {
+    background: rgba(255, 255, 255, 0.15);
+    mix-blend-mode: normal;
+}
+
+.custom-slider-value {
+    position: relative;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    padding: 0 6px;
+    /* Match container margins */
+}
+
+.custom-slider-value span {
+    position: relative;
+    display: inline-block;
+    transform: translateX(-50%);
 }
 
 .scale-adjuster-row:hover {
     background: transparent !important;
     cursor: default !important;
+}
+
+/* Heading indicator is hidden by default, shown only when compass is detected */
+.mapboxgl-user-location-heading {
+    display: none !important;
+}
+
+html.show-heading-indicator .mapboxgl-user-location-heading {
+    display: block !important;
+}
+
+/* Style the heading indicator as a soft light cone */
+.mapboxgl-user-location-heading {
+    /* Override default arrow to a cone of light */
+    width: 120px !important;
+    height: 120px !important;
+    /* Use transform to center around original position without margins */
+    position: absolute !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    background: conic-gradient(from 180deg,
+            transparent 0deg,
+            transparent 120deg,
+            rgba(100, 149, 237, 0.45) 150deg,
+            rgba(100, 149, 237, 0.5) 180deg,
+            rgba(100, 149, 237, 0.45) 210deg,
+            transparent 240deg,
+            transparent 360deg) !important;
+    border: none !important;
+    border-radius: 50% !important;
+    filter: blur(4px);
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+/* Hide the default arrow/dot inside the heading indicator */
+.mapboxgl-user-location-heading>*,
+.mapboxgl-user-location-heading::before,
+.mapboxgl-user-location-heading::after {
+    display: none !important;
 }

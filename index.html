@@ -113,23 +113,27 @@
       <div id="info-panel" class="panel hidden">
         <div class="drag-handle"></div>
         <div class="panel-header">
-          <h2 id="stop-name">Select a stop</h2>
-          <div class="panel-controls">
-            <button id="back-panel" class="icon-btn hidden" title="Back">
-              <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
-            </button>
+          <div class="header-top-row">
+            <div class="header-title-container">
+              <h2 id="stop-name">Select a stop</h2>
+            </div>
+            <div class="panel-controls">
+              <button id="back-panel" class="icon-btn hidden" title="Back">
+                <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+              </button>
 
-            <button id="btn-edit-stop" class="icon-btn hidden" title="Edit Stop" style="display: none;">
-              <img src="/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
-            </button>
+              <button id="btn-edit-stop" class="icon-btn hidden" title="Edit Stop" style="display: none;">
+                <img src="/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
+              </button>
 
-            <button id="copy-link-btn" class="icon-btn" title="Copy Link">
-              <img src="/link.circle.fill.svg" alt="Copy Link" width="28" height="28">
-            </button>
+              <button id="copy-link-btn" class="icon-btn" title="Copy Link">
+                <img src="/link.circle.fill.svg" alt="Copy Link" width="28" height="28">
+              </button>
 
-            <button id="close-panel" class="icon-btn" title="Close">
-              <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
-            </button>
+              <button id="close-panel" class="icon-btn" title="Close">
+                <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+              </button>
+            </div>
           </div>
         </div>
 
@@ -180,23 +184,27 @@
       <div id="route-info" class="panel hidden route-panel">
         <div class="drag-handle"></div>
         <div class="panel-header">
-          <div class="route-info-header-content">
-            <div id="route-info-number" class="route-info-number"></div>
-            <div id="route-info-text" class="route-info-details"></div>
-          </div>
-          <div class="panel-controls">
-            <button id="back-route-info" class="icon-btn hidden" title="Back">
-              <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
-            </button>
-            <button id="btn-edit-route" class="icon-btn hidden" title="Edit Route" style="display: none;">
-              <img src="/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
-            </button>
-            <button id="copy-route-link-btn" class="icon-btn" title="Copy Link">
-              <img src="/link.circle.fill.svg" alt="Copy Link" width="28" height="28">
-            </button>
-            <button id="close-route-info" class="icon-btn" title="Close">
-              <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
-            </button>
+          <div class="header-top-row">
+            <div class="header-title-container">
+              <div class="route-info-header-content">
+                <div id="route-info-number" class="route-info-number"></div>
+                <div id="route-info-text" class="route-info-details"></div>
+              </div>
+            </div>
+            <div class="panel-controls">
+              <button id="back-route-info" class="icon-btn hidden" title="Back">
+                <img src="/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
+              </button>
+              <button id="btn-edit-route" class="icon-btn hidden" title="Edit Route" style="display: none;">
+                <img src="/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
+              </button>
+              <button id="copy-route-link-btn" class="icon-btn" title="Copy Link">
+                <img src="/link.circle.fill.svg" alt="Copy Link" width="28" height="28">
+              </button>
+              <button id="close-route-info" class="icon-btn" title="Close">
+                <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+              </button>
+            </div>
           </div>
         </div>
 
@@ -331,6 +339,9 @@
             <path d="M12 3l4 9h-8l4-9z" fill="red" stroke="red"></path>
             <path d="M12 21l-4-9h8l-4 9z" fill="#8E8E93" stroke="#8E8E93"></path>
           </svg>
+        </button>
+        <button id="toggle-3d" class="control-btn" aria-label="Toggle 3D View">
+          <span class="toggle-3d-label">3D</span>
         </button>
         <button id="locate-me" class="control-btn" aria-label="Locate Me">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"

@@ -247,8 +247,14 @@
       "destinations": {
         "0": {
           "headsign": {
-            "en": "Vake Park – Kaklebi, Ivane Machabli St.",
-            "ka": "კაკლების დას. - ვაკის პარკი"
+            "ka": "ვაკის პარკი",
+            "en": "Vake Park"
+          }
+        },
+        "1": {
+          "headsign": {
+            "en": "Kaklebi, Ivane Machabli St.",
+            "ka": "კაკლების დას."
           }
         }
       }
@@ -269,6 +275,132 @@
           "headsign": {
             "en": "Nakaduli St.",
             "ka": "ნაკადულის ქ."
+          }
+        }
+      }
+    },
+    "minibusR25397": {
+      "longName": {
+        "en": "Tamar Mujirishvili St. – Station Square",
+        "ka": "თამარ მუჯირიშვილის ქ. - სადგურის მოედანი"
+      },
+      "destinations": {
+        "0": {
+          "headsign": {
+            "en": "Tamar Mujirishvili St.",
+            "ka": "მუჯირიშვილის ქ."
+          }
+        },
+        "1": {
+          "headsign": {
+            "en": "Station Square",
+            "ka": "სადგურის მოედანი"
+          }
+        }
+      }
+    },
+    "minibusR24653": {
+      "longName": {
+        "en": "Gldani VI Microdistrict – Ilia Chavchavadze Ave.",
+        "ka": "გლდანის VI მ/რ - ილია ჭავჭავაძის გამზირი"
+      },
+      "destinations": {
+        "0": {
+          "headsign": {
+            "en": "Gldani VI Microdistrict",
+            "ka": "გლდანის VI მ/რ"
+          }
+        },
+        "1": {
+          "headsign": {
+            "en": "Ilia Chavchavadze Ave.",
+            "ka": "ჭავჭავაძის გამზირი"
+          }
+        }
+      }
+    },
+    "minibusR12821": {
+      "longName": {
+        "en": "83 Chavchavadze Ave. – Vake Park",
+        "ka": "ჭავჭავაძის გამზ. 83 - ვაკის პარკი"
+      }
+    },
+    "minibusR24403": {
+      "longName": {
+        "en": "Station Square – Samshvilde St.",
+        "ka": "სადგურის მოედანი - სამშვილდის ქ."
+      },
+      "destinations": {
+        "0": {
+          "headsign": {
+            "en": "Samshvilde St.",
+            "ka": "სამშვილდის ქ."
+          }
+        },
+        "1": {
+          "headsign": {
+            "en": "Station Square",
+            "ka": "სადგურის მოედანი"
+          }
+        }
+      }
+    },
+    "minibusR24579": {
+      "longName": {
+        "en": "Tbilisi Mall – Politkovskaya St.",
+        "ka": "თბილისი მოლი - ანა პოლიტკოვსკაიას ქ."
+      },
+      "destinations": {
+        "0": {
+          "headsign": {
+            "en": "Tbilisi Mall",
+            "ka": "თბილისი მოლი"
+          }
+        },
+        "1": {
+          "headsign": {
+            "en": "Politkovskaya St.",
+            "ka": "პოლიტკოვსკაიას ქ."
+          }
+        }
+      }
+    },
+    "minibusR24587": {
+      "longName": {
+        "en": "Didi Dighomi IV M/D – Amagleba St.",
+        "ka": "დიდი დიღმის IV მ/რ - ამაღლების ქ."
+      },
+      "destinations": {
+        "0": {
+          "headsign": {
+            "en": "Amagleba St.",
+            "ka": "ამაღლების ქ."
+          }
+        },
+        "1": {
+          "headsign": {
+            "en": "Didi Dighomi IV M/D",
+            "ka": "დიდი დიღმის IV მ/რ"
+          }
+        }
+      }
+    },
+    "minibusR25521": {
+      "longName": {
+        "en": "სახელმწიფო უნივერსიტეტის  მე-10 კორპუსი – Vladimer Lobjanidze St.",
+        "ka": "სახელმწიფო უნივერსიტეტის  მე-10 კორპუსი - ვლადიმერ ლობჟანიძის ქ."
+      },
+      "destinations": {
+        "0": {
+          "headsign": {
+            "en": "უნივერსიტეტის მაღლივი კორპუსი",
+            "ka": "უნივერსიტეტის მაღლივი კორპუსი"
+          }
+        },
+        "1": {
+          "headsign": {
+            "en": "Lobjanidze St.",
+            "ka": "ლობჟანიძის ქ."
           }
         }
       }

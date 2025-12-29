@@ -18,7 +18,7 @@ export const map = new mapboxgl.Map({
     config: {
         basemap: {
             lightPreset: initialLightPreset,
-            show3dObjects: false,
+            show3dObjects: false, // Back to false by default (will toggle on tilt)
             showPointOfInterestLabels: false,
             showTransitLabels: false
         }
@@ -68,8 +68,31 @@ export function setMapFocus(active) {
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', opacityExpr);
     }
     if (map.getLayer('metro-layer-circle')) {
-        map.setPaintProperty('metro-layer-circle', 'circle-opacity', active ? 0.4 : 1.0);
-        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', active ? 0.4 : 1.0);
+        // Opacity: Highlight selected, dim others if active
+        const metroOpacity = active ? [
+            'case',
+            ['==', ['get', 'id'], selectedId], 1.0,
+            0.4
+        ] : 1.0;
+
+        map.setPaintProperty('metro-layer-circle', 'circle-opacity', metroOpacity);
+        map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', metroOpacity);
+
+        // Radius: Enlarge selected
+        const radiusExpr = [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            10, ['case', ['==', ['get', 'id'], selectedId], 6, 3],
+            14, ['case', ['==', ['get', 'id'], selectedId], 13, 8],
+            16, ['case', ['==', ['get', 'id'], selectedId], 17, 12]
+        ];
+        map.setPaintProperty('metro-layer-circle', 'circle-radius', radiusExpr);
+
+        // Sync Overlay Layer for Hover Effect (30% white tint)
+        if (map.getLayer('metro-layer-overlay')) {
+            map.setPaintProperty('metro-layer-overlay', 'circle-radius', radiusExpr);
+        }
     }
     if (map.getLayer('metro-lines-layer')) {
         map.setPaintProperty('metro-lines-layer', 'line-opacity', active ? 0.3 : 0.8);
@@ -140,6 +163,168 @@ map.on('error', (e) => {
     console.warn('[Mapbox] Error:', e);
 });
 
+// --- 3D Buildings & Theme-Based Lighting ---
+let is3dEnabled = false;
+let currentLightPreset = initialLightPreset;
+
+const PERMANENT_CONFIG = {
+    showPointOfInterestLabels: false,
+    showTransitLabels: false
+};
+
+// Export function to allow ThemeManager to update the light preset
+export function setMapLightPreset(preset) {
+    const wasChanged = currentLightPreset !== preset;
+    currentLightPreset = preset;
+
+    // Try to apply immediately using setConfigProperty (more reliable)
+    try {
+        map.setConfigProperty('basemap', 'lightPreset', preset);
+        if (wasChanged) {
+            console.log('[Map] Light preset changed to:', preset);
+        }
+    } catch (err) {
+        // If setConfigProperty fails, try setConfig as fallback
+        console.warn('[Map] setConfigProperty failed, trying setConfig:', err.message);
+        try {
+            map.setConfig('basemap', {
+                lightPreset: preset,
+                show3dObjects: is3dEnabled,
+                ...PERMANENT_CONFIG
+            });
+            if (wasChanged) {
+                console.log('[Map] Light preset changed via setConfig to:', preset);
+            }
+        } catch (err2) {
+            console.error('[Map] Failed to set light preset:', err2.message);
+        }
+    }
+
+    // Re-apply terrain if user has it enabled
+    if (user3DTerrain) {
+        ensureTerrain();
+    }
+}
+
+function ensureTerrain() {
+    try {
+        if (!map.getSource('mapbox-dem')) {
+            map.addSource('mapbox-dem', {
+                'type': 'raster-dem',
+                'url': 'mapbox://mapbox.mapbox-terrain-dem-v1',
+                'tileSize': 512,
+                'maxzoom': 14
+            });
+        }
+
+        // Use exaggeration based on user preference
+        const exaggeration = userExaggerate ? 1.75 : 1.0;
+        const current = map.getTerrain();
+
+        // Check if we need to set/override terrain exaggeration
+        const needsUpdate = !current ||
+            current.source !== 'mapbox-dem' ||
+            typeof current.exaggeration !== 'number' ||
+            current.exaggeration !== exaggeration;
+
+        if (needsUpdate) {
+            map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': exaggeration });
+        }
+    } catch (err) {
+        console.warn('[Map] ensureTerrain error:', err.message);
+    }
+}
+
+// User preferences for 3D features (read from localStorage, default true)
+let user3DBuildings = localStorage.getItem('show3DBuildings') !== 'false';
+let user3DTerrain = localStorage.getItem('show3DTerrain') !== 'false';
+let userExaggerate = localStorage.getItem('exaggerateTerrain') === 'true';
+
+// Listen for settings changes
+window.addEventListener('map3DBuildingsChange', (e) => {
+    user3DBuildings = e.detail;
+    update3DBuildings();
+});
+
+window.addEventListener('map3DTerrainChange', (e) => {
+    user3DTerrain = e.detail;
+    update3DTerrain();
+});
+
+window.addEventListener('mapExaggerateChange', (e) => {
+    userExaggerate = e.detail;
+    if (user3DTerrain) {
+        // Re-apply terrain with new exaggeration setting
+        ensureTerrain();
+    }
+});
+
+function update3DBuildings() {
+    try {
+        map.setConfigProperty('basemap', 'show3dObjects', user3DBuildings);
+        is3dEnabled = user3DBuildings;
+    } catch (err) {
+        console.warn('[Map] Failed to update 3D buildings:', err.message);
+    }
+}
+
+function update3DTerrain() {
+    if (user3DTerrain) {
+        ensureTerrain();
+    } else {
+        try {
+            map.setTerrain(null);
+            console.log('[Map] 3D Terrain: disabled');
+        } catch (err) {
+            console.warn('[Map] Failed to disable terrain:', err.message);
+        }
+    }
+}
+
+// Initialize on Load
+function initMapFeatures() {
+    try {
+        update3DBuildings();
+        update3DTerrain();
+    } catch (err) {
+        console.error('[Map] Failed to init features:', err);
+    }
+}
+
+if (map.isStyleLoaded()) {
+    initMapFeatures();
+} else {
+    map.on('style.load', initMapFeatures);
+}
+
+map.on('load', () => {
+    console.log('[Map] Initializing features on load...');
+    initMapFeatures();
+
+    // Robustness: Retry initialization a few times to catch style loading races
+    setTimeout(() => {
+        console.log('[Map] First retry initialization...');
+        initMapFeatures();
+    }, 1000);
+
+    setTimeout(() => {
+        console.log('[Map] Second retry initialization...');
+        initMapFeatures();
+    }, 3000);
+});
+
+// Safari fix: The Mapbox Standard style can override our terrain settings during its
+// complex loading sequence (multiple styledata events). We need to aggressively
+// re-apply our terrain exaggeration whenever the style updates.
+map.on('styledata', () => {
+    // Use a small delay to ensure style internal overrides have finished
+    setTimeout(() => {
+        if (user3DTerrain) {
+            ensureTerrain();
+        }
+    }, 50);
+});
+
 map.on('styleimagemissing', (e) => {
     const id = e.id;
     if (id === 'stop-selected-icon') {
@@ -169,7 +354,7 @@ const geolocate = new mapboxgl.GeolocateControl({
         timeout: 15000 // Increased for mobile reliability
     },
     trackUserLocation: true,
-    showUserHeading: false,
+    showUserHeading: true, // Always request heading - indicator only shows when compass data is available
     showAccuracyCircle: true
 });
 
@@ -185,6 +370,14 @@ let lastLocateClickTime = 0;
 let lastUserCoords = null;
 let isUserInteracting = false;
 let isUserRotating = false;
+let isDragging = false; // Explicit flag for drag gesture
+let isPitching = false; // Explicit flag for pitch/tilt gesture
+let isReCentering = false; // Moved to module scope for geolocate handler access
+
+// Listen for programmatic pitch from 3D toggle button
+window.addEventListener('programmaticPitch', (e) => {
+    isPitching = e.detail;
+});
 
 geolocate.on('error', (e) => {
     const error = e.error || e;
@@ -194,10 +387,20 @@ geolocate.on('error', (e) => {
 
     console.error('[Location] Error:', { code, message, timeSinceClick, original: e });
 
-    // State reset
-    currentLocationState = LOCATION_STATES.OFF;
-    const locateBtn = document.getElementById('locate-me');
-    if (locateBtn) updateLocationIcon(locateBtn);
+    // Guard: Don't reset state if this is a quick error during initial trigger
+    // (user clicked, we set FOLLOW, but permission was denied before first geolocate event)
+    // We only reset if we were actually tracking (had received at least one position)
+    const wasTracking = lastUserCoords !== null;
+
+    if (!wasTracking && timeSinceClick < 3000) {
+        console.log('[Location] Ignoring error during initial permission request');
+        // Don't reset - let the explicit permission dialog error handlers do that
+    } else {
+        // State reset
+        currentLocationState = LOCATION_STATES.OFF;
+        const locateBtn = document.getElementById('locate-me');
+        if (locateBtn) updateLocationIcon(locateBtn);
+    }
 
     // 1. Silent rejection check (iOS / Safari / Unsecure context)
     if (!code && !message && timeSinceClick < 3000) {
@@ -254,31 +457,97 @@ function startPersistentOrientationTracking() {
         if (heading === undefined || heading === null) return;
         latestHeading = heading;
 
-        // Apply to map ONLY if we are in HEADING state and NOT manually rotating
-        if (currentLocationState === LOCATION_STATES.HEADING && !isUserRotating) {
-            map.setBearing(heading);
+        // Throttle bearing updates to once per 100ms to avoid race conditions with drag
+        const now = Date.now();
+        if (!onOrientation.lastUpdate || now - onOrientation.lastUpdate > 100) {
+            onOrientation.lastUpdate = now;
+            // Apply to map ONLY if we are in HEADING state and user is NOT interacting
+            // (Pitch/tilt is allowed - it doesn't affect center or bearing, but we skip during programmatic pitch)
+            if (currentLocationState === LOCATION_STATES.HEADING && !isUserRotating && !isUserInteracting && !isDragging && !isPitching && !isReCentering) {
+                map.easeTo({ bearing: heading, duration: 150, easing: (t) => t });
+            }
         }
     };
 
     window.addEventListener('deviceorientation', onOrientation);
     window.addEventListener('deviceorientationabsolute', onOrientation);
     isOrientationTrackingStarted = true;
-    console.log('[Location] Persistent orientation tracking started');
+}
+
+// Track if we're waiting for first location
+let isWaitingForFirstLocation = false;
+let isAutoShowingMarker = false; // Flag to show marker without centering
+
+// Auto-trigger location on launch if permission was already granted
+// Shows the location marker but doesn't enter follow mode or center the map
+if (navigator.permissions && navigator.permissions.query) {
+    navigator.permissions.query({ name: 'geolocation' }).then(result => {
+        if (result.state === 'granted') {
+            // Store original methods to restore later when user explicitly clicks locate
+            window._originalMapMethods = {
+                flyTo: map.flyTo.bind(map),
+                jumpTo: map.jumpTo.bind(map),
+                easeTo: map.easeTo.bind(map)
+            };
+
+            isAutoShowingMarker = true;
+            // Override map methods to prevent centering - stays until user clicks locate
+            map.flyTo = () => map; // No-op
+            map.jumpTo = () => map; // No-op
+            map.easeTo = () => map; // No-op
+
+            geolocate.trigger();
+
+            // Don't restore methods here - they'll be restored when user clicks locate button
+
+            // Probe for compass data to show heading indicator if available
+            let hasRealCompass = false;
+            const probeHandler = (e) => {
+                const hasAlpha = e.alpha !== null && e.alpha !== undefined;
+                const hasHeading = e.webkitCompassHeading !== null && e.webkitCompassHeading !== undefined;
+                if (hasAlpha || hasHeading) {
+                    hasRealCompass = true;
+                    document.documentElement.classList.add('show-heading-indicator');
+                    window.removeEventListener('deviceorientation', probeHandler);
+                    window.removeEventListener('deviceorientationabsolute', probeHandler);
+                }
+            };
+            window.addEventListener('deviceorientation', probeHandler);
+            window.addEventListener('deviceorientationabsolute', probeHandler);
+
+            // Timeout: cleanup listeners (indicator is hidden by default, no action needed)
+            setTimeout(() => {
+                window.removeEventListener('deviceorientation', probeHandler);
+                window.removeEventListener('deviceorientationabsolute', probeHandler);
+            }, 1000);
+        }
+    }).catch(() => {
+        // Permissions API not supported or failed - don't auto-trigger
+    });
 }
 
 geolocate.on('geolocate', (e) => {
     const coords = e.coords;
     lastUserCoords = { lng: coords.longitude, lat: coords.latitude };
-    // We no longer auto-set FOLLOW here, as it overrides the user's manual OFF state.
-    // The state is managed by locateBtn clicks and fuzzy snap-back logic.
 
-    const locateBtn = document.getElementById('locate-me');
-    if (locateBtn) updateLocationIcon(locateBtn);
+    // If we were waiting for first location, now we can update the icon
+    if (isWaitingForFirstLocation) {
+        isWaitingForFirstLocation = false;
+        const locateBtn = document.getElementById('locate-me');
+        if (locateBtn) updateLocationIcon(locateBtn);
+    }
+
+    // If auto-showing marker, clear the flag and don't center
+    if (isAutoShowingMarker) {
+        isAutoShowingMarker = false;
+        return; // Skip centering the map
+    }
 
     // Persistence: If we are in FOLLOW or HEADING mode, ensure the map actually follows
     // even if Mapbox's internal "ACTIVE_LOCK" was broken by zoom/drag.
-    // Guard: Don't snap mid-drag or mid-rotation (let fuzzy logic handle end)
-    if ((currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING) && !isUserInteracting && !isUserRotating) {
+    // Guard: Don't snap mid-drag, mid-rotation, mid-zoom, mid-pitch, or during a re-centering animation
+    const shouldFollow = (currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING) && !isUserInteracting && !isUserRotating && !isDragging && !isPitching && !isReCentering;
+    if (shouldFollow) {
         map.easeTo({
             center: [coords.longitude, coords.latitude],
             duration: 100 // Short duration for a "sticky" feel
@@ -287,12 +556,10 @@ geolocate.on('geolocate', (e) => {
 });
 
 geolocate.on('trackuserlocationstart', () => {
-    console.log('[Location] Tracking handshake started...');
     // We wait for 'geolocate' event to turn the icon blue
 });
 
 geolocate.on('trackuserlocationend', () => {
-    console.log('[Location] Mapbox internal follow ended (Handled by app state)');
     // We let our own state machine (currentLocationState) and dragend fuzzy logic
     // determine when to actually turn off the blue marker icon.
 });
@@ -305,6 +572,18 @@ export const LOCATION_STATES = {
 
 export function isTrackingActive() {
     return currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING;
+}
+
+export function isUserInteractingWithMap() {
+    return isUserInteracting || isUserRotating;
+}
+
+export function stopTracking() {
+    if (currentLocationState !== LOCATION_STATES.OFF) {
+        currentLocationState = LOCATION_STATES.OFF;
+        const locateBtn = document.getElementById('locate-me');
+        if (locateBtn) updateLocationIcon(locateBtn);
+    }
 }
 
 const LOCATION_ICONS = {
@@ -320,7 +599,6 @@ let isHeadingSupported = false;
 function isSecureContext() {
     const isSecure = window.isSecureContext || window.location.hostname === 'localhost';
     const hasGeo = !!navigator.geolocation;
-    console.log('[Location] Security Probe:', { isSecure, hasGeo, protocol: window.location.protocol });
     return isSecure && hasGeo;
 }
 
@@ -369,14 +647,60 @@ export function setupMapControls() {
     checkHeadingSupport();
     updateLocationIcon(locateBtn);
 
-    document.getElementById('zoom-in')?.addEventListener('click', () => map.zoomIn());
-    document.getElementById('zoom-out')?.addEventListener('click', () => map.zoomOut());
+    // Zoom buttons need to manually set interaction flag since programmatic zooms
+    // don't have originalEvent, so the guards in zoomstart won't activate
+    document.getElementById('zoom-in')?.addEventListener('click', () => {
+        isUserInteracting = true;
+        map.zoomIn();
+        map.once('zoomend', () => { isUserInteracting = false; });
+    });
+    document.getElementById('zoom-out')?.addEventListener('click', () => {
+        isUserInteracting = true;
+        map.zoomOut();
+        map.once('zoomend', () => { isUserInteracting = false; });
+    });
+
+    // Hook into touch events directly on the map canvas to set flags EARLY
+    // (before Mapbox's internal handlers and before compass/geolocate can interfere)
+    const mapCanvas = map.getCanvas();
+    mapCanvas.addEventListener('touchstart', (e) => {
+        // Only set flags for single-finger touches (actual drags)
+        // Two-finger gestures (pitch/rotate) should not block compass updates
+        if (e.touches.length === 1) {
+            isUserInteracting = true;
+            isDragging = true;
+        }
+    }, { passive: true });
+    mapCanvas.addEventListener('touchend', () => {
+        // Small delay to let dragend fire first and do its calculations
+        setTimeout(() => {
+            isUserInteracting = false;
+            isDragging = false;
+        }, 50);
+    }, { passive: true });
+    mapCanvas.addEventListener('mousedown', () => {
+        isUserInteracting = true;
+        isDragging = true;
+    });
+    mapCanvas.addEventListener('mouseup', () => {
+        setTimeout(() => {
+            isUserInteracting = false;
+            isDragging = false;
+        }, 50);
+    });
 
     if (locateBtn) {
         locateBtn.addEventListener('click', () => {
-            console.log('[Location] Button Clicked. Current state:', currentLocationState);
-
             lastLocateClickTime = Date.now();
+
+            // Restore original map methods if they were overridden by auto-show
+            if (window._originalMapMethods) {
+                map.flyTo = window._originalMapMethods.flyTo;
+                map.jumpTo = window._originalMapMethods.jumpTo;
+                map.easeTo = window._originalMapMethods.easeTo;
+                delete window._originalMapMethods;
+                isAutoShowingMarker = false;
+            }
 
             // 1. Strict Security Guard & Probe
             if (!isSecureContext()) {
@@ -391,12 +715,68 @@ export function setupMapControls() {
 
             // 2. Action Logic
             if (currentLocationState === LOCATION_STATES.OFF) {
-                // Set FOLLOW state IMMEDIATELY for UI feedback
+                // Clear any stale interaction state from previous panning
+                interactionStartCenter = null;
+
+                // Set FOLLOW state and update icon
                 currentLocationState = LOCATION_STATES.FOLLOW;
                 updateLocationIcon(locateBtn);
 
-                // Request Follow - SYNC for iOS
-                geolocate.trigger();
+                // If we already have location from auto-show, just center the map
+                if (lastUserCoords) {
+                    map.easeTo({
+                        center: [lastUserCoords.lng, lastUserCoords.lat],
+                        duration: 500
+                    });
+                } else {
+                    // First time - need to trigger geolocate
+                    isWaitingForFirstLocation = true;
+                    geolocate.trigger();
+                }
+
+                // Also request compass permission and enable heading indicator (blue slice)
+                // This allows the user to see their heading direction from the start
+                const enableHeadingIndicator = () => {
+                    startPersistentOrientationTracking();
+
+                    // Track if we received valid compass data
+                    let hasRealCompass = false;
+
+                    // Probe for valid compass data
+                    const probeHandler = (e) => {
+                        const hasAlpha = e.alpha !== null && e.alpha !== undefined;
+                        const hasHeading = e.webkitCompassHeading !== null && e.webkitCompassHeading !== undefined;
+                        if (hasAlpha || hasHeading) {
+                            hasRealCompass = true;
+                            // Add the show class when compass detected
+                            document.documentElement.classList.add('show-heading-indicator');
+                            window.removeEventListener('deviceorientation', probeHandler);
+                            window.removeEventListener('deviceorientationabsolute', probeHandler);
+                        }
+                    };
+                    window.addEventListener('deviceorientation', probeHandler);
+                    window.addEventListener('deviceorientationabsolute', probeHandler);
+
+                    // Timeout: cleanup listeners (indicator is hidden by default)
+                    setTimeout(() => {
+                        window.removeEventListener('deviceorientation', probeHandler);
+                        window.removeEventListener('deviceorientationabsolute', probeHandler);
+                    }, 1000);
+                };
+
+                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    // iOS 13+ - needs explicit permission request
+                    DeviceOrientationEvent.requestPermission()
+                        .then(res => {
+                            if (res === 'granted') {
+                                enableHeadingIndicator();
+                            }
+                        })
+                        .catch(e => console.warn('[Location] Compass permission request failed:', e));
+                } else {
+                    // Non-iOS - just enable it directly
+                    enableHeadingIndicator();
+                }
             } else if (currentLocationState === LOCATION_STATES.FOLLOW) {
                 // To Heading - SYNC for iOS permission chain
                 const attemptHeadingTransition = () => {
@@ -487,30 +867,41 @@ export function setupMapControls() {
     }
 
     // Fuzzy Re-centering / Unfollow handler
-    let isReCentering = false;
+    let interactionStartCenter = null; // Track where the camera was when manual interaction started
+
     const handleInteractionEnd = () => {
         // If some other interaction is still active, don't snap back yet
         if (isUserInteracting || isUserRotating || isReCentering) return;
 
         const previousState = currentLocationState;
 
-        if (!lastUserCoords || currentLocationState === LOCATION_STATES.OFF) return;
+        if (currentLocationState === LOCATION_STATES.OFF) {
+            // Clear any stale interaction state when in OFF mode
+            interactionStartCenter = null;
+            return;
+        }
 
-        // Pixel-based snapback (consistent across zoom levels)
-        const userPixel = map.project([lastUserCoords.lng, lastUserCoords.lat]);
-        const centerPixel = map.project(map.getCenter());
-        const dx = userPixel.x - centerPixel.x;
-        const dy = userPixel.y - centerPixel.y;
-        const pixelDist = Math.sqrt(dx * dx + dy * dy);
+        // Calculate how much the USER manually moved the map
+        // (Ignoring programmatic moves like flying animations)
+        let manualPixelDist = 0;
+        let wasManualInteraction = false;
+        if (interactionStartCenter) {
+            wasManualInteraction = true;
+            const currentCenterPixel = map.project(map.getCenter());
+            const startCenterPixel = map.project(interactionStartCenter);
+            const dx = currentCenterPixel.x - startCenterPixel.x;
+            const dy = currentCenterPixel.y - startCenterPixel.y;
+            manualPixelDist = Math.sqrt(dx * dx + dy * dy);
+            interactionStartCenter = null; // Reset for next time
+        }
 
-        // If within 40px, snap back to the state we were in (FOLLOW or HEADING)
-        // Guard: If distance is negligible (< 1px), don't trigger easeTo to avoid event loops/spam
-        if (pixelDist < 40) {
-            if (pixelDist > 1) {
-                // Silencing fuzzy match log as well to avoid spam during drag
-                currentLocationState = previousState;
-                updateLocationIcon(locateBtn);
+        // 1. If it was a programmatic move (like the initial "Locate Me" flyTo),
+        // or a very small manual nudge (< 40px), we stay in the tracking state.
+        if (!wasManualInteraction || manualPixelDist < 40) {
+            // State is already correct, no change needed
 
+            // Only attempt to snap back if we have accurate coords AND the center actually moved
+            if (lastUserCoords && wasManualInteraction && manualPixelDist > 1) {
                 const options = {
                     center: [lastUserCoords.lng, lastUserCoords.lat],
                     duration: 500
@@ -531,14 +922,9 @@ export function setupMapControls() {
                 map.once('moveend', () => {
                     isReCentering = false;
                 });
-            } else {
-                // Already centered enough, just restore state silently
-                currentLocationState = previousState;
-                updateLocationIcon(locateBtn);
             }
         } else {
-            // Truly dragged or zoomed away
-            console.log('[Location] Detaching (Distance:', Math.round(pixelDist), 'px)');
+            // 2. Truly dragged away significantly (> 40px manual camera shift)
             currentLocationState = LOCATION_STATES.OFF;
             updateLocationIcon(locateBtn);
         }
@@ -546,42 +932,75 @@ export function setupMapControls() {
 
     // Manual interruption detection
     // Note: We use e.originalEvent to distinguish manual gestures from zoom buttons
+    let wasManualRotation = false; // Track if the current rotation started from user gesture
+
+    const startManualInteraction = () => {
+        if (!interactionStartCenter) {
+            interactionStartCenter = map.getCenter();
+        }
+    };
+
     map.on('dragstart', (e) => {
+        console.log('[Drag] dragstart, originalEvent:', !!e.originalEvent);
         if (e.originalEvent) {
             isUserInteracting = true;
-            console.log('[Location] Manual drag started');
+            isDragging = true;
+            startManualInteraction();
+            console.log('[Drag] flags set: isUserInteracting=true, isDragging=true');
         }
     });
 
     map.on('rotatestart', (e) => {
         if (e.originalEvent) {
             isUserRotating = true;
-            console.log('[Location] Manual rotation started');
+            wasManualRotation = true; // Track that this was a manual rotation
+            startManualInteraction();
         }
     });
 
     map.on('zoomstart', (e) => {
         if (e.originalEvent) {
             isUserInteracting = true;
-            console.log('[Location] Manual zoom started');
+            startManualInteraction();
         }
     });
 
     map.on('zoomend', () => {
         isUserInteracting = false;
-        handleInteractionEnd();
+        // Zoom no longer triggers detachment
+        if (currentLocationState !== LOCATION_STATES.OFF) {
+            handleInteractionEnd();
+        }
     });
     map.on('dragend', () => {
         isUserInteracting = false;
+        isDragging = false;
         handleInteractionEnd();
     });
     map.on('rotateend', () => {
         isUserRotating = false;
-        handleInteractionEnd();
+        // If user manually rotated in HEADING mode, disengage HEADING (go to FOLLOW)
+        // This allows free rotation while still tracking location
+        if (wasManualRotation) {
+            wasManualRotation = false;
+            if (currentLocationState === LOCATION_STATES.HEADING) {
+                currentLocationState = LOCATION_STATES.FOLLOW;
+                updateLocationIcon(document.getElementById('locate-me'));
+                // Don't call handleInteractionEnd - we've already handled the state change
+            } else if (currentLocationState !== LOCATION_STATES.OFF) {
+                handleInteractionEnd();
+            }
+        }
     });
 
-    map.on('pitchstart', () => {
-        // Tilting allowed as per user request
+    map.on('pitchstart', (e) => {
+        if (e.originalEvent) {
+            isPitching = true;
+        }
+    });
+
+    map.on('pitchend', () => {
+        isPitching = false;
     });
 }
 
@@ -631,7 +1050,7 @@ export async function loadImages(map) {
         {
             id: 'stop-icon',
             sdf: false,
-            svg: `<svg width="${33 * ICON_SCALE}" height="${33 * ICON_SCALE}" viewBox="0 0 33 33" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="16.5" cy="16.5" r="14.5" fill="#333333" stroke="white" stroke-width="4"/></svg>`
+            svg: `<svg width="${53 * ICON_SCALE}" height="${53 * ICON_SCALE}" viewBox="0 0 53 53" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="26.5" cy="26.5" r="24.5" fill="black" stroke="white" stroke-width="4"/></svg>`
         },
         {
             id: 'stop-close-up-icon',
@@ -729,7 +1148,7 @@ export function addStopsToMap(stops, options = {}) {
     const { redirectMap, filterManager, updateConnectionLine } = options;
 
     // Cleanup existing layers/sources
-    const layers = ['metro-layer-label', 'metro-layer-circle', 'metro-transfer-layer', 'metro-lines-layer', 'stops-layer', 'stops-layer-hit-target', 'stops-layer-circle', 'stops-layer-glow', 'stops-label-selected', 'stops-highlight', 'filter-connection-line'];
+    const layers = ['metro-layer-label', 'metro-layer-circle', 'metro-transfer-layer', 'metro-layer-overlay', 'metro-lines-layer', 'stops-layer', 'stops-layer-hit-target', 'stops-layer-circle', 'stops-layer-glow', 'stops-label-selected', 'stops-highlight', 'filter-connection-line'];
     const sources = ['metro-stops', 'metro-lines-manual', 'stops', 'selected-stop', 'filter-connection'];
 
     layers.forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
@@ -814,7 +1233,7 @@ export function addStopsToMap(stops, options = {}) {
         type: 'symbol',
         source: 'selected-stop',
         layout: {
-            'icon-image': ['case', ['>', ['get', 'bearing'], 0], 'stop-selected-icon', 'stop-icon'],
+            'icon-image': ['case', ['>', ['coalesce', ['get', 'bearing'], 0], 0], 'stop-selected-icon', 'stop-icon'],
             'icon-size': ['case', ['==', ['get', 'mode'], 'SUBWAY'], 1.5, 1.2],
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
@@ -986,6 +1405,9 @@ let lastHoveredStopId = null;
 let hoverTimeout = null;
 
 export function updateStopHoverEffects(hoveredId) {
+    // If a stop is currently selected (Focused Session), do NOT reset global opacity.
+    if (window.currentStopId) return;
+
     if (!map || !map.getStyle()) return;
     const isDark = document.body.classList.contains('dark-mode');
 
@@ -1048,14 +1470,38 @@ function proximitySort(features, point) {
 }
 
 export function setupHoverHandlers(context) {
-    const { ALL_STOP_LAYERS, setFilterOpacity } = context;
+    const { ALL_STOP_LAYERS, setFilterOpacity, filterManager } = context;
 
     map.on('mousemove', ALL_STOP_LAYERS, (e) => {
         if (window.ignoreMapClicks || window.isPickModeActive) return;
+
+        // Filter out unreachable stops if Filter is Active
+        let features = e.features;
+        if (filterManager && (filterManager.state.active || filterManager.state.picking)) {
+            const reachable = filterManager.state.reachableStopIds;
+            features = features.filter(f => {
+                const id = f.properties.id;
+                // Keep Origin, Reachable, or Target (though targets are usually reachable)
+                return id === filterManager.state.originId || reachable.has(id);
+            });
+            if (features.length === 0) {
+                map.getCanvas().style.cursor = '';
+                return;
+            }
+        }
+
         map.getCanvas().style.cursor = 'pointer';
 
-        const sorted = proximitySort(e.features, e.point);
-        const bestFeature = sorted ? sorted[0] : null;
+        // Prioritize Metro Features
+        const metroFeature = features.find(f => f.layer.id.startsWith('metro-'));
+
+        let bestFeature;
+        if (metroFeature) {
+            bestFeature = metroFeature;
+        } else {
+            const sorted = proximitySort(features, e.point);
+            bestFeature = sorted ? sorted[0] : null;
+        }
 
         if (!bestFeature) return;
 
@@ -1090,7 +1536,19 @@ export function setupClickHandlers(context) {
     map.on('click', ALL_STOP_LAYERS, (e) => {
         if (window.ignoreMapClicks) return;
 
-        const sorted = proximitySort(e.features, e.point);
+        // Filter out unreachable stops if Filter is Active
+        let features = e.features;
+        if (filterManager && (filterManager.state.active || filterManager.state.picking)) {
+            const reachable = filterManager.state.reachableStopIds;
+            features = features.filter(f => {
+                const id = f.properties.id;
+                // Keep Origin, Reachable, or Target
+                return id === filterManager.state.originId || reachable.has(id);
+            });
+            if (features.length === 0) return;
+        }
+
+        const sorted = proximitySort(features, e.point);
         const bestFeature = sorted ? sorted[0] : null;
 
         if (!bestFeature) return;

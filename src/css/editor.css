@@ -117,23 +117,7 @@
     opacity: 1 !important;
 }
 
-#btn-edit-stop {
-    opacity: 0.6;
-}
-
-#btn-edit-stop:hover {
-    opacity: 1;
-}
-
-#btn-edit-stop.active {
-    background: var(--primary-light);
-    border-radius: 50%;
-    opacity: 1;
-}
-
-#btn-edit-stop.active img {
-    filter: brightness(0) invert(1);
-}
+/* Stop edit button uses base .icon-btn styles (same as route edit button) */
 
 /* --- Layout Helpers --- */
 .edit-row {

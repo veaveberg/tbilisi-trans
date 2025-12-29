@@ -76,26 +76,46 @@ body.dark-mode .scheduled-disclaimer {
     text-shadow: 0 0 2px #FE622C;
 }
 
+/* All Routes Container (wrapper around tiles) */
+.all-routes-container {
+    margin-top: 0;
+    margin-bottom: 16px;
+}
+
 /* Route Tiles */
 .route-tiles-container {
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-start;
-    gap: 8px;
+    gap: 6px;
 }
 
 .route-tile {
     background: var(--bg-secondary);
     border: none;
     border-radius: 6px;
-    padding: 4px 10px;
+    padding: 6px 0;
     font-weight: 600;
     font-size: 0.95rem;
     color: var(--text-main);
     cursor: pointer;
     transition: all 0.2s ease;
     text-align: center;
-    min-width: 0;
+    min-width: 42px;
+    max-width: 60px;
+    flex: 1 1 42px;
+}
+
+/* Invisible spacer to fill last row with same-width items */
+.route-tile-spacer {
+    min-width: 42px;
+    max-width: 60px;
+    flex: 1 1 42px;
+    height: 0;
+    padding: 0;
+    margin: 0;
+    visibility: hidden;
+    pointer-events: none;
 }
 
 .route-tile:hover {

@@ -21,7 +21,7 @@
 }
 
 /* Sheet States (Mobile) */
-@media (max-width: 768px) {
+@media (max-width: 600px) {
     .panel {
         transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         will-change: transform;
@@ -63,7 +63,7 @@
 }
 
 /* Desktop Styles (Sidebar) */
-@media (min-width: 769px) {
+@media (min-width: 601px) {
     .panel {
         left: 50% !important;
         margin-left: -225px !important;
@@ -132,6 +132,19 @@
     margin: 0;
     flex: 1;
     color: var(--text-main);
+}
+
+.header-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    width: 100%;
+    gap: 12px;
+}
+
+.header-title-container {
+    flex: 1;
+    min-width: 0;
 }
 
 #stop-name {

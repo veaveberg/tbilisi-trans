@@ -12,6 +12,8 @@
     padding: 8px;
     z-index: 2100;
     min-width: 220px;
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
     transform-origin: bottom right;
     transition: opacity 0.2s ease, transform 0.2s ease;
     display: flex;
@@ -45,7 +47,13 @@
 }
 
 .menu-item:hover {
-    background: var(--bg-secondary);
+    background: rgba(120, 120, 128, 0.12);
+    mix-blend-mode: multiply;
+}
+
+body.dark-mode .menu-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+    mix-blend-mode: normal;
 }
 
 .menu-icon {
@@ -67,13 +75,15 @@
 /* Theme Segmented Control */
 .theme-segmented-control {
     display: flex;
-    background: var(--bg-secondary);
+    background: rgba(120, 120, 128, 0.2);
+    mix-blend-mode: multiply;
     padding: 2px;
     border-radius: 8px;
     gap: 2px;
 }
 
 .theme-option {
+    flex: 1;
     padding: 6px 12px;
     border-radius: 6px;
     font-size: 13px;
@@ -82,6 +92,7 @@
     cursor: pointer;
     transition: all 0.2s ease;
     user-select: none;
+    text-align: center;
 }
 
 .theme-option:hover {
@@ -98,6 +109,11 @@
 body.dark-mode .theme-option.active {
     background: #636366;
     color: white;
+}
+
+body.dark-mode .theme-segmented-control {
+    background: rgba(255, 255, 255, 0.1);
+    mix-blend-mode: normal;
 }
 
 /* Toggle Switch */
@@ -122,7 +138,8 @@ body.dark-mode .theme-option.active {
     left: 0;
     right: 0;
     bottom: 0;
-    background-color: #e9e9ea;
+    background-color: rgba(120, 120, 128, 0.3);
+    mix-blend-mode: multiply;
     transition: .3s;
     border-radius: 34px;
 }
@@ -154,6 +171,7 @@ input:checked+.slider:before {
 
 body.dark-mode .slider {
     background-color: #39393d;
+    mix-blend-mode: normal;
 }
 
 body.dark-mode input:checked+.slider {
