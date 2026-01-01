@@ -168,6 +168,32 @@ async function processSource(source) {
     }
     process.stdout.write('\n');
 
+    // 2b. Fallback to V2 schedule for routes missing from V3
+    const routesWithSchedules = new Set(Object.keys(schedules).map(k => k.split('_')[0]));
+    const missingRoutes = guideRoutes.filter(r => !routesWithSchedules.has(r.id));
+    
+    if (missingRoutes.length > 0) {
+        console.log(`\nFetching V2 schedules for ${missingRoutes.length} routes missing from V3...`);
+        for (const route of missingRoutes) {
+            try {
+                const v2ScheduleUrl = `${API_BASE_URL}/routes/${route.id}/schedule?locale=en`;
+                const schedRes = await fetchWithRetry(v2ScheduleUrl, { headers });
+                if (schedRes.ok) {
+                    const schedData = await schedRes.json();
+                    // V2 schedules don't have pattern suffix, use a default key
+                    const key = `${route.id}_v2`;
+                    schedules[key] = schedData;
+                    console.log(`  ✓ Got V2 schedule for ${route.id} (${route.shortName})`);
+                } else {
+                    console.log(`  ✗ V2 schedule failed for ${route.id}: ${schedRes.status}`);
+                }
+            } catch (e) {
+                console.log(`  ✗ V2 schedule error for ${route.id}: ${e.message}`);
+            }
+            await sleep(100);
+        }
+    }
+
     // 3. Save Files
     for (const locale of LOCALES) {
         fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_stops_${locale}.json`), JSON.stringify(dataByLocale[locale].stops));

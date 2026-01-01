@@ -153,6 +153,7 @@ export const Router = {
         // Clean ID for URL: Remove "1:" prefix
         const cleanId = (id) => String(id).replace(/^1:/, '');
 
+        // Don't include mapHash for stop URLs - the stop ID leads to the correct location
         let url = `${this.base}stop${cleanId(stopId)}`;
 
         if (filterActive && targetIds && targetIds.length > 0) {
@@ -190,13 +191,7 @@ export const Router = {
      * Uses replaceState to avoid history pollution
      */
     updateMapLocation(hash) {
-        // Only update if we are at base (no stop selected)
-        // Check if current path matches base (ignoring trailing slash differences if any)
-        const currentPath = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
-        const basePath = this.base.endsWith('/') ? this.base : this.base + '/';
-
-        if (currentPath === basePath) {
-            history.replaceState(null, '', this.base + hash);
-        }
+        // Use replaceState to update hash without triggering popstate or adding history entries
+        history.replaceState(null, '', location.pathname + hash);
     }
 };

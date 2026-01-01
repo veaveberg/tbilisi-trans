@@ -14,29 +14,83 @@ const saveStopsPlugin = () => ({
     name: 'save-stops-middleware',
     configureServer(server) {
         console.log('Configuring Stop Config Save Middleware via Plugin...');
-        server.middlewares.use('/api/save-stops-config', (req, res, next) => {
+
+        // Backup helper function
+        const createBackup = (filePath, maxBackups = 10) => {
+            if (!fs.existsSync(filePath)) return;
+
+            const dir = path.dirname(filePath);
+            const backupDir = path.join(dir, 'backups');
+            const basename = path.basename(filePath, '.csv');
+
+            // Create backup directory if it doesn't exist
+            if (!fs.existsSync(backupDir)) {
+                fs.mkdirSync(backupDir, { recursive: true });
+            }
+
+            // Create timestamped backup
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const backupPath = path.join(backupDir, `${basename}_${timestamp}.csv`);
+            fs.copyFileSync(filePath, backupPath);
+            console.log(`[Backup] Created: ${path.basename(backupPath)}`);
+
+            // Clean up old backups (keep only the last N)
+            const backups = fs.readdirSync(backupDir)
+                .filter(f => f.startsWith(basename) && f.endsWith('.csv'))
+                .sort()
+                .reverse();
+
+            if (backups.length > maxBackups) {
+                backups.slice(maxBackups).forEach(oldBackup => {
+                    fs.unlinkSync(path.join(backupDir, oldBackup));
+                    console.log(`[Backup] Cleaned up old: ${oldBackup}`);
+                });
+            }
+        };
+
+        server.middlewares.use('/api/save-stops-config', async (req, res, next) => {
             console.log('[Middleware] Received request:', req.method, req.url);
             if (req.method === 'POST') {
                 let body = '';
                 req.on('data', chunk => body += chunk);
-                req.on('end', () => {
+                req.on('end', async () => {
                     try {
-                        // Ensure valid JSON
-                        JSON.parse(body);
-                        // Save to Source (for Git)
-                        const srcPath = path.resolve(__dirname, 'src/data/stops_config.json');
-                        console.log('[Middleware] Saving to Src:', srcPath);
-                        fs.writeFileSync(srcPath, body);
+                        // Parse incoming JSON (stopsConfig format)
+                        const config = JSON.parse(body);
 
-                        // Save to Public (for Immediate Serving)
-                        const publicPath = path.resolve(__dirname, 'public/data/stops_config.json');
-                        console.log('[Middleware] Saving to Public:', publicPath);
-                        fs.writeFileSync(publicPath, body);
+                        console.log('[Middleware] Received config with:');
+                        console.log('  - Overrides:', Object.keys(config.overrides || {}).length);
+                        console.log('  - Merges:', Object.keys(config.merges || {}).length);
+                        console.log('  - Hubs:', Object.keys(config.hubs || {}).length);
+
+                        // Detailed debug for overrides
+                        const overrideKeys = Object.keys(config.overrides || {});
+                        console.log('[Middleware] First 5 override keys:', overrideKeys.slice(0, 5));
+
+                        if (overrideKeys.length > 0) {
+                            const sampleKey = overrideKeys[0];
+                            console.log(`[Middleware] Sample override details for ${sampleKey}:`, JSON.stringify(config.overrides[sampleKey], null, 2));
+                        }
+
+
+                        // Convert to CSV format (Grouped by Tbilisi then Rustavi with separators)
+                        const { convertStopsConfigToCSV } = await import('./src/csv-converter.js');
+
+                        const csvPath = path.resolve(__dirname, 'public/data/stops_overrides.csv');
+
+                        // Create backup before saving
+                        createBackup(csvPath);
+
+                        const csvContent = await convertStopsConfigToCSV(config, csvPath);
+                        fs.writeFileSync(csvPath, csvContent);
+
+                        console.log('[Middleware] ✓ Save complete (public/data/stops_overrides.csv)');
 
                         res.statusCode = 200;
                         res.end('Saved');
                     } catch (e) {
                         console.error('[Middleware] Failed to save stops config:', e);
+                        console.error('[Middleware] Stack:', e.stack);
                         res.statusCode = 500;
                         res.end('Error: ' + e.message);
                     }
@@ -46,24 +100,27 @@ const saveStopsPlugin = () => ({
             }
         });
 
-        server.middlewares.use('/api/save-routes-config', (req, res, next) => {
+        server.middlewares.use('/api/save-routes-config', async (req, res, next) => {
             console.log('[Middleware] Received request:', req.method, req.url);
             if (req.method === 'POST') {
                 let body = '';
                 req.on('data', chunk => body += chunk);
-                req.on('end', () => {
+                req.on('end', async () => {
                     try {
-                        // Ensure valid JSON
-                        JSON.parse(body);
-                        // Save to Source (for Git)
-                        const srcPath = path.resolve(__dirname, 'src/data/routes_config.json');
-                        console.log('[Middleware] Saving to Src:', srcPath);
-                        fs.writeFileSync(srcPath, body);
+                        // Parse incoming JSON (routesConfig format)
+                        const config = JSON.parse(body);
 
-                        // Save to Public (for Immediate Serving)
-                        const publicPath = path.resolve(__dirname, 'public/data/routes_config.json');
-                        console.log('[Middleware] Saving to Public:', publicPath);
-                        fs.writeFileSync(publicPath, body);
+                        // Convert to CSV format
+                        const csvPath = path.resolve(__dirname, 'public/data/routes_overrides.csv');
+
+                        // Create backup before saving
+                        createBackup(csvPath);
+
+                        const { convertRoutesConfigToCSV } = await import('./src/csv-converter.js');
+                        const csvContent = await convertRoutesConfigToCSV(config, csvPath);
+
+                        console.log('[Middleware] Saving routes CSV to data/');
+                        fs.writeFileSync(csvPath, csvContent);
 
                         res.statusCode = 200;
                         res.end('Saved');
@@ -133,8 +190,14 @@ export default defineConfig({
     base: '/tbilisi-trans/', // For GitHub Pages
     server: {
         watch: {
-            // Prevent full reload when saving stops config
-            ignored: ['**/stops_config.json', '**/src/data/stops_config.json', '**/routes_config.json', '**/src/data/routes_config.json']
+            // Ignore the JSON/CSV data files to avoid infinite reload loops when script updates them
+            ignored: [
+                '**/public/data/*.json',
+                '**/public/data/stops_overrides_tbilisi.csv',
+                '**/public/data/stops_overrides_rustavi.csv',
+                '**/public/data/stops_overrides.csv',
+                '**/public/data/routes_overrides.csv'
+            ]
         },
         host: true, // Allow LAN access
         https: hasCert ? {

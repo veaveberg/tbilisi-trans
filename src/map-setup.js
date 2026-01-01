@@ -1,7 +1,7 @@
 import mapboxgl from 'mapbox-gl';
 import * as api from './api.js';
 import * as metro from './metro.js';
-import stopBearings from './data/stop_bearings.json';
+import stopRotations from './data/stop_bearings.json';
 
 // Initialize Map
 mapboxgl.accessToken = api.MAPBOX_TOKEN;
@@ -286,9 +286,15 @@ function initMapFeatures() {
     try {
         update3DBuildings();
         update3DTerrain();
+        hideShieldLayers();
     } catch (err) {
         console.error('[Map] Failed to init features:', err);
     }
+}
+
+// Reverted: decided to keep shields for now
+function hideShieldLayers() {
+    // No-op
 }
 
 if (map.isStyleLoaded()) {
@@ -298,17 +304,14 @@ if (map.isStyleLoaded()) {
 }
 
 map.on('load', () => {
-    console.log('[Map] Initializing features on load...');
     initMapFeatures();
 
     // Robustness: Retry initialization a few times to catch style loading races
     setTimeout(() => {
-        console.log('[Map] First retry initialization...');
         initMapFeatures();
     }, 1000);
 
     setTimeout(() => {
-        console.log('[Map] Second retry initialization...');
         initMapFeatures();
     }, 3000);
 });
@@ -941,12 +944,10 @@ export function setupMapControls() {
     };
 
     map.on('dragstart', (e) => {
-        console.log('[Drag] dragstart, originalEvent:', !!e.originalEvent);
         if (e.originalEvent) {
             isUserInteracting = true;
             isDragging = true;
             startManualInteraction();
-            console.log('[Drag] flags set: isUserInteracting=true, isDragging=true');
         }
     });
 
@@ -1154,7 +1155,7 @@ export function addStopsToMap(stops, options = {}) {
     layers.forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
     sources.forEach(id => { if (map.getSource(id)) map.removeSource(id); });
 
-    const { busStops, metroFeatures } = metro.processMetroStops(stops, stopBearings);
+    const { busStops, metroFeatures } = metro.processMetroStops(stops, stopRotations);
     const metroLines = metro.generateMetroLines(metroFeatures);
 
     map.addSource('stops', {
@@ -1212,9 +1213,9 @@ export function addStopsToMap(stops, options = {}) {
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
             'symbol-z-order': 'source',
-            'icon-image': ['case', ['==', ['get', 'bearing'], 0], 'stop-icon', 'stop-close-up-icon'],
+            'icon-image': ['case', ['==', ['get', 'rotation'], 0], 'stop-icon', 'stop-close-up-icon'],
             'icon-size': ['interpolate', ['linear'], ['zoom'], 15.2, 0.5, 16, 0.6, 18, 0.8],
-            'icon-rotate': ['get', 'bearing'],
+            'icon-rotate': ['get', 'rotation'],
             'icon-rotation-alignment': 'map'
         },
         paint: {
@@ -1233,11 +1234,11 @@ export function addStopsToMap(stops, options = {}) {
         type: 'symbol',
         source: 'selected-stop',
         layout: {
-            'icon-image': ['case', ['>', ['coalesce', ['get', 'bearing'], 0], 0], 'stop-selected-icon', 'stop-icon'],
+            'icon-image': ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], 'stop-selected-icon', 'stop-icon'],
             'icon-size': ['case', ['==', ['get', 'mode'], 'SUBWAY'], 1.5, 1.2],
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
-            'icon-rotate': ['coalesce', ['get', 'bearing'], 0],
+            'icon-rotate': ['coalesce', ['get', 'rotation'], 0],
             'icon-rotation-alignment': 'map'
         },
         paint: {
@@ -1553,7 +1554,13 @@ export function setupClickHandlers(context) {
 
         if (!bestFeature) return;
 
-        const stop = bestFeature.properties;
+        // Build stop object with coordinates from geometry (not in properties)
+        const coords = bestFeature.geometry.coordinates;
+        const stop = {
+            ...bestFeature.properties,
+            lon: coords[0],
+            lat: coords[1]
+        };
         console.log('[Map] Clicked:', stop.id, stop.name);
 
         if (filterManager && filterManager.state.picking) {

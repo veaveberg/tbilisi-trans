@@ -362,8 +362,8 @@ export function processMetroStops(stops, stopBearings = {}) {
 
     stops.forEach(stop => {
         // Inject Bearing
-        if (stop.bearing === undefined) {
-            stop.bearing = stopBearings[stop.id] || 0;
+        if (stop.rotation === undefined) {
+            stop.rotation = stopBearings[stop.id] || 0;
         }
 
         // Metro Check
@@ -419,7 +419,7 @@ export function processMetroStops(stops, stopBearings = {}) {
                     name: stop.name,
                     code: stop.code,
                     mode: stop.vehicleMode || 'BUS',
-                    bearing: stop.bearing
+                    rotation: stop.rotation
                 }
             });
         }

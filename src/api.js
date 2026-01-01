@@ -283,7 +283,10 @@ async function fetchStaticFallback(endpoint) {
         const stopRoutesMatch = pathname.match(/\/stops\/([^\/]+)\/routes/);
         if (stopRoutesMatch) {
             const requestedStopId = decodeURIComponent(stopRoutesMatch[1]);
-            const rawStopId = restoreApiId(requestedStopId, sourceConfig);
+            // For normalized local data, use the app ID directly
+            // Also try API format for backwards compatibility
+            const appStopId = processId(requestedStopId, sourceConfig);
+            const apiStopId = restoreApiId(requestedStopId, sourceConfig);
 
             try {
                 const masterRoutesRes = await fetch(`${basePath}data/${sourceId}_routes_${locale}.json`);
@@ -292,8 +295,11 @@ async function fetchStaticFallback(endpoint) {
                         const fallbackEn = await fetch(`${basePath}data/${sourceId}_routes_en.json`);
                         if (fallbackEn.ok) {
                             const enRoutes = await fallbackEn.json();
-                            const res = enRoutes.filter(r => (r.stops && r.stops.includes(rawStopId)) || (r.stops && r.stops.includes(rawStopId.replace('1:', ''))))
-                                .map(r => processRoute(r, sourceConfig));
+                            const res = enRoutes.filter(r => r.stops && (
+                                r.stops.includes(appStopId) ||
+                                r.stops.includes(apiStopId) ||
+                                r.stops.includes(requestedStopId)
+                            )).map(r => processRoute(r, sourceConfig));
                             res._sourceId = sourceId;
                             return res;
                         }
@@ -301,8 +307,11 @@ async function fetchStaticFallback(endpoint) {
                     throw new Error(`${sourceId} routes missing`);
                 }
                 const masterRoutes = await masterRoutesRes.json();
-                const res = masterRoutes.filter(r => (r.stops && r.stops.includes(rawStopId)) || (r.stops && r.stops.includes(rawStopId.replace('1:', ''))))
-                    .map(r => processRoute(r, sourceConfig));
+                const res = masterRoutes.filter(r => r.stops && (
+                    r.stops.includes(appStopId) ||
+                    r.stops.includes(apiStopId) ||
+                    r.stops.includes(requestedStopId)
+                )).map(r => processRoute(r, sourceConfig));
                 res._sourceId = sourceId;
                 return res;
 
@@ -361,16 +370,21 @@ async function fetchStaticFallback(endpoint) {
         const routeMatch = pathname.match(/\/routes\/([^\/]+)(?:(\/.*)|$)/);
         if (routeMatch) {
             const rawRouteId = decodeURIComponent(routeMatch[1]);
+            const appRouteId = processId(rawRouteId, sourceConfig); // Normalized format for local data
             const subPath = routeMatch[2] || '';
 
             if (subPath.startsWith('/schedule')) {
                 const suffix = urlObj.searchParams.get('patternSuffix');
                 if (suffix) {
                     const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
-                    const key = `${rawRouteId}_${safeSuffix}`;
+                    const appKey = `${appRouteId}_${safeSuffix}`;
+                    const rawKey = `${rawRouteId}_${safeSuffix}`;
+                    // Fix: Also try with restored API ID for Rustavi routes (app uses rR835, data has 1:R835)
+                    const apiRouteId = restoreApiId(appRouteId, sourceConfig);
+                    const apiKey = `${apiRouteId}_${safeSuffix}`;
                     const cache = await getStaticCache(sourceId, 'schedules');
                     if (cache) {
-                        const lookup = cache[key] || cache[key.replace('1:', '')];
+                        const lookup = cache[appKey] || cache[rawKey] || cache[apiKey] || cache[rawKey.replace('1:', '')];
                         return lookup || null;
                     }
                 }
@@ -387,8 +401,12 @@ async function fetchStaticFallback(endpoint) {
                         let foundAny = false;
                         for (const suffix of suffixes) {
                             const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
-                            const key = `${rawRouteId}_${safeSuffix}`;
-                            const lookup = cache[key] || cache[key.replace('1:', '')];
+                            const appKey = `${appRouteId}_${safeSuffix}`;
+                            const rawKey = `${rawRouteId}_${safeSuffix}`;
+                            // Fix: Also try with restored API ID for Rustavi routes
+                            const apiRouteId = restoreApiId(appRouteId, sourceConfig);
+                            const apiKey = `${apiRouteId}_${safeSuffix}`;
+                            const lookup = cache[appKey] || cache[rawKey] || cache[apiKey] || cache[rawKey.replace('1:', '')];
                             if (lookup) {
                                 Object.assign(result, lookup);
                                 foundAny = true;
@@ -404,8 +422,9 @@ async function fetchStaticFallback(endpoint) {
                 const filename = `${sourceId}_routes_details_${locale}.json`;
                 const cache = await getStaticCache(sourceId, filename);
                 if (cache) {
-                    const rawIdNoPrefix = rawRouteId.replace('1:', '');
-                    const routeData = cache[rawRouteId] || cache[rawIdNoPrefix];
+                    // Fix: Also try with restored API ID for Rustavi routes
+                    const apiRouteId = restoreApiId(appRouteId, sourceConfig);
+                    const routeData = cache[appRouteId] || cache[rawRouteId] || cache[apiRouteId] || cache[rawRouteId.replace('1:', '')];
                     if (routeData && routeData._stopsOfPatterns) {
                         const rawPatterns = routeData._stopsOfPatterns;
                         if (Array.isArray(rawPatterns)) {
@@ -428,8 +447,7 @@ async function fetchStaticFallback(endpoint) {
                 const filename = `${sourceId}_routes_details_${locale}.json`;
                 const cache = await getStaticCache(sourceId, filename);
                 if (cache) {
-                    const rawIdNoPrefix = rawRouteId.replace('1:', '');
-                    const routeData = cache[rawRouteId] || cache[rawIdNoPrefix];
+                    const routeData = cache[appRouteId] || cache[rawRouteId] || cache[rawRouteId.replace('1:', '')];
                     if (routeData && routeData.stops) {
                         return routeData.stops.map(sid => processId(sid, sourceConfig));
                     }
@@ -441,8 +459,7 @@ async function fetchStaticFallback(endpoint) {
                 const filename = `${sourceId}_routes_details_${locale}.json`;
                 const cache = await getStaticCache(sourceId, filename);
                 if (cache) {
-                    const rawIdNoPrefix = rawRouteId.replace('1:', '');
-                    const routeData = cache[rawRouteId] || cache[rawIdNoPrefix];
+                    const routeData = cache[appRouteId] || cache[rawRouteId] || cache[rawRouteId.replace('1:', '')];
                     if (routeData) {
                         return processRoute(routeData, sourceConfig);
                     }
@@ -595,25 +612,37 @@ function getSeparator(source) {
 export function processId(id, source) {
     if (!id || typeof id !== 'string') return id;
     let finalId = id;
-    // 1. Strip internal prefix (e.g. "1:")
-    if (source.stripPrefix && finalId.startsWith(source.stripPrefix)) {
+    // 1. Strip internal prefixes (e.g. "1:", "2:")
+    if (source.stripPrefixes && Array.isArray(source.stripPrefixes)) {
+        for (const prefix of source.stripPrefixes) {
+            if (finalId.startsWith(prefix)) {
+                finalId = finalId.slice(prefix.length);
+                break;
+            }
+        }
+    } else if (source.stripPrefix && finalId.startsWith(source.stripPrefix)) {
         finalId = finalId.slice(source.stripPrefix.length);
     }
     // 2. Add source prefix (e.g. "r")
     if (source.prefix) {
         const sep = getSeparator(source);
-        const prefixMatch = source.prefix.toLowerCase() + sep;
-        if (!finalId.toLowerCase().startsWith(prefixMatch)) {
+        const prefixMatch = source.prefix + sep;
+        // Use case-sensitive matching when separator is empty to avoid
+        // confusing 'R826' with 'r'-prefixed IDs
+        const hasPrefix = sep === ''
+            ? finalId.startsWith(prefixMatch)
+            : finalId.toLowerCase().startsWith(prefixMatch.toLowerCase());
+        if (!hasPrefix) {
             finalId = source.prefix + sep + finalId;
         }
     }
     return finalId;
 }
 
-function restoreApiId(id, source) {
+export function restoreApiId(id, source) {
     if (!id || typeof id !== 'string') return id;
     let apiId = id;
-    // 1. Remove source prefix
+    // 1. Remove source prefix (e.g. 'r' from 'r123')
     if (source.prefix) {
         const sep = getSeparator(source);
         const prefixMatch = source.prefix.toLowerCase() + sep;
@@ -621,13 +650,62 @@ function restoreApiId(id, source) {
             apiId = apiId.slice(prefixMatch.length);
         }
     }
-    // 2. Re-add internal prefix
-    if (source.stripPrefix) {
+
+    // 2. Strip ANY existing internal prefixes (e.g. '1:', '2:') before re-adding primary
+    if (source.stripPrefixes && Array.isArray(source.stripPrefixes)) {
+        for (const prefix of source.stripPrefixes) {
+            if (apiId.startsWith(prefix)) {
+                apiId = apiId.slice(prefix.length);
+                break;
+            }
+        }
+    } else if (source.stripPrefix && apiId.startsWith(source.stripPrefix)) {
+        apiId = apiId.slice(source.stripPrefix.length);
+    }
+
+    // 3. Re-add primary internal prefix
+    if (source.stripPrefixes && Array.isArray(source.stripPrefixes) && source.stripPrefixes.length > 0) {
+        const primaryPrefix = source.stripPrefixes[0];
+        if (!apiId.startsWith(primaryPrefix)) {
+            apiId = primaryPrefix + apiId;
+        }
+    } else if (source.stripPrefix) {
         if (!apiId.startsWith(source.stripPrefix)) {
             apiId = source.stripPrefix + apiId;
         }
     }
     return apiId;
+}
+
+/**
+ * Restores a "fully qualified" API ID from an internal app ID.
+ * e.g. "r123" -> "2:123", "811" -> "1:811"
+ */
+export function getApiId(id) {
+    if (!id || typeof id !== 'string') return id;
+
+    // Check if it already has a known API prefix
+    for (const source of sources) {
+        if (source.stripPrefixes) {
+            for (const p of source.stripPrefixes) {
+                if (id.startsWith(p)) return id;
+            }
+        }
+    }
+
+    // Try finding the source that matches this internal ID
+    for (const source of sources) {
+        const sep = source.separator !== undefined ? source.separator : ':';
+        if (source.prefix && id.startsWith(source.prefix + sep)) {
+            return restoreApiId(id, source);
+        }
+    }
+
+    // Fallback: if no source prefix, try Tbilisi primary
+    const tbilisi = sources.find(s => s.id === 'tbilisi');
+    if (tbilisi) return restoreApiId(id, tbilisi);
+
+    return id;
 }
 
 function processStop(stop, source) {
@@ -808,7 +886,13 @@ async function fetchFromSmartSource(configFn, id, options = {}) {
         // If ID HAS a prefix, ensure it matches the current source
         else {
             const idSep = idPrefix === 'r' ? '' : ':';
-            const matchedSource = sources.find(s => s.prefix === idPrefix || s.stripPrefix === idPrefix + idSep);
+            const matchedSource = sources.find(s => {
+                if (s.prefix === idPrefix) return true;
+                if (s.stripPrefixes && Array.isArray(s.stripPrefixes)) {
+                    return s.stripPrefixes.some(p => p === idPrefix + idSep);
+                }
+                return s.stripPrefix === idPrefix + idSep;
+            });
             if (matchedSource && matchedSource.id !== source.id) {
                 // console.log(`[SmartFetch] Skipping ${source.id} for ID ${id} (Expected ${matchedSource.id})`);
                 continue;
@@ -1085,7 +1169,35 @@ export async function fetchRoutePolylineV3(routeId, patternSuffixes, options = {
 
     const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${encodeURIComponent(id)}/polylines?patternSuffixes=${encodeURIComponent(realSuffixesStr)}`;
 
-    const polylineData = await fetchFromSmartSource(urlGen, routeId, options);
+    let polylineData = null;
+    try {
+        polylineData = await fetchFromSmartSource(urlGen, routeId, options);
+    } catch (e) {
+        // API failed (e.g. 500 error) - fall back to local static data
+        console.log(`[API] Polyline API failed for ${routeId}, trying local fallback...`);
+
+        // Determine source from routeId
+        const sourceId = routeId.startsWith('r') ? 'rustavi' : 'tbilisi';
+        const sourceConfig = sources.find(s => s.id === sourceId);
+        const appRouteId = processId(routeId, sourceConfig);
+
+        const cache = await getStaticCache(sourceId, 'polylines');
+        if (cache) {
+            polylineData = {};
+            for (const suffix of realSuffixesSet) {
+                const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
+                const key = `${appRouteId}_${safeSuffix}`;
+                if (cache[key]) {
+                    Object.assign(polylineData, cache[key]);
+                }
+            }
+            if (Object.keys(polylineData).length > 0) {
+                console.log(`[API] Loaded polylines from local fallback for ${routeId}`);
+            } else {
+                polylineData = null;
+            }
+        }
+    }
 
     // 2. Fan-out results to aliases with Slicing!
     if (polylineData) {
@@ -1268,7 +1380,37 @@ export async function fetchScheduleForStop(routeId, stopIds) {
                     console.warn(`[API Debug] No patterns found in route details for ${routeId}`);
                     return [];
                 } catch (e) {
-                    console.warn(`[Schedule] Failed to load patterns for ${routeId}:`, e);
+                    console.warn(`[Schedule] Failed to load patterns from API for ${routeId}:`, e.message);
+
+                    // Fallback: Try to load from static route details
+                    try {
+                        const isRustavi = /^[rR]/.test(routeId) || routeId.toLowerCase().startsWith('rustavi:');
+                        const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
+                        const sourceConfig = sources.find(s => s.id === sourceId);
+                        const cache = await getStaticCache(sourceId, `${sourceId}_routes_details_en.json`);
+
+                        if (cache) {
+                            // Try multiple key formats
+                            const appRouteId = processId(routeId, sourceConfig);
+                            const apiRouteId = restoreApiId(appRouteId, sourceConfig);
+                            const routeData = cache[appRouteId] || cache[apiRouteId] || cache[routeId];
+
+                            if (routeData && routeData._stopsOfPatterns) {
+                                console.log(`[Schedule] Loaded ${routeData._stopsOfPatterns.length} patterns from static for ${routeId}`);
+                                // Process stops in patterns
+                                if (Array.isArray(routeData._stopsOfPatterns)) {
+                                    return routeData._stopsOfPatterns.map(p => ({
+                                        ...p,
+                                        stop: processStop(p.stop, sourceConfig)
+                                    }));
+                                }
+                                return routeData._stopsOfPatterns;
+                            }
+                        }
+                    } catch (fallbackErr) {
+                        console.warn(`[Schedule] Static patterns fallback also failed:`, fallbackErr.message);
+                    }
+
                     return [];
                 }
             })();
@@ -1309,15 +1451,21 @@ export async function fetchScheduleForStop(routeId, stopIds) {
         }
         const pId = String(p.stop.id);
         const pCode = String(p.stop.code || '');
+
+        // Helper: Normalize ID by stripping all prefixes (r, 1:, 2:, etc.)
+        const normalize = (id) => String(id).replace(/^[rR]/, '').replace(/^\d+:/, '');
+
         return stopIds.some(targetId => {
             const targetStr = String(targetId);
-            const targetClean = targetStr.includes(':') ? targetStr.split(':')[1] : targetStr;
-            const pIdClean = pId.includes(':') ? pId.split(':')[1] : pId;
 
-            // Strict Source-Aware Matching
-            // Since we normalized all pattern IDs to app format (e.g. r91) above, 
-            // exact match should work 99% of the time.
+            // 1. Exact match
             if (targetStr === pId) return true;
+
+            // 2. Normalized match (r426 === 1:426 after normalization)
+            if (normalize(targetStr) === normalize(pId)) return true;
+
+            // 3. Code match
+            if (pCode && normalize(pCode) === normalize(targetStr)) return true;
 
             // Transformed Match Backup (just in case targetId is raw?)
             // If targetId is 1:91 and pId is r91.
@@ -1410,24 +1558,44 @@ export async function fetchScheduleForStop(routeId, stopIds) {
                     return schRes;
                 } catch (e) {
                     // Fallback to Static Data
-                    console.warn(`[V3] Schedule API failed for ${routeId}, trying static fallback...`, e);
-                    // We need to know the source ID to fetch the correct static file.
-                    // fetchFromSmartSource would have found it if it worked, but here it failed.
-                    // We can try to guess from routeId or try all?
-                    // Better: `fetchFromSmartSource` *throws* if it can't find it.
-                    // So we catch here.
+                    console.warn(`[V3] Schedule API failed for ${routeId}, trying static fallback...`, e.message);
 
-                    // Try to load static schedules
-                    // Filename: tbilisi_routes_details_en.json (contains schedules?)
-                    // Actually, earlier comments said schedules might be in `getStaticCache`.
-                    // Let's try to load specific schedule from static cache if possible.
-                    // But static cache structure is weird.
+                    // Determine source from routeId
+                    const isRustavi = /^[rR]/.test(routeId) || routeId.toLowerCase().startsWith('rustavi:');
+                    const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
+                    const sourceConfig = sources.find(s => s.id === sourceId);
 
-                    // Simple fallback: Return empty or try to reconstruct?
-                    // If we fail here, we return null, and UI shows --:--.
-                    // User wants "more data". 
-                    // Let's ensure we at least return null gracefully to allow re-tries later?
-                    throw e;
+                    try {
+                        const cache = await getStaticCache(sourceId, 'schedules');
+                        if (cache) {
+                            // Build possible keys
+                            const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
+                            const appRouteId = processId(routeId, sourceConfig);
+                            const apiRouteId = restoreApiId(appRouteId, sourceConfig);
+
+                            const keys = [
+                                `${appRouteId}_${safeSuffix}`,
+                                `${apiRouteId}_${safeSuffix}`,
+                                `${routeId}_${safeSuffix}`,
+                                `${routeId.replace('1:', '')}_${safeSuffix}`,
+                                // Also try with _v2 suffix for V2 fallback data
+                                `${apiRouteId}_v2`,
+                                `${appRouteId}_v2`
+                            ];
+
+                            for (const key of keys) {
+                                if (cache[key]) {
+                                    console.log(`[V3] Static schedule found with key: ${key}`);
+                                    return cache[key];
+                                }
+                            }
+                            console.warn(`[V3] No static schedule found. Tried keys:`, keys.slice(0, 3));
+                        }
+                    } catch (fallbackErr) {
+                        console.warn(`[V3] Static fallback also failed:`, fallbackErr.message);
+                    }
+
+                    return null; // Return null instead of throwing to let UI show --:--
                 }
             })();
 
@@ -1452,5 +1620,9 @@ export async function fetchScheduleForStop(routeId, stopIds) {
         }
     }
 
-    return schedule;
+    // Return schedule with pattern suffix for direction detection
+    if (schedule) {
+        return { schedule, patternSuffix: suffix };
+    }
+    return null;
 }

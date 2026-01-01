@@ -5,7 +5,7 @@ import mapboxgl from 'mapbox-gl';
 let isEditing = false;
 let editState = {
     stopId: null,
-    overrides: {}, // { lat, lon, bearing }
+    overrides: {}, // { lat, lon, rotation }
     merges: [],    // [id1, id2...]
     mergeParent: null,
     unmerges: [],
@@ -426,12 +426,23 @@ async function saveRouteOverrides() {
         applyBtn.textContent = 'Saving...';
     }
 
+    const api = await import('./api.js');
+
+    // Create a cleaned version for saving with fully qualified API IDs
+    const saveRoutesConfig = {
+        routeOverrides: {}
+    };
+
+    Object.keys(window.routesConfig.routeOverrides || {}).forEach(id => {
+        saveRoutesConfig.routeOverrides[api.getApiId(id)] = window.routesConfig.routeOverrides[id];
+    });
+
     try {
-        console.log('[DevTools] Saving single route overrides...', JSON.stringify(window.routesConfig, null, 2));
+        console.log('[DevTools] Saving route overrides...', JSON.stringify(saveRoutesConfig, null, 2));
         const res = await fetch('/api/save-routes-config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(window.routesConfig, null, 2)
+            body: JSON.stringify(saveRoutesConfig, null, 2)
         });
 
         if (!res.ok) {
@@ -525,7 +536,7 @@ function initEditTools() {
     toggleRot.addEventListener('click', () => {
         toggleRot.classList.toggle('active');
         if (!toggleRot.classList.contains('active') && editState.overrides) {
-            delete editState.overrides.bearing;
+            delete editState.overrides.rotation;
         }
         updateEditMap();
         checkDirtyState();
@@ -683,7 +694,7 @@ function startEditing(stopId) {
         toggleLoc.classList.remove('active');
     }
 
-    if (editState.overrides.bearing !== undefined) {
+    if (editState.overrides.rotation !== undefined) {
         toggleRot.classList.add('active');
     } else {
         toggleRot.classList.remove('active');
@@ -747,7 +758,7 @@ function updateEditMap() {
     }
     if (isNaN(lat) || isNaN(lon)) return;
 
-    const bearing = editState.overrides.bearing !== undefined ? editState.overrides.bearing : (stop.bearing || 0);
+    const rotation = editState.overrides.rotation !== undefined ? editState.overrides.rotation : (stop.rotation || 0);
 
     // Always show the unified marker in Edit Mode
     let el;
@@ -768,7 +779,7 @@ function updateEditMap() {
             draggable: true,
         })
             .setLngLat([lon, lat])
-            .setRotation(bearing)
+            .setRotation(rotation)
             .setRotationAlignment('map')
             .addTo(_map);
 
@@ -793,7 +804,7 @@ function updateEditMap() {
                 if (newBearing >= 360) newBearing -= 360;
                 newBearing = Math.round(newBearing);
 
-                editState.overrides.bearing = newBearing;
+                editState.overrides.rotation = newBearing;
                 document.getElementById('edit-toggle-rot').classList.add('active');
                 editLocMarker.setRotation(newBearing);
                 checkDirtyState();
@@ -823,7 +834,7 @@ function updateEditMap() {
 
     } else {
         editLocMarker.setLngLat([lon, lat]);
-        editLocMarker.setRotation(bearing);
+        editLocMarker.setRotation(rotation);
     }
 }
 
@@ -1073,14 +1084,49 @@ async function saveEditChanges() {
         });
     }
 
+    const api = await import('./api.js');
+
+    // Create a cleaned version for saving with fully qualified API IDs
+    const saveStopsConfig = {
+        overrides: {},
+        merges: {},
+        hubs: {}
+    };
+
+    Object.keys(stopsConfig.overrides || {}).forEach(id => {
+        saveStopsConfig.overrides[api.getApiId(id)] = stopsConfig.overrides[id];
+    });
+
+    Object.keys(stopsConfig.merges || {}).forEach(id => {
+        saveStopsConfig.merges[api.getApiId(id)] = api.getApiId(stopsConfig.merges[id]);
+    });
+
+    Object.keys(stopsConfig.hubs || {}).forEach(hubId => {
+        // Hub IDs are internal (e.g. HUB_1_811), no need to getApiId for the key
+        saveStopsConfig.hubs[hubId] = (stopsConfig.hubs[hubId] || []).map(id => api.getApiId(id));
+    });
+
     try {
+        console.log('[DevTools] Sending save request with config:', {
+            overrides: Object.keys(saveStopsConfig.overrides).length,
+            merges: Object.keys(saveStopsConfig.merges).length,
+            hubs: Object.keys(saveStopsConfig.hubs).length,
+            sampleOverride: Object.keys(saveStopsConfig.overrides)[0]
+        });
+
         const res = await fetch('/api/save-stops-config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(stopsConfig, null, 2)
+            body: JSON.stringify(saveStopsConfig, null, 2)
         });
 
-        if (!res.ok) throw new Error('Save failed');
+        console.log('[DevTools] Save response:', res.status, res.statusText);
+
+        if (!res.ok) {
+            const errorText = await res.text();
+            console.error('[DevTools] Save failed with error:', errorText);
+            throw new Error('Save failed: ' + errorText);
+        }
 
         if (applyBtn) {
             applyBtn.textContent = 'Saved';
@@ -1123,7 +1169,7 @@ function checkDirtyState() {
 
     const latDirty = getVal(editState.overrides.lat) !== getVal(savedOverrides.lat);
     const lonDirty = getVal(editState.overrides.lon) !== getVal(savedOverrides.lon);
-    const bearDirty = getVal(editState.overrides.bearing) !== getVal(savedOverrides.bearing);
+    const bearDirty = getVal(editState.overrides.rotation) !== getVal(savedOverrides.rotation);
 
     const mergeDirty = currentParent !== savedParent;
     const unmergeDirty = editState.unmerges && editState.unmerges.length > 0;

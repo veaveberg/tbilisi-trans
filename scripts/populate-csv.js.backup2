@@ -1,0 +1,356 @@
+/**
+ * Populate CSV files with all routes and stops data from API
+ * Merges with existing overrides - overrides are preserved
+ * New routes/stops from API are added automatically
+ * Run with: node scripts/populate-csv.js
+ */
+
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// API configuration (same as prefetch scripts)
+const API_KEY = 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f';
+const HEADERS = {
+    'x-api-key': API_KEY,
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+    'Origin': 'https://transit.ttc.com.ge',
+    'Referer': 'https://transit.ttc.com.ge/'
+};
+
+// Fetch routes from API (both EN and KA)
+async function fetchRoutesFromAPI() {
+    console.log('Fetching routes from API...');
+
+    try {
+        const [routesEn, routesKa] = await Promise.all([
+            fetch('https://transit.ttc.com.ge/pis-gateway/api/v2/routes?locale=en', { headers: HEADERS }).then(r => r.json()),
+            fetch('https://transit.ttc.com.ge/pis-gateway/api/v2/routes?locale=ka', { headers: HEADERS }).then(r => r.json())
+        ]);
+
+        // Create map of routes with both languages
+        const routesMap = new Map();
+
+        routesEn.forEach(route => {
+            const id = route.id;
+            routesMap.set(id, {
+                id,
+                shortName: route.shortName || '',
+                longName_en: route.longName || '',
+                longName_ka: '',
+                dest0_en: '',
+                dest0_ka: '',
+                dest1_en: '',
+                dest1_ka: ''
+            });
+        });
+
+        routesKa.forEach(route => {
+            const id = route.id;
+            if (routesMap.has(id)) {
+                routesMap.get(id).longName_ka = route.longName || '';
+            }
+        });
+
+        console.log(`Fetched ${routesMap.size} routes from API`);
+        return Array.from(routesMap.values());
+    } catch (e) {
+        console.warn('Failed to fetch routes from API:', e.message);
+        return [];
+    }
+}
+
+// Fetch stops from API (both EN and KA)
+async function fetchStopsFromAPI() {
+    console.log('Fetching stops from API...');
+
+    try {
+        const [tStopsEn, tStopsKa, rStopsEn, rStopsKa] = await Promise.all([
+            fetch('https://transit.ttc.com.ge/pis-gateway/api/v2/stops?locale=en', { headers: HEADERS }).then(r => r.json()),
+            fetch('https://transit.ttc.com.ge/pis-gateway/api/v2/stops?locale=ka', { headers: HEADERS }).then(r => r.json()),
+            fetch('https://rustavi-transit.azrycloud.com/pis-gateway/api/v2/stops?locale=en', { headers: HEADERS }).then(r => r.json()),
+            fetch('https://rustavi-transit.azrycloud.com/pis-gateway/api/v2/stops?locale=ka', { headers: HEADERS }).then(r => r.json())
+        ]);
+
+        const stopsMap = new Map();
+
+        // Add Tbilisi stops
+        tStopsEn.forEach(s => {
+            const id = `1:${s.id}`;
+            stopsMap.set(id, {
+                id,
+                name_en: s.name || '',
+                name_ka: '',
+                lat: s.lat || '',
+                lon: s.lon || '',
+                bearing: s.bearing || 0
+            });
+        });
+
+        tStopsKa.forEach(s => {
+            const id = `1:${s.id}`;
+            if (stopsMap.has(id)) {
+                stopsMap.get(id).name_ka = s.name || '';
+            }
+        });
+
+        // Add Rustavi stops
+        rStopsEn.forEach(s => {
+            const id = `2:${s.id}`;
+            stopsMap.set(id, {
+                id,
+                name_en: s.name || '',
+                name_ka: '',
+                lat: s.lat || '',
+                lon: s.lon || '',
+                bearing: s.bearing || 0
+            });
+        });
+
+        rStopsKa.forEach(s => {
+            const id = `2:${s.id}`;
+            if (stopsMap.has(id)) {
+                stopsMap.get(id).name_ka = s.name || '';
+            }
+        });
+
+        console.log(`Fetched ${stopsMap.size} stops from API`);
+        return Array.from(stopsMap.values());
+    } catch (e) {
+        console.warn('Failed to fetch stops from API:', e.message);
+        return [];
+    }
+}
+
+// Fallback: Load stops from local files
+function loadStopsFromLocal() {
+    console.log('Loading stops from local files...');
+
+    const tStopsPath = path.resolve(__dirname, '../t_stops.json');
+    const rStopsPath = path.resolve(__dirname, '../r_stops.json');
+
+    let stops = [];
+
+    if (fs.existsSync(tStopsPath)) {
+        const tStops = JSON.parse(fs.readFileSync(tStopsPath, 'utf-8'));
+        stops = stops.concat(tStops.map(s => ({
+            id: `1:${s.id}`,
+            name_en: s.name || '',
+            name_ka: '',
+            lat: s.lat || '',
+            lon: s.lon || '',
+            bearing: s.bearing || 0
+        })));
+    }
+
+    if (fs.existsSync(rStopsPath)) {
+        const rStops = JSON.parse(fs.readFileSync(rStopsPath, 'utf-8'));
+        stops = stops.concat(rStops.map(s => ({
+            id: `2:${s.id}`,
+            name_en: s.name || '',
+            name_ka: '',
+            lat: s.lat || '',
+            lon: s.lon || '',
+            bearing: s.bearing || 0
+        })));
+    }
+
+    return stops;
+}
+
+// Load existing overrides
+function loadExistingOverrides(type) {
+    const paths = type === 'routes'
+        ? [
+            path.resolve(__dirname, '../src/data/routes_config.json'),
+            path.resolve(__dirname, '../public/data/routes_config.json')
+        ]
+        : [
+            path.resolve(__dirname, '../src/data/stops_config.json'),
+            path.resolve(__dirname, '../public/data/stops_config.json')
+        ];
+
+    for (const configPath of paths) {
+        if (fs.existsSync(configPath)) {
+            return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        }
+    }
+
+    return type === 'routes'
+        ? { routeOverrides: {} }
+        : { overrides: {}, merges: {}, hubs: {} };
+}
+
+// Convert to CSV
+function arrayToCSV(headers, rows) {
+    const escapeField = (field) => {
+        const str = String(field !== undefined && field !== null ? field : '');
+        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+            return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+    };
+
+    const lines = [headers.map(escapeField).join(',')];
+    rows.forEach(row => {
+        const values = headers.map(h => escapeField(row[h]));
+        lines.push(values.join(','));
+    });
+
+    return lines.join('\n');
+}
+
+// Main function
+async function main() {
+    console.log('Starting CSV population...\n');
+
+    // === ROUTES ===
+    console.log('Processing routes...');
+    let apiRoutes = await fetchRoutesFromAPI();
+    const routesConfig = loadExistingOverrides('routes');
+    const routeOverrides = routesConfig.routeOverrides || {};
+
+    // If API failed, create routes from existing overrides
+    if (apiRoutes.length === 0 && Object.keys(routeOverrides).length > 0) {
+        console.log('API failed, using existing overrides as source...');
+        apiRoutes = Object.keys(routeOverrides).map(id => {
+            // Add 1: prefix if not already present
+            const fullId = id.includes(':') ? id : `1:${id}`;
+            return {
+                id: fullId,
+                shortName: '',
+                longName_en: '',
+                longName_ka: '',
+                dest0_en: '',
+                dest0_ka: '',
+                dest1_en: '',
+                dest1_ka: ''
+            };
+        });
+    }
+
+    console.log(`Found ${apiRoutes.length} routes`);
+    console.log(`Found ${Object.keys(routeOverrides).length} existing overrides`);
+
+    // Merge API data with overrides
+    const routeRows = apiRoutes.map(route => {
+        const override = routeOverrides[route.id] || routeOverrides[route.id.split(':')[1]] || {};
+
+        return {
+            id: route.id,
+            shortName: route.shortName,
+            shortName_override: override.shortName || '',
+            longName_en: route.longName_en,
+            longName_en_override: override.longName?.en || '',
+            longName_ka: route.longName_ka,
+            longName_ka_override: override.longName?.ka || '',
+            longName_ru_override: override.longName?.ru || '',
+            dest0_en: route.dest0_en,
+            dest0_en_override: override.destinations?.[0]?.headsign?.en || '',
+            dest0_ka: route.dest0_ka,
+            dest0_ka_override: override.destinations?.[0]?.headsign?.ka || '',
+            dest0_ru_override: override.destinations?.[0]?.headsign?.ru || '',
+            dest1_en: route.dest1_en,
+            dest1_en_override: override.destinations?.[1]?.headsign?.en || '',
+            dest1_ka: route.dest1_ka,
+            dest1_ka_override: override.destinations?.[1]?.headsign?.ka || '',
+            dest1_ru_override: override.destinations?.[1]?.headsign?.ru || ''
+        };
+    });
+
+    const routesHeaders = [
+        'id', 'shortName', 'shortName_override',
+        'longName_en', 'longName_en_override',
+        'longName_ka', 'longName_ka_override',
+        'longName_ru_override',
+        'dest0_en', 'dest0_en_override',
+        'dest0_ka', 'dest0_ka_override',
+        'dest0_ru_override',
+        'dest1_en', 'dest1_en_override',
+        'dest1_ka', 'dest1_ka_override',
+        'dest1_ru_override'
+    ];
+
+    const routesCSV = arrayToCSV(routesHeaders, routeRows);
+    const routesPath = path.resolve(__dirname, '../public/assets/routes_overrides.csv');
+    fs.writeFileSync(routesPath, routesCSV);
+    console.log(`✓ Wrote ${routeRows.length} routes to routes_overrides.csv\n`);
+
+    // === STOPS ===
+    console.log('Processing stops...');
+    let apiStops = await fetchStopsFromAPI();
+
+    // If API failed, use local files
+    if (apiStops.length === 0) {
+        console.log('API failed, falling back to local files...');
+        apiStops = loadStopsFromLocal();
+    }
+
+    const stopsConfig = loadExistingOverrides('stops');
+    const stopOverrides = stopsConfig.overrides || {};
+    const merges = stopsConfig.merges || {};
+    const hubs = stopsConfig.hubs || {};
+
+    console.log(`Found ${apiStops.length} stops`);
+    console.log(`Found ${Object.keys(stopOverrides).length} existing overrides`);
+    console.log(`Found ${Object.keys(merges).length} merges`);
+    console.log(`Found ${Object.keys(hubs).length} hubs`);
+
+    // Merge API data with overrides
+    const stopRows = apiStops.map(stop => {
+        const override = stopOverrides[stop.id] || {};
+        const mergeParent = merges[stop.id] || '';
+
+        // Find hub
+        let hubTarget = '';
+        Object.keys(hubs).forEach(hubId => {
+            if (hubs[hubId].includes(stop.id)) {
+                hubTarget = hubId;
+            }
+        });
+
+        return {
+            id: stop.id,
+            name_en: stop.name_en,
+            name_en_override: override.name?.en || '',
+            name_ka: stop.name_ka,
+            name_ka_override: override.name?.ka || '',
+            name_ru_override: override.name?.ru || '',
+            lat: stop.lat,
+            lat_override: override.lat !== undefined ? override.lat : '',
+            lon: stop.lon,
+            lon_override: override.lon !== undefined ? override.lon : '',
+            bearing: stop.bearing,
+            bearing_override: override.bearing !== undefined ? override.bearing : '',
+            mergeParent: mergeParent,
+            hubTarget: hubTarget
+        };
+    });
+
+    const stopsHeaders = [
+        'id',
+        'name_en', 'name_en_override',
+        'name_ka', 'name_ka_override',
+        'name_ru_override',
+        'lat', 'lat_override',
+        'lon', 'lon_override',
+        'bearing', 'bearing_override',
+        'mergeParent', 'hubTarget'
+    ];
+
+    const stopsCSV = arrayToCSV(stopsHeaders, stopRows);
+    const stopsPath = path.resolve(__dirname, '../public/assets/stops_overrides.csv');
+    fs.writeFileSync(stopsPath, stopsCSV);
+    console.log(`✓ Wrote ${stopRows.length} stops to stops_overrides.csv\n`);
+
+    console.log('Done! CSV files populated successfully.');
+    console.log('\nYou can now edit these files in Excel/Numbers:');
+    console.log('- public/assets/routes_overrides.csv');
+    console.log('- public/assets/stops_overrides.csv');
+    console.log('\nRun this script again anytime to refresh API data while preserving overrides!');
+}
+
+main();

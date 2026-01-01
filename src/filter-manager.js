@@ -107,13 +107,13 @@ export class FilterManager {
             const targetZoom = 14;
 
             // Calculate Pan Offset
-            const bearing = (stop.bearing || 0) * (Math.PI / 180);
-            const distance = 500; // Increased to 500m per request
+            const rotation = (stop.rotation || 0) * (Math.PI / 180);
             const R = 6371e3;
             const lat1 = stop.lat * (Math.PI / 180);
             const lon1 = stop.lon * (Math.PI / 180);
-            const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distance / R) + Math.cos(lat1) * Math.sin(distance / R) * Math.cos(bearing));
-            const lon2 = lon1 + Math.atan2(Math.sin(bearing) * Math.sin(distance / R) * Math.cos(lat1), Math.cos(distance / R) - Math.sin(lat1) * Math.sin(lat2));
+            const distance = 500; // Increased to 500m per request
+            const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distance / R) + Math.cos(lat1) * Math.sin(distance / R) * Math.cos(rotation));
+            const lon2 = lon1 + Math.atan2(Math.sin(rotation) * Math.sin(distance / R) * Math.cos(lat1), Math.cos(distance / R) - Math.sin(lat1) * Math.sin(lat2));
 
             this.map.flyTo({
                 center: [lon2 * (180 / Math.PI), lat2 * (180 / Math.PI)],
