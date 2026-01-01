@@ -65,16 +65,27 @@ export class FilterManager {
         return Array.from(set);
     }
 
-    async toggleFilterMode(currentStopId, isPickModeActive, setEditPickMode) {
-        console.log('[FilterManager] toggleFilterMode. Active:', this.state.active, 'Picking:', this.state.picking, 'Stop:', currentStopId);
+    async toggleFilterMode(currentStopId, isPickModeActive, setEditPickMode, options = {}) {
+        const { forceEnable = false, skipFlyTo = false } = options;
+        console.log('[FilterManager] toggleFilterMode. Active:', this.state.active, 'Picking:', this.state.picking, 'Stop:', currentStopId, 'forceEnable:', forceEnable);
 
-        if (isPickModeActive) setEditPickMode(null);
+        if (isPickModeActive && setEditPickMode) setEditPickMode(null);
 
         if (this.state.active || this.state.picking) {
+            // If forceEnable is true and we're already filtering the same origin, don't toggle off
+            if (forceEnable && this.state.originId === currentStopId) {
+                console.log('[FilterManager] forceEnable: Already active for same origin, skipping toggle-off');
+                return;
+            }
+            // Normal toggle behavior - turn off
+            if (!forceEnable) {
+                this.clearFilter(currentStopId);
+                const btn = document.getElementById('filter-routes-toggle');
+                if (btn) btn.classList.remove('active');
+                return;
+            }
+            // forceEnable but different origin - clear and re-enable for new origin
             this.clearFilter(currentStopId);
-            const btn = document.getElementById('filter-routes-toggle');
-            if (btn) btn.classList.remove('active');
-            return;
         }
 
         if (!currentStopId) {
@@ -97,30 +108,33 @@ export class FilterManager {
         const panel = document.getElementById('info-panel');
         if (panel) this.uiCallbacks.setSheetState(panel, 'peek');
 
-        const allStops = this.dataProvider.getAllStops();
-        const stop = allStops.find(s => s.id === currentStopId);
-        if (stop) {
-            const currentZoom = this.map.getZoom();
+        // Only fly to stop if not skipped (deep links handle camera with fitBounds)
+        if (!skipFlyTo) {
+            const allStops = this.dataProvider.getAllStops();
+            const stop = allStops.find(s => s.id === currentStopId);
+            if (stop) {
+                const currentZoom = this.map.getZoom();
 
-            // Enforce Zoom 14 for filter view to provide context, unless user is manually deeper?
-            // User requested "zoom out somewhat", implying a standard context view.
-            const targetZoom = 14;
+                // Enforce Zoom 14 for filter view to provide context, unless user is manually deeper?
+                // User requested "zoom out somewhat", implying a standard context view.
+                const targetZoom = 14;
 
-            // Calculate Pan Offset
-            const rotation = (stop.rotation || 0) * (Math.PI / 180);
-            const R = 6371e3;
-            const lat1 = stop.lat * (Math.PI / 180);
-            const lon1 = stop.lon * (Math.PI / 180);
-            const distance = 500; // Increased to 500m per request
-            const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distance / R) + Math.cos(lat1) * Math.sin(distance / R) * Math.cos(rotation));
-            const lon2 = lon1 + Math.atan2(Math.sin(rotation) * Math.sin(distance / R) * Math.cos(lat1), Math.cos(distance / R) - Math.sin(lat1) * Math.sin(lat2));
+                // Calculate Pan Offset
+                const rotation = (stop.rotation || 0) * (Math.PI / 180);
+                const R = 6371e3;
+                const lat1 = stop.lat * (Math.PI / 180);
+                const lon1 = stop.lon * (Math.PI / 180);
+                const distance = 500; // Increased to 500m per request
+                const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distance / R) + Math.cos(lat1) * Math.sin(distance / R) * Math.cos(rotation));
+                const lon2 = lon1 + Math.atan2(Math.sin(rotation) * Math.sin(distance / R) * Math.cos(lat1), Math.cos(distance / R) - Math.sin(lat1) * Math.sin(lat2));
 
-            this.map.flyTo({
-                center: [lon2 * (180 / Math.PI), lat2 * (180 / Math.PI)],
-                zoom: targetZoom,
-                duration: 1500,
-                essential: true
-            });
+                this.map.flyTo({
+                    center: [lon2 * (180 / Math.PI), lat2 * (180 / Math.PI)],
+                    zoom: targetZoom,
+                    duration: 1500,
+                    essential: true
+                });
+            }
         }
 
         // Reachability Logic

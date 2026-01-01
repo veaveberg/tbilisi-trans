@@ -490,7 +490,8 @@ if (navigator.permissions && navigator.permissions.query) {
             window._originalMapMethods = {
                 flyTo: map.flyTo.bind(map),
                 jumpTo: map.jumpTo.bind(map),
-                easeTo: map.easeTo.bind(map)
+                easeTo: map.easeTo.bind(map),
+                fitBounds: map.fitBounds.bind(map)
             };
 
             isAutoShowingMarker = true;
@@ -541,6 +542,8 @@ geolocate.on('geolocate', (e) => {
     }
 
     // If auto-showing marker, clear the flag and don't center
+    // Note: We do NOT restore map methods here - they stay overridden until user clicks locate
+    // Other features (like deep links) should use window._originalMapMethods directly
     if (isAutoShowingMarker) {
         isAutoShowingMarker = false;
         return; // Skip centering the map
