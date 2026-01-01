@@ -182,6 +182,65 @@ export function initSettings({ onUpdate }) {
 
     // Online Status Indicator
     initOnlineStatus();
+
+    // Dev Tools Section (Local Only)
+    initDevSettings();
+}
+
+function initDevSettings() {
+    const isDev = import.meta.env.DEV || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (!isDev) return;
+
+    const menuPopup = document.getElementById('map-menu-popup');
+    if (!menuPopup) return;
+
+    // Check if already exists
+    if (document.getElementById('dev-section')) return;
+
+    const section = document.createElement('div');
+    section.id = 'dev-section';
+    section.className = 'menu-section';
+    section.style.cssText = 'padding: 10px 0 0 0; border-top: 1px solid var(--border-light);';
+
+    const showSegments = localStorage.getItem('showMinibusSegments') === 'true';
+
+    section.innerHTML = `
+        <div style="font-weight:600; font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; padding: 0 12px;">Dev Tools</div>
+        
+        <div class="menu-item" id="menu-minibus-segments-row">
+            <div class="menu-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                </svg>
+            </div>
+            <span class="menu-label">Show Minibus Segments</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="minibus-segments-switch" ${showSegments ? 'checked' : ''}>
+                <span class="slider round"></span>
+            </label>
+        </div>
+    `;
+
+    menuPopup.appendChild(section);
+
+    // Switch Logic
+    const segmentsSwitch = document.getElementById('minibus-segments-switch');
+    if (segmentsSwitch) {
+        segmentsSwitch.addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            localStorage.setItem('showMinibusSegments', enabled);
+            window.dispatchEvent(new CustomEvent('minibusSegmentsChange', { detail: enabled }));
+        });
+
+        const row = document.getElementById('menu-minibus-segments-row');
+        if (row) {
+            row.addEventListener('click', (e) => {
+                if (e.target.closest('.toggle-switch')) return;
+                segmentsSwitch.checked = !segmentsSwitch.checked;
+                segmentsSwitch.dispatchEvent(new Event('change'));
+            });
+        }
+    }
 }
 
 function addInterfaceSection() {

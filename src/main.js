@@ -14,7 +14,7 @@ import { LoopUtils } from './loop-utils.js';
 import * as metro from './metro.js';
 const { handleMetroStop } = metro;
 import { map, setupMapControls, getMapHash, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, setupHoverHandlers, setupClickHandlers, setMapFocus, isTrackingActive, isUserInteractingWithMap, stopTracking, setMapLightPreset } from './map-setup.js';
-import stopBearings from './data/stop_bearings.json';
+import stopRotations from './data/stop_bearings.json';
 import { db } from './db.js';
 import { historyManager, addToHistory, popHistory, clearHistory, updateBackButtons, peekHistory } from './history.js';
 import { hydrateRouteDetails } from './fetch.js';
@@ -100,8 +100,18 @@ function onRoutesLoaded(data) {
 
     // 3. Stop / Nested / Filter (Delegated to handleDeepLinks)
     // We delegate all stop-based logic to handleDeepLinks to ensure redirects (merged stops) are processed correctly.
+    // Wait for map to be loaded AND stops to be available before processing
     else if (initialState.stopId) {
-        handleDeepLinks();
+        const executeStopDeepLink = async () => {
+            // Wait until allStops is populated (stops load separately from routes)
+            if (allStops.length === 0) {
+                // Retry after a short delay - stops might still be loading
+                setTimeout(executeStopDeepLink, 100);
+                return;
+            }
+            handleDeepLinks();
+        };
+        if (map.loaded()) executeStopDeepLink(); else map.once('load', executeStopDeepLink);
     }
 }
 
@@ -112,33 +122,28 @@ api.fetchRoutes({ strategy: 'cache-only' }).then(onRoutesLoaded);
 // 2. Fresh Load (Network) - Updates Data/UI
 api.fetchRoutes().then(onRoutesLoaded);
 
-let lastMapHashUpdate = 0;
-map.on('moveend', () => {
-    // Only update hash if no specialized view is active (Stop or Route)
-    if (!window.currentStopId && !window.currentRoute) {
-        const now = Date.now();
-        const isTracking = isTrackingActive();
-        const isManual = isUserInteractingWithMap();
-
-        // If it's a manual interaction (zoom/pan), update immediately even if in Follow mode
-        if (isManual) {
-            Router.updateMapLocation(getMapHash());
-            lastMapHashUpdate = now;
-        }
-        // If it's a programmatic Follow mode move, throttle to once every 10 seconds
-        else if (isTracking) {
-            if (now - lastMapHashUpdate > 10000) {
-                Router.updateMapLocation(getMapHash());
-                lastMapHashUpdate = now;
-            }
-        }
-        // Standard idle panning (should be covered by isManual, but for completeness)
-        else {
-            Router.updateMapLocation(getMapHash());
-            lastMapHashUpdate = now;
-        }
+// Update URL hash when map movement ends (including inertia)
+const updateURLHash = () => {
+    // Skip hash updates when a stop or route card is open
+    // (the stop/route URL itself leads to the correct location)
+    const infoPanel = document.getElementById('info-panel');
+    const routePanel = document.getElementById('route-info');
+    if ((infoPanel && !infoPanel.classList.contains('hidden')) ||
+        (routePanel && !routePanel.classList.contains('hidden'))) {
+        return;
     }
-});
+
+    // Throttle updates in follow mode to avoid excessive history changes
+    if (isTrackingActive()) {
+        const now = Date.now();
+        if (now - (window.lastFollowHashUpdate || 0) < 10000) return;
+        window.lastFollowHashUpdate = now;
+    }
+    Router.updateMapLocation(getMapHash());
+};
+
+map.on('moveend', updateURLHash);
+map.on('dragend', updateURLHash); // Also update on dragend since moveend doesn't always fire
 
 // Initialize Filter Icon
 const initialFilterBtn = document.getElementById('filter-routes-toggle');
@@ -490,7 +495,7 @@ map.on('load', () => {
             layout: {
                 'icon-image': [
                     'case',
-                    ['>', ['get', 'bearing'], 0], 'stop-selected-icon', // Arrow
+                    ['>', ['get', 'rotation'], 0], 'stop-selected-icon', // Arrow
                     'stop-icon' // Circle fallback
                 ],
                 'icon-size': [
@@ -500,7 +505,7 @@ map.on('load', () => {
                 ],
                 'icon-allow-overlap': true,
                 'icon-ignore-placement': true,
-                'icon-rotate': ['coalesce', ['get', 'bearing'], 0],
+                'icon-rotate': ['coalesce', ['get', 'rotation'], 0],
                 'icon-rotation-alignment': 'map'
             },
             paint: {
@@ -565,6 +570,78 @@ map.on('load', async () => {
 
     await loadFast();
     loadFresh();
+    loadMinibusSegments();
+});
+
+async function loadMinibusSegments() {
+    try {
+        const response = await fetch('data/long_segments.geojson');
+        if (!response.ok) return;
+        const data = await response.json();
+
+        if (map.getSource('minibus-segments')) {
+            map.getSource('minibus-segments').setData(data);
+        } else {
+            map.addSource('minibus-segments', {
+                type: 'geojson',
+                data: data
+            });
+
+            // 1. Check Initial Setting (Default: Hidden)
+            const isVisible = localStorage.getItem('showMinibusSegments') === 'true';
+
+            map.addLayer({
+                id: 'minibus-segments-layer',
+                type: 'line',
+                source: 'minibus-segments',
+                layout: {
+                    'line-join': 'round',
+                    'line-cap': 'round',
+                    'visibility': isVisible ? 'visible' : 'none'
+                },
+                paint: {
+                    'line-color': '#FF4500', // Orange-Red
+                    'line-width': 4,
+                    'line-opacity': 0.8
+                }
+            });
+
+            // Add popup on click
+            map.on('click', 'minibus-segments-layer', (e) => {
+                const props = e.features[0].properties;
+                new mapboxgl.Popup()
+                    .setLngLat(e.lngLat)
+                    .setHTML(`
+                        <div style="color:black">
+                            <strong>Route ${props.routeNumber}</strong><br>
+                            Gap: ${props.gapLength}m<br>
+                            From: ${props.from}<br>
+                            To: ${props.to}
+                        </div>
+                    `)
+                    .addTo(map);
+            });
+
+            // Change cursor
+            map.on('mouseenter', 'minibus-segments-layer', () => {
+                map.getCanvas().style.cursor = 'pointer';
+            });
+            map.on('mouseleave', 'minibus-segments-layer', () => {
+                map.getCanvas().style.cursor = '';
+            });
+        }
+        console.log(`[Map] Loaded ${data.features.length} minibus segments`);
+    } catch (e) {
+        console.warn('[Map] Failed to load minibus segments:', e);
+    }
+}
+
+// Listener for Toggle
+window.addEventListener('minibusSegmentsChange', (e) => {
+    const visible = e.detail;
+    if (map.getLayer('minibus-segments-layer')) {
+        map.setLayoutProperty('minibus-segments-layer', 'visibility', visible ? 'visible' : 'none');
+    }
 });
 
 // ---// Theme Switching Listener
@@ -1093,7 +1170,17 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         window.currentStopId = stop.id;
         if (window.selectDevStop) window.selectDevStop(stop.id);
 
+        console.log('[showStopInfo] flyToStop:', flyToStop, 'stop.lon:', stop.lon, 'stop.lat:', stop.lat);
         if (flyToStop && stop.lon && stop.lat) {
+            console.log('[showStopInfo] Executing flyTo to:', stop.lon, stop.lat);
+
+            // Restore original map methods if they were overridden by auto-show location marker
+            if (window._originalMapMethods) {
+                map.flyTo = window._originalMapMethods.flyTo;
+                map.jumpTo = window._originalMapMethods.jumpTo;
+                map.easeTo = window._originalMapMethods.easeTo;
+            }
+
             const offsetY = -(window.innerHeight * 0.1);
             const currentZoom = map.getZoom();
             const targetZoom = stop.savedZoom || (currentZoom > 16 ? currentZoom : 16);
@@ -1126,7 +1213,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                     layout: {
                         'icon-image': [
                             'case',
-                            ['>', ['get', 'bearing'], 0], 'stop-selected-icon',
+                            ['>', ['get', 'rotation'], 0], 'stop-selected-icon',
                             'stop-icon'
                         ],
                         'icon-size': [
@@ -1136,7 +1223,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                         ],
                         'icon-allow-overlap': true,
                         'icon-ignore-placement': true,
-                        'icon-rotate': ['coalesce', ['get', 'bearing'], 0],
+                        'icon-rotate': ['coalesce', ['get', 'rotation'], 0],
                         'icon-rotation-alignment': 'map'
                     },
                     paint: {
@@ -1218,13 +1305,27 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
             if (hydratedStops.has(id)) {
                 return Promise.resolve(stopToRoutesMap.get(id) || []);
             }
-            return api.fetchStopRoutes(id, stop._source).then(fetchedRoutes => {
+            // Detect source per stop ID: Rustavi stops start with 'r' followed by digits
+            const isRustaviStop = /^r\d/.test(id);
+            const sourceToUse = isRustaviStop ? 'rustavi' : stop._source;
+
+            return api.fetchStopRoutes(id, sourceToUse).then(fetchedRoutes => {
                 if (fetchedRoutes && Array.isArray(fetchedRoutes)) {
                     if (!stopToRoutesMap.has(id)) stopToRoutesMap.set(id, []);
                     const currentList = stopToRoutesMap.get(id);
 
                     fetchedRoutes.forEach(fr => {
-                        const canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName));
+                        // Fix: Respect source when finding canonical route (avoids Tbilisi gondola 1,2,3 matching Rustavi bus 1,2,3)
+                        const fetchedSource = fr._source || (fr.id && String(fr.id).startsWith('r') ? 'rustavi' : 'tbilisi');
+                        let canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName) && r._source === fetchedSource);
+                        // Fallback: match by ID if available
+                        if (!canonical && fr.id) {
+                            canonical = allRoutes.find(r => r.id === fr.id);
+                        }
+                        // Final fallback: match by shortName only (original behavior)
+                        if (!canonical) {
+                            canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName));
+                        }
                         const routeToAdd = canonical || fr;
                         if (!currentList.includes(routeToAdd)) currentList.push(routeToAdd);
                     });
@@ -1240,6 +1341,11 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         ]);
 
         const allFetchedRoutes = results.flat();
+        // Debug: check if Rustavi routes are in fetched results
+        if (stop.id === '810') {
+            console.log(`[Debug 810] Fetched ${allFetchedRoutes.length} routes. Rustavi routes:`,
+                allFetchedRoutes.filter(r => ['20', '21', '22', '23', '24', '10'].includes(String(r.shortName))).map(r => r.shortName));
+        }
         stopToRoutesMap.set(stop.id, allFetchedRoutes);
         window.lastRoutes = allFetchedRoutes;
         window.lastArrivals = arrivals;
@@ -1292,6 +1398,14 @@ function getPatternHeadsign(route, directionIndex, defaultHeadsign) {
     // 1. Resolve Route & Overrides
     const matchedRoute = allRoutes.find(r => r.id === route.id || r.shortName === route.shortName);
     const overrides = (matchedRoute && matchedRoute._overrides) ? matchedRoute._overrides : route._overrides;
+
+    // DEBUG for route 466
+    if (route.shortName === '466') {
+        console.log('[HeadsignDebug] Route 466 called with directionIndex:', directionIndex);
+        console.log('[HeadsignDebug] Has overrides:', !!overrides);
+        console.log('[HeadsignDebug] Destinations:', overrides?.destinations);
+        console.log('[HeadsignDebug] Dest for direction:', overrides?.destinations?.[directionIndex]);
+    }
 
     if (overrides && overrides.destinations) {
         const destObj = overrides.destinations[directionIndex];
@@ -1620,17 +1734,18 @@ async function getV3Schedule(routeShortName, stopId, explicitRouteId = null) {
 
     // console.log(`[V3 Debug] Fetching schedule for RouteID: ${routeId}, StopIDs:`, stopIds);
 
-    const schedule = await api.fetchScheduleForStop(routeId, stopIds);
-    if (!schedule) {
+    const result = await api.fetchScheduleForStop(routeId, stopIds);
+    if (!result) {
         console.warn(`[V3 Debug] No schedule returned from API for ${routeId}`);
         return null;
     }
 
-    // console.log(`[V3 Debug] Schedule fetched. Parsing...`);
-    return parseSchedule(schedule, stopIds);
+    const { schedule, patternSuffix } = result;
+    // console.log(`[V3 Debug] Schedule fetched. Parsing with suffix: ${patternSuffix}`);
+    return parseSchedule(schedule, stopIds, patternSuffix);
 }
 
-function parseSchedule(schedule, potentialIds) {
+function parseSchedule(schedule, potentialIds, patternSuffix = null) {
     if (!schedule || !Array.isArray(schedule)) {
         console.warn(`[V3 Debug] Invalid schedule format`, schedule);
         return null;
@@ -1645,9 +1760,9 @@ function parseSchedule(schedule, potentialIds) {
         let daySchedule = schedule.find(s => s.serviceDates.includes(todayStr));
 
         if (!daySchedule) {
-            console.warn(`[V3 Debug] No schedule found for today (${todayStr}) in ${schedule.length} service periods.`);
-        } else {
-            // console.log(`[V3 Debug] Found schedule for today.`);
+            console.warn(`[V3 Debug] No schedule found for today (${todayStr}) in ${schedule.length} service periods. Using first available as fallback.`);
+            // Fallback: Use the first available schedule period (useful for stale cached data)
+            daySchedule = schedule[0];
         }
 
         // Helper to find next time in a specific day's schedule
@@ -1703,7 +1818,8 @@ function parseSchedule(schedule, potentialIds) {
                         results.push({
                             time: `${h}:${String(m).padStart(2, '0')}`,
                             minutes: stopMinutes,
-                            progress: originalIndex / sched.stops.length
+                            progress: originalIndex / sched.stops.length,
+                            patternSuffix: patternSuffix // Include for direction detection
                         });
                         break; // Found the next time for THIS specific stop occurrence
                     }
@@ -1917,6 +2033,7 @@ function renderArrivals(arrivals, currentStopId = null) {
     let renderList = [];
 
     // Add Live Arrivals
+    console.log(`[Arrivals Debug] Processing ${arrivals.length} live arrivals. ShortNames:`, arrivals.map(a => a.shortName));
     arrivals.forEach(a => {
         // Robustness: Handle nulls
         let minutes = 999;
@@ -1927,13 +2044,35 @@ function renderArrivals(arrivals, currentStopId = null) {
         }
 
         // Logic to Apply Overrides (Destinations)
+        // Use pattern suffix to determine direction, with optional inversion
         let directionIndex = 0;
+
+        const matchedRouteForColor = allRoutes.find(r => r.shortName === a.shortName);
+
+        // Get direction from pattern suffix
         if (a.patternSuffix) {
             const part = a.patternSuffix.split(':')[0];
             directionIndex = parseInt(part) || 0;
         }
 
-        const matchedRouteForColor = allRoutes.find(r => r.shortName === a.shortName);
+        // Debug for specific routes (LIVE arrivals)
+        const shortNameStr = String(a.shortName);
+        if (shortNameStr.includes('466') || shortNameStr.includes('329')) {
+            console.log(`[Live Direction Debug] Route "${shortNameStr}": patternSuffix="${a.patternSuffix}" -> initial directionIndex=${directionIndex}`);
+        }
+
+        // Check if this route has inverted direction mapping
+        // Some routes have API pattern 0 = our dest1, pattern 1 = dest0
+        const invertDirection = matchedRouteForColor?._overrides?.invertDirection === true;
+        if (invertDirection) {
+            directionIndex = directionIndex === 0 ? 1 : 0;
+        }
+
+        // Debug
+        if (shortNameStr.includes('466') || shortNameStr.includes('329')) {
+            console.log(`[Live Direction Debug] Route "${shortNameStr}": patternSuffix="${a.patternSuffix}", invertDirection=${invertDirection} -> final directionIndex=${directionIndex}`);
+        }
+
         const displayHeadsign = getPatternHeadsign(matchedRouteForColor, directionIndex, a.headsign);
 
         renderList.push({
@@ -2195,11 +2334,27 @@ function renderArrivals(arrivals, currentStopId = null) {
                         const part = firstArrival.patternSuffix.split(':')[0]; // "0:25" -> "0"
                         inferredDir = parseInt(part);
                         if (isNaN(inferredDir)) inferredDir = 0; // Safety
+
+                        // Debug for specific routes
+                        if (['466', '329'].includes(String(item.data.shortName))) {
+                            console.log(`[Direction Debug] Route ${item.data.shortName}: patternSuffix="${firstArrival.patternSuffix}" -> direction=${inferredDir}`);
+                        }
                     }
                     // 2. Fallback: Infer direction from progress (0.0 - 1.0)
                     // < 0.5 = Forward (0), >= 0.5 = Backward (1) (Heuristic)
                     else {
                         inferredDir = (firstArrival.progress !== undefined && firstArrival.progress >= 0.5) ? 1 : 0;
+
+                        // Debug for specific routes
+                        if (['466', '329'].includes(String(item.data.shortName))) {
+                            console.log(`[Direction Debug] Route ${item.data.shortName}: progress=${firstArrival.progress} -> direction=${inferredDir} (fallback heuristic)`);
+                        }
+                    }
+
+                    // 3. Apply invertDirection override if set (same as live arrivals)
+                    const matchedRoute = allRoutes.find(r => String(r.shortName) === String(item.data.shortName));
+                    if (matchedRoute?._overrides?.invertDirection === true) {
+                        inferredDir = inferredDir === 0 ? 1 : 0;
                     }
 
                     item.directionIndex = inferredDir;
@@ -2299,25 +2454,75 @@ async function refreshStopsLayer(useLocalConfig = false) {
         stopsConfigToUse = window.stopsConfig;
         console.log('[Main] Refreshing with LOCAL stops config...');
     } else {
-        // Reload from file (Standard Load)
-        if (import.meta.env.DEV) {
-            try {
-                const configUrl = new URL('./data/stops_config.json', import.meta.url).href;
-                const res = await fetch(configUrl + '?t=' + Date.now());
-                stopsConfigToUse = await res.json();
-                console.log('[Main] Loaded Fresh Stops Config (Dev Mode)');
-            } catch (e) {
-                console.error('[Main] Failed to load stops config:', e);
-                stopsConfigToUse = { overrides: {}, merges: {}, hubs: {} };
+        // Reload from files (Standard Load)
+        try {
+            const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+            const file = `${basePath}data/stops_overrides.csv`;
+
+            const res = await fetch(`${file}?t=${Date.now()}`);
+            let csvText = null;
+            if (res.ok) {
+                csvText = await res.text();
+                console.log(`[Main] Fetched ${file}: ${csvText.length} chars, Type: ${res.headers.get('content-type')}`);
+            } else {
+                console.warn(`[Main] Failed to fetch ${file}: ${res.status}`);
             }
-        } else {
-            try {
-                const module = await import('./data/stops_config.json');
-                stopsConfigToUse = module.default;
-            } catch (e) {
-                console.error('[Main] Failed to load stops config:', e);
-                stopsConfigToUse = { overrides: {}, merges: {}, hubs: {} };
+
+            // Parse CSV and extract overrides
+            const { parseCSV, extractOverrides } = await import('./csv-parser.js');
+
+            stopsConfigToUse = {
+                overrides: {},
+                merges: {},
+                hubs: {}
+            };
+
+            if (csvText) {
+                const rows = parseCSV(csvText);
+                const fileOverrides = extractOverrides(rows, 'id');
+
+                // Merge into global config
+                Object.keys(fileOverrides).forEach(id => {
+                    const override = fileOverrides[id];
+
+                    // Handle merges
+                    if (override.mergeParent) {
+                        stopsConfigToUse.merges[id] = override.mergeParent;
+                        delete override.mergeParent;
+                    }
+
+                    // Handle hubs
+                    if (override.hubTarget) {
+                        const hubId = override.hubTarget;
+                        if (!stopsConfigToUse.hubs[hubId]) {
+                            stopsConfigToUse.hubs[hubId] = [];
+                        }
+                        if (!stopsConfigToUse.hubs[hubId].includes(id)) {
+                            stopsConfigToUse.hubs[hubId].push(id);
+                        }
+                        delete override.hubTarget;
+                    }
+
+                    // Store remaining overrides
+                    if (Object.keys(override).length > 0) {
+                        stopsConfigToUse.overrides[id] = override;
+                    }
+                });
             }
+
+            console.log('[Main] Loaded stops config from multiple CSVs:',
+                Object.keys(stopsConfigToUse.overrides).length, 'overrides,',
+                Object.keys(stopsConfigToUse.merges).length, 'merges,',
+                Object.keys(stopsConfigToUse.hubs).length, 'hubs');
+
+            // DEBUG: Log sample data
+            const sampleMerges = Object.entries(stopsConfigToUse.merges).slice(0, 5);
+            console.log('[Main DEBUG] Sample merges (pre-norm):', JSON.stringify(sampleMerges));
+            const sampleOverrides = Object.entries(stopsConfigToUse.overrides).slice(0, 5);
+            console.log('[Main DEBUG] Sample overrides (pre-norm):', sampleOverrides.map(([k, v]) => `${k}: rot=${v.rotation}`));
+        } catch (e) {
+            console.error('[Main] Failed to load stops config:', e);
+            stopsConfigToUse = { overrides: {}, merges: {}, hubs: {} };
         }
     }
 
@@ -2382,24 +2587,52 @@ async function refreshStopsLayer(useLocalConfig = false) {
         }
     });
 
+    console.log('[Main] Normalization Complete:',
+        Object.keys(overrides).length, 'overrides,',
+        Object.keys(merges).length, 'merges');
+
+    // Check for Rustavi matches specifically
+    const rustaviOverrides = Object.keys(overrides).filter(id => id.startsWith('r'));
+    const rustaviMerges = Object.keys(merges).filter(id => id.startsWith('r'));
+    console.log('[Main] Rustavi Matches:', rustaviOverrides.length, 'overrides,', rustaviMerges.length, 'merges');
+    console.log('[Main DEBUG] Normalized merges sample:', JSON.stringify(Object.entries(merges).slice(0, 5)));
+    console.log('[Main DEBUG] RedirectMap size:', redirectMap.size, 'Sample entries:', [...redirectMap.entries()].slice(0, 5));
+
     // Build merge mappings
-    Object.keys(merges).forEach(source => {
-        const target = merges[source];
-        redirectMap.set(source, target);
-        if (!mergeSourcesMap.has(target)) mergeSourcesMap.set(target, []);
-        mergeSourcesMap.get(target).push(source);
-    });
+    console.warn('[Main DEBUG] FRESH CODE v3 - Starting merge build...');
+    try {
+        Object.keys(merges).forEach(source => {
+            const target = merges[source];
+            redirectMap.set(source, target);
+            if (!mergeSourcesMap.has(target)) mergeSourcesMap.set(target, []);
+            mergeSourcesMap.get(target).push(source);
+        });
+        console.warn('[Main DEBUG] Merge build complete. RedirectMap size:', redirectMap.size);
+    } catch (e) {
+        console.error('[Main DEBUG] Error in merge build:', e);
+    }
 
     // Build Hub mappings
-    Object.keys(hubs).forEach(hubId => {
-        const members = hubs[hubId];
-        if (Array.isArray(members)) {
-            members.forEach(memberId => {
-                hubMap.set(memberId, hubId);
-            });
-            hubSourcesMap.set(hubId, members);
-        }
-    });
+    console.warn('[Main DEBUG] Starting hub build...');
+    try {
+        Object.keys(hubs).forEach(hubId => {
+            const members = hubs[hubId];
+            if (Array.isArray(members)) {
+                members.forEach(memberId => {
+                    hubMap.set(memberId, hubId);
+                });
+                hubSourcesMap.set(hubId, members);
+            }
+        });
+        console.warn('[Main DEBUG] Hub build complete. HubMap size:', hubMap.size);
+    } catch (e) {
+        console.error('[Main DEBUG] Error in hub build:', e);
+    }
+
+    console.warn('[Main DEBUG] ===== AFTER BUILD =====');
+    console.warn('[Main DEBUG] RedirectMap size:', redirectMap.size, 'MergeSourcesMap size:', mergeSourcesMap.size);
+    console.warn('[Main DEBUG] Sample redirectMap entries:', JSON.stringify([...redirectMap.entries()].slice(0, 5)));
+    console.warn('[Main DEBUG] Sample rawStops IDs:', rawStops.slice(0, 5).map(s => s.id));
 
     // Filter and Override
     const stops = [];
@@ -2468,9 +2701,21 @@ async function refreshStopsLayer(useLocalConfig = false) {
     // Note: Assuming mergeSourcesMap and redirectMap are available in this scope.
     // They seem to be module-level constants or let variables.
 
+    // DEBUG: Check if specific stops exist
+    const stop806 = freshStops.find(s => s.id === '806' || s.id === '1:806');
+    const stop813 = freshStops.find(s => s.id === '813' || s.id === '1:813');
+    console.warn('[Main DEBUG] Stop 806 exists?', !!stop806, stop806?.id);
+    console.warn('[Main DEBUG] Stop 813 exists?', !!stop813, stop813?.id);
+    console.warn('[Main DEBUG] All stop IDs containing "806":', freshStops.filter(s => s.id.includes('806')).map(s => s.id));
+
     freshStops.forEach(stop => {
         // If this stop is merged INTO another, skip adding it to map list
-        if (merges[stop.id]) return;
+        if (merges[stop.id]) {
+            if (stop.id === '806' || stop.id === '826') {
+                console.warn('[Main DEBUG] Stop', stop.id, 'FILTERED by merge ->', merges[stop.id]);
+            }
+            return;
+        }
 
         // Populate Merge Maps from API-provided Merges
         if (stop.mergedIds && stop.mergedIds.length > 0) {
@@ -2483,31 +2728,34 @@ async function refreshStopsLayer(useLocalConfig = false) {
             });
         }
 
-        // Apply Default Bearings (Standard Config)
-        // Normalize bearings map on first use to match App IDs
-        if (!window.normalizedBearings) {
-            window.normalizedBearings = {};
-            // We need to iterate over stopBearings and process keys
+        // Apply Default Rotations (Standard Config)
+        // Normalize rotations map on first use to match App IDs
+        if (!window.normalizedRotations) {
+            window.normalizedRotations = {};
+            // We need to iterate over stopRotations and process keys
             // Use existing `api.processId` logic via `sources`
             // But simpler: just try to match keys to `validStopIds` locally if possible, 
             // OR use the same `normalizeConfigId` logic.
             // Actually, efficient way:
-            // Iterate all keys in stopBearings. 
+            // Iterate all keys in stopRotations. 
             // Transform key using `normalizeConfigId` logic (which creates App ID from Raw ID).
             // Assign to new map.
-            Object.keys(stopBearings).forEach(rawKey => {
+            Object.keys(stopRotations).forEach(rawKey => {
                 const appKey = normalizeConfigId(rawKey);
-                window.normalizedBearings[appKey] = stopBearings[rawKey];
+                window.normalizedRotations[appKey] = stopRotations[rawKey];
             });
         }
 
-        if (stop.bearing === undefined) {
-            stop.bearing = window.normalizedBearings[stop.id] || 0;
+        if (stop.rotation === undefined) {
+            stop.rotation = window.normalizedRotations[stop.id] || 0;
         }
 
         // Apply Override if exists
         if (overrides[stop.id]) {
             const override = { ...overrides[stop.id] };
+            if (stop.id === '813') {
+                console.warn('[Main DEBUG] Applying override to stop 813:', override.rotation, override);
+            }
 
             // Special handling for 'name' override (which is {en, ka})
             if (override.name) {
@@ -2754,6 +3002,14 @@ async function updateRouteView(route, options = {}) {
             }
         }
 
+        // DEBUG for route 532
+        if (route.shortName === '532') {
+            console.log('[Route532Debug] currentPattern:', currentPattern);
+            console.log('[Route532Debug] destinationHeadsign:', destinationHeadsign);
+            console.log('[Route532Debug] originHeadsign:', originHeadsign);
+            console.log('[Route532Debug] patterns count:', patterns.length);
+        }
+
         if (originHeadsign && destinationHeadsign && originHeadsign !== destinationHeadsign) {
             document.getElementById('route-info-text').innerHTML = `
                 <div class="origin">${originHeadsign}</div>
@@ -2961,7 +3217,7 @@ async function updateRouteView(route, options = {}) {
                         layout: {
                             'icon-image': [
                                 'case',
-                                ['>', ['get', 'bearing'], 0], 'stop-selected-icon',
+                                ['>', ['get', 'rotation'], 0], 'stop-selected-icon',
                                 'stop-icon'
                             ],
                             'icon-size': [
@@ -2971,7 +3227,7 @@ async function updateRouteView(route, options = {}) {
                             ],
                             'icon-allow-overlap': true,
                             'icon-ignore-placement': true,
-                            'icon-rotate': ['coalesce', ['get', 'bearing'], 0],
+                            'icon-rotate': ['coalesce', ['get', 'rotation'], 0],
                             'icon-rotation-alignment': 'map'
                         },
                         paint: {
@@ -3801,17 +4057,43 @@ async function loadRoutesConfig() {
     try {
         const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
         // Add cache buster to ensure fresh config on reload
-        const response = await fetch(`${basePath}data/routes_config.json?v=${Date.now()}`);
+        const response = await fetch(`${basePath}data/routes_overrides.csv?v=${Date.now()}`);
         if (response.ok) {
-            const data = await response.json();
-            routesConfig = data || { routeOverrides: {} };
-            if (!routesConfig.routeOverrides) routesConfig.routeOverrides = {};
+            const csvText = await response.text();
+
+            // Parse CSV and extract overrides
+            const { parseCSV, extractOverrides } = await import('./csv-parser.js');
+            const rows = parseCSV(csvText);
+            const overrides = extractOverrides(rows, 'id');
+
+            routesConfig = { routeOverrides: overrides };
             window.routesConfig = routesConfig;
-            // console.log('[Config] Loaded routes config', routesConfig);
+
+            // Also store overrides with stripped keys for easier matching
+            // (e.g., "1:R12237" -> also store as "R12237")
+            Object.keys(overrides).forEach(key => {
+                if (key.includes(':')) {
+                    const stripped = key.split(':')[1];
+                    if (!overrides[stripped]) {
+                        overrides[stripped] = overrides[key];
+                    }
+                    // Also store with r-prefix for Rustavi routes (e.g., R12237 -> rR12237)
+                    if (stripped.startsWith('R') && !stripped.startsWith('Ru')) {
+                        const rPrefixed = 'r' + stripped;
+                        if (!overrides[rPrefixed]) {
+                            overrides[rPrefixed] = overrides[key];
+                        }
+                    }
+                }
+            });
+
+            console.log('[Config] Loaded routes config from CSV', Object.keys(overrides).length, 'overrides');
             if (allRoutes && allRoutes.length > 0) applyRouteOverrides();
         }
     } catch (e) {
-        console.warn('Failed to load routes_config.json', e);
+        console.warn('Failed to load routes_overrides.csv', e);
+        routesConfig = { routeOverrides: {} };
+        window.routesConfig = routesConfig;
     }
 }
 
@@ -3839,22 +4121,55 @@ function applyRouteOverrides() {
     let updateCount = 0;
 
     allRoutes.forEach(route => {
-        // Robust ID Matching: Check raw, stripped, and prefixed
+        // Robust ID Matching: Check raw, stripped, and multiple prefixes
         let override = window.routesConfig.routeOverrides[route.id];
 
+        // Try stripping prefix (e.g., "2:R12237" -> "R12237")
         if (!override && route.id.includes(':')) {
             const stripped = route.id.split(':')[1];
             override = window.routesConfig.routeOverrides[stripped];
+
+            // Try with 1: prefix (CSV uses 1: for all routes including Rustavi)
+            if (!override) {
+                override = window.routesConfig.routeOverrides[`1:${stripped}`];
+            }
         }
 
+        // Try adding prefix if no colon
         if (!override && !route.id.includes(':')) {
             override = window.routesConfig.routeOverrides[`1:${route.id}`];
+            if (!override) {
+                override = window.routesConfig.routeOverrides[`2:${route.id}`];
+            }
+        }
+
+        // Handle Rustavi r-prefix (e.g., "rR12237" -> try "R12237" and "1:R12237")
+        if (!override && route.id.startsWith('r')) {
+            const withoutR = route.id.substring(1); // "rR12237" -> "R12237"
+            override = window.routesConfig.routeOverrides[withoutR];
+            if (!override) {
+                override = window.routesConfig.routeOverrides[`1:${withoutR}`];
+            }
         }
 
         // Debug specific route
-        // if (route.id === 'minibusR24637') {
-        //     console.log(`[Config] applyRouteOverrides checking minibusR24637. Override exists?`, !!override, override);
-        // }
+        if (route.id === '1:minibusR1265' || route.id === 'minibusR1265') {
+            console.log(`[Config Debug] Route 466 ID: ${route.id}`);
+            console.log(`[Config Debug] Direct lookup:`, window.routesConfig.routeOverrides[route.id]);
+            console.log(`[Config Debug] Found override:`, !!override, override);
+        }
+
+        // Debug Rustavi routes
+        if (['20', '21', '22', '23', '24', '10'].includes(route.shortName)) {
+            console.log(`[Config Debug] Rustavi route ${route.shortName} ID: "${route.id}"`);
+            console.log(`[Config Debug] Direct lookup:`, window.routesConfig.routeOverrides[route.id]);
+            if (route.id.includes(':')) {
+                const stripped = route.id.split(':')[1];
+                console.log(`[Config Debug] Stripped "${stripped}" lookup:`, window.routesConfig.routeOverrides[stripped]);
+                console.log(`[Config Debug] "1:${stripped}" lookup:`, window.routesConfig.routeOverrides[`1:${stripped}`]);
+            }
+            console.log(`[Config Debug] Found override:`, !!override, override);
+        }
 
         // DEBUG: Log first 3 routes to check ID format
         /*
