@@ -46,14 +46,16 @@
     user-select: none;
 }
 
-.menu-item:hover {
-    background: rgba(120, 120, 128, 0.12);
-    mix-blend-mode: multiply;
-}
+@media (hover: hover) {
+    .menu-item:hover {
+        background: rgba(120, 120, 128, 0.12);
+        mix-blend-mode: multiply;
+    }
 
-body.dark-mode .menu-item:hover {
-    background: rgba(255, 255, 255, 0.1);
-    mix-blend-mode: normal;
+    body.dark-mode .menu-item:hover {
+        background: rgba(255, 255, 255, 0.1);
+        mix-blend-mode: normal;
+    }
 }
 
 .menu-icon {
@@ -95,8 +97,10 @@ body.dark-mode .menu-item:hover {
     text-align: center;
 }
 
-.theme-option:hover {
-    opacity: 0.7;
+@media (hover: hover) {
+    .theme-option:hover {
+        opacity: 0.7;
+    }
 }
 
 .theme-option.active {

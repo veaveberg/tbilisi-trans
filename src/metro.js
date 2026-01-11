@@ -86,11 +86,24 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
     // Add Open Hours Badge
     const headerContainer = document.createElement('div');
     headerContainer.className = 'metro-header';
-    headerContainer.innerHTML = `
-        <div class="metro-hours-badge">
-            <span class="icon">🕒</span> Entrance open 6:00 – 0:00
-        </div>
-    `;
+
+    if (cleanMetroName(stop.name) === 'Varketili') {
+        headerContainer.innerHTML = `
+            <div class="metro-hours-badge warning">
+                <span class="icon">⚠️</span>
+                <div style="display: flex; flex-direction: column;">
+                     <span>Entrance open 7:00 – 23:00</span>
+                     <span style="font-weight: 500; font-size: 0.85em; margin-top: 4px; line-height: 1.3;">In mornings 6:00–7:00 and evenings 23:00–0:00 use bus 174 between Samgori and Varketili</span>
+                </div>
+            </div>
+        `;
+    } else {
+        headerContainer.innerHTML = `
+            <div class="metro-hours-badge">
+                <span class="icon">🕒</span> Entrance open 6:00 – 0:00
+            </div>
+        `;
+    }
     // Insert after name
     const existingHeader = panel.querySelector('.metro-header');
     if (existingHeader) existingHeader.remove();
@@ -250,6 +263,14 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                             <span>Last: <b>${formatTime(lastTrain)}</b></span>
                                         </div>
                                     </div>
+                                    ${(headsign === 'Varketili' || (route.shortName === '1' && headsign.includes('Varketili'))) ? `
+                                    <div class="metro-hours-badge warning" style="margin: 0 16px 16px 16px; width: calc(100% - 32px);">
+                                        <span class="icon">⚠️</span>
+                                        <div style="display: flex; flex-direction: column;">
+                                             <span style="font-weight: 500; font-size: 0.85em; line-height: 1.3;">In mornings 6:00–7:00 and evenings 23:00–0:00 trains terminate at Samgori. Between Samgori and Varketili use replacement bus 174</span>
+                                        </div>
+                                    </div>
+                                    ` : ''}
                                 </div>
                              `;
                         });
@@ -471,8 +492,6 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
                 'line-color': ['get', 'color'],
                 'line-width': 8,
                 'line-opacity': 0.3,
-                'line-z-offset': 100, // Elevate above 3D buildings
-                'line-occlusion-opacity': 1, // Prevent occlusion by 3D buildings
                 'line-emissive-strength': 1 // Standard Style Night Mode Support
             }
         });
@@ -494,6 +513,7 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
             id: 'metro-layer-circle',
             type: 'circle',
             source: 'metro-stops',
+            slot: 'top',
             filter: ['!=', 'name', 'Station Square'],
             paint: {
                 'circle-color': ['get', 'color'],
@@ -518,6 +538,7 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
             id: 'metro-layer-overlay',
             type: 'circle',
             source: 'metro-stops',
+            slot: 'top',
             // No filter: Apply overlay to ALL metro stops including Station Square
             paint: {
                 'circle-color': '#ffffff',
@@ -546,6 +567,7 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
             id: 'metro-layer-label',
             type: 'symbol',
             source: 'metro-stops',
+            slot: 'top',
             minzoom: 12, // Visible earlier
             layout: {
                 'text-field': ['get', 'name'],
@@ -584,6 +606,7 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
             id: 'metro-transfer-layer',
             type: 'symbol',
             source: 'metro-stops',
+            slot: 'top',
             filter: ['==', 'name', 'Station Square'],
             layout: {
                 'icon-image': 'station-transfer',
@@ -598,15 +621,7 @@ export function addMetroLayers(map, metroFeatures, { redLineCoords, greenLineCoo
             },
             paint: {
                 'icon-opacity': 1,
-                'icon-emissive-strength': 1,
-                'icon-halo-color': '#ffffff',
-                'icon-halo-width': 4,
-                'icon-halo-opacity': [
-                    'case',
-                    ['boolean', ['feature-state', 'hover'], false],
-                    0.5,
-                    0
-                ]
+                'icon-emissive-strength': 1
             }
         });
     }

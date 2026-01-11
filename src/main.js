@@ -19,6 +19,7 @@ import { db } from './db.js';
 import { historyManager, addToHistory, popHistory, clearHistory, updateBackButtons, peekHistory } from './history.js';
 import { hydrateRouteDetails } from './fetch.js';
 import { setupEditTools, getEditState, setEditPickMode } from './dev-tools.js';
+import * as arrivals from './arrivals.js';
 
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
@@ -56,7 +57,7 @@ initSettings({
         if (window.currentStopId) {
             // If we have cached lastArrivals, re-render
             if (window.lastArrivals) {
-                renderArrivals(window.lastArrivals, window.currentStopId);
+                arrivals.renderArrivals(window.lastArrivals, window.currentStopId);
             }
         }
         if (filterManager) {
@@ -291,7 +292,7 @@ function addMetroHoverLogic(map, filterManager) {
 
 
 const uiCallbacks = {
-    renderArrivals,
+    renderArrivals: arrivals.renderArrivals,
     renderAllRoutes,
     setSheetState,
     updateConnectionLine,
@@ -302,6 +303,22 @@ const uiCallbacks = {
 // Lazy Init to ensure Map is ready? Or just init immediately.
 // Map is imported. Router is imported.
 filterManager = new FilterManager({ map, router: Router, dataProvider, uiCallbacks });
+
+// Initialize Arrivals Module with dependencies
+arrivals.initArrivals({
+    getEquivalentStops,
+    mergeSourcesMap,
+    stopToRoutesMap,
+    renderAllRoutes,
+    getRouteDisplayColor,
+    getPatternHeadsign,
+    allRoutes: () => allRoutes,
+    // renderArrivals dependencies
+    filterManager,
+    showRouteOnMap,
+    LoopUtils,
+    v3RoutesMap: () => v3RoutesMap
+});
 
 // Initialize Hover Handlers
 setupHoverHandlers({
@@ -661,7 +678,7 @@ window.addEventListener('themeChanged', (e) => {
         const routePanelVisible = !document.getElementById('route-info').classList.contains('hidden');
 
         if (window.currentStopId && window.lastArrivals && stopPanelVisible) {
-            renderArrivals(window.lastArrivals, window.currentStopId);
+            arrivals.renderArrivals(window.lastArrivals, window.currentStopId);
         }
         if (window.currentRoute && routePanelVisible) {
             updateRouteView(window.currentRoute, { suppressPanel: true });
@@ -1435,9 +1452,9 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
             }).catch(() => []);
         });
 
-        const [results, arrivals] = await Promise.all([
+        const [results, arrivalsData] = await Promise.all([
             Promise.all(routePromises),
-            fetchArrivals(stop.id)
+            arrivals.fetchArrivals(stop.id)
         ]);
 
         const allFetchedRoutes = results.flat();
@@ -1448,8 +1465,9 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         }
         stopToRoutesMap.set(stop.id, allFetchedRoutes);
         window.lastRoutes = allFetchedRoutes;
-        window.lastArrivals = arrivals;
-        renderArrivals(arrivals, stop.id);
+        window.lastArrivals = arrivalsData;
+        window.arrivalsDataTimestamp = Date.now(); // Track fetch time for staleness check
+        arrivals.renderArrivals(arrivalsData, stop.id);
     } catch (error) {
         listEl.innerHTML = '<div class="error">Failed to load arrivals</div>';
         console.error(error);
@@ -1524,7 +1542,7 @@ function getPatternHeadsign(route, directionIndex, defaultHeadsign) {
     return defaultHeadsign;
 }
 
-function renderAllRoutes(routesInput, arrivals) {
+function renderAllRoutes(routesInput, arrivalsInput) {
     // Deduplicate Routes (Prioritize Parent aka first fetched)
 
     // Deduplicate Routes (Prioritize Parent aka first fetched)
@@ -1555,8 +1573,8 @@ function renderAllRoutes(routesInput, arrivals) {
 
 
     // Merge with arrivals for robustness
-    if (arrivals && arrivals.length > 0) {
-        arrivals.forEach(arr => {
+    if (arrivalsInput && arrivalsInput.length > 0) {
+        arrivalsInput.forEach(arr => {
             // Resolve Arrival to Real Route Logic (Similar to renderArrivals)
             let resolvedShortName = arr.shortName;
             let resolvedRoute = null;
@@ -1624,7 +1642,7 @@ function renderAllRoutes(routesInput, arrivals) {
             tile.textContent = simplifyNumber(displayName);
 
             const displayColor = getRouteDisplayColor(route);
-            tile.style.backgroundColor = `color - mix(in srgb, ${displayColor}, transparent 88 %)`;
+            tile.style.backgroundColor = `color-mix(in srgb, ${displayColor}, transparent 88%)`;
             tile.style.color = displayColor;
             tile.style.fontWeight = '700';
 
@@ -1670,878 +1688,16 @@ function renderAllRoutes(routesInput, arrivals) {
     return null;
 }
 
-async function fetchArrivals(stopId) {
-    // Check for all equivalent IDs (merged and hubbed)
-    const equivalentIds = getEquivalentStops(stopId, false);
-    const idsToCheck = new Set();
-    equivalentIds.forEach(eqId => {
-        idsToCheck.add(eqId);
-        // Also add any direct merges into this equivalent ID
-        const subIds = mergeSourcesMap.get(eqId) || [];
-        subIds.forEach(sId => idsToCheck.add(sId));
-    });
+// --- Arrivals Functions ---
+// NOTE: fetchArrivals, fetchV3Routes, getV3Schedule, parseSchedule,
+//       formatScheduledTime, getMinutesFromNow, sortArrivalsList
+//       moved to arrivals.js module
 
-    // Fetch all in parallel using API
-    let combined = await api.fetchArrivalsForStopIds(Array.from(idsToCheck));
+// V3 Routes Map (populated by arrivals.fetchV3Routes via api.js)
+// Used by renderAllRoutes for route resolution
+let v3RoutesMap = null;
 
-    // --- Per-Route Filtering Logic (Live > Scheduled) ---
-    // 1. Group by Route (shortName)
-    const arrivalsByRoute = new Map();
-    combined.forEach(a => {
-        const routeKey = a.shortName;
-        if (!arrivalsByRoute.has(routeKey)) {
-            arrivalsByRoute.set(routeKey, []);
-        }
-        arrivalsByRoute.get(routeKey).push(a);
-    });
 
-    const filtered = [];
-
-    // 2. For each route, check if ANY live data exists
-    arrivalsByRoute.forEach((arrivals, routeKey) => {
-        const hasLive = arrivals.some(a => a.realtime);
-
-        if (hasLive) {
-            // If live exists, ONLY keep live
-            const liveOnly = arrivals.filter(a => a.realtime);
-            filtered.push(...liveOnly);
-        } else {
-            // If NO live exists, keep ALL (which are presumably scheduled)
-            // But we might want to limit how many scheduled we show? For now, keep all.
-            filtered.push(...arrivals);
-        }
-    });
-
-    combined = filtered;
-
-    // Dedup by simple key (route + time + headsign)
-    // Now that we filtered, we can dedup safely.
-    const unique = [];
-    const seen = new Set();
-    combined.forEach(a => {
-        // Use scheduled time if live is missing for key uniqueness
-        const time = a.realtimeArrivalMinutes !== undefined ? a.realtimeArrivalMinutes : a.scheduledArrivalMinutes;
-        const key = `${a.shortName}_${time}_${a.headsign} `;
-        if (!seen.has(key)) {
-            seen.add(key);
-            unique.push(a);
-        }
-    });
-
-    // Sort by time
-    unique.sort((a, b) => {
-        const timeA = a.realtimeArrivalMinutes !== undefined ? a.realtimeArrivalMinutes : a.scheduledArrivalMinutes;
-        const timeB = b.realtimeArrivalMinutes !== undefined ? b.realtimeArrivalMinutes : b.scheduledArrivalMinutes;
-        return timeA - timeB;
-    });
-
-    return unique;
-}
-
-// --- V3 API Integration ---
-let v3RoutesMap = null; // Maps shortName ("306") -> V3 ID ("1:R98190")
-
-// Promise singleton to prevent parallel route fetches
-let v3RoutesPromise = null;
-const V3_ROUTES_CACHE_KEY = 'v3_routes_map_cache'; // Revert to v1 cache or just use original key
-const V3_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
-
-async function fetchV3Routes() {
-    if (v3RoutesMap) return;
-    if (v3RoutesPromise) return v3RoutesPromise;
-
-    // 1. Try Local Storage Cache first
-    try {
-        const cached = await db.get(V3_ROUTES_CACHE_KEY);
-        if (cached) {
-            const { timestamp, data } = cached;
-            if (Date.now() - timestamp < V3_CACHE_DURATION) {
-                console.log('[V3] Loaded routes map from local cache');
-                v3RoutesMap = new Map(data); // Rehydrate Map from array
-                return;
-            }
-        }
-    } catch (e) {
-        console.warn('[V3] Error reading local routes cache', e);
-    }
-
-    // 2. Fetch from API if no cache
-    v3RoutesPromise = (async () => {
-        // 1. Try Cache First (Redundant check?)
-        try {
-            const cached = await db.get(V3_ROUTES_CACHE_KEY);
-            if (cached && (Date.now() - cached.timestamp < V3_CACHE_DURATION)) {
-                console.log('[V3] Loaded global routes list from DB Cache');
-                v3RoutesMap = new Map(cached.data);
-                return;
-            }
-        } catch (e) { }
-
-        // 2. Network Fetch via API Module
-        try {
-            console.log('[V3] Fetching global routes list from API...');
-            const routes = await api.fetchV3Routes();
-
-            v3RoutesMap = new Map();
-            routes.forEach(r => {
-                v3RoutesMap.set(String(r.shortName), r.id);
-            });
-            console.log(`[V3] Mapped ${v3RoutesMap.size} routes`);
-
-            // Cache Logic
-            try {
-                await db.set(V3_ROUTES_CACHE_KEY, {
-                    timestamp: Date.now(),
-                    // Convert Map to Array for storage
-                    data: Array.from(v3RoutesMap.entries())
-                });
-            } catch (e) {
-                console.warn('LS Write Failed (V3 Routes)', e);
-            }
-
-        } catch (e) {
-            console.error('[V3] Global routes fetch failed', e);
-            v3RoutesMap = null; // Reset on failure
-        } finally {
-            v3RoutesPromise = null;
-        }
-    })();
-
-    return v3RoutesPromise;
-}
-
-// Queue variables removed (moved to api.js)
-
-// fetchWithRetry moved to api.js
-
-async function getV3Schedule(routeShortName, stopId, explicitRouteId = null) {
-    let routeId = explicitRouteId;
-    if (!routeId) {
-        if (!v3RoutesMap) await fetchV3Routes();
-        routeId = v3RoutesMap && v3RoutesMap.get(String(routeShortName));
-    }
-
-    if (!routeId) {
-        console.warn(`[V3 Debug] Route ID not found for ${routeShortName}`);
-        return null;
-    }
-
-    // Use API
-    const stopIds = getEquivalentStops(stopId);
-    if (mergeSourcesMap.has(stopId)) {
-        mergeSourcesMap.get(stopId).forEach(s => stopIds.push(s));
-    }
-
-    // console.log(`[V3 Debug] Fetching schedule for RouteID: ${ routeId }, StopIDs: `, stopIds);
-
-    const result = await api.fetchScheduleForStop(routeId, stopIds);
-    if (!result) {
-        console.warn(`[V3 Debug] No schedule returned from API for ${routeId}`);
-        return null;
-    }
-
-    const { schedule, patternSuffix } = result;
-    // console.log(`[V3 Debug] Schedule fetched.Parsing with suffix: ${ patternSuffix } `);
-    return parseSchedule(schedule, stopIds, patternSuffix);
-}
-
-function parseSchedule(schedule, potentialIds, patternSuffix = null) {
-    if (!schedule || !Array.isArray(schedule)) {
-        console.warn(`[V3 Debug] Invalid schedule format`, schedule);
-        return null;
-    }
-
-    try {
-        // Fix: Force Tbilisi Timezone (GMT+4)
-        const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' }); // YYYY-MM-DD
-        const todayStr = tbilisiNow;
-        // console.log(`[V3 Debug] Parse Schedule for Today: ${ todayStr } `);
-
-        let daySchedule = schedule.find(s => s.serviceDates.includes(todayStr));
-
-        if (!daySchedule) {
-            console.warn(`[V3 Debug] No schedule found for today(${todayStr}) in ${schedule.length} service periods.Using first available as fallback.`);
-            // Fallback: Use the first available schedule period (useful for stale cached data)
-            daySchedule = schedule[0];
-        }
-
-        // Helper to find next time in a specific day's schedule
-        const findNextTime = (sched, minTimeMinutes) => {
-            if (!sched) return null;
-
-            // Find ALL occurrences of this stop in the schedule (handling loops)
-            const matchedStops = sched.stops.filter(s => {
-                const sId = String(s.id);
-                const sCode = String(s.code || '');
-                return potentialIds.some(pid => {
-                    const pIdStr = String(pid);
-                    // Standardize: remove '1:', remove 'r'/'R' prefix
-                    const normalize = (id) => String(id).replace(/^\d+:/, '').replace(/^[rR]/, '');
-
-                    const pIdNorm = normalize(pIdStr);
-                    const sIdNorm = normalize(sId);
-
-                    if (pIdStr === sId) return true;
-                    if (pIdNorm === sIdNorm) return true;
-                    if (sCode && normalize(sCode) === pIdNorm) return true;
-                    return false;
-                });
-            });
-
-            // Debug Log for loop diagnosis (limit to specific stop if noisy, but global for now is fine for dev)
-            if (matchedStops.length > 1) {
-                console.log(`[V3 Loop Debug] Found ${matchedStops.length} occurrences of stop in schedule.`);
-            } else if (matchedStops.length === 0) {
-                console.warn(`[V3 Loop Debug] No stops matched potential IDs: ${potentialIds.join(',')}. Available Schedule Stops(first 5): `, sched.stops.slice(0, 5).map(s => s.id));
-            }
-
-            if (matchedStops.length === 0) {
-                return null;
-            }
-
-            // Collect all valid times from all matched stop entries
-            // Return ALL valid next times (one per occurrence), not just the earliest absolute one.
-            const results = [];
-
-            matchedStops.forEach((stop, idx) => {
-                const times = stop.arrivalTimes.split(',');
-                // Check matched index relative to total stops to infer direction
-                // We need the index of THIS stop in the full `sched.stops` array.
-                // `matchedStops` is a subset.
-                const originalIndex = sched.stops.findIndex(s => s === stop);
-
-                for (const t of times) {
-                    const [h, m] = t.split(':').map(Number);
-                    const stopMinutes = h * 60 + m; // Absolute minutes in the day
-
-                    if (stopMinutes > minTimeMinutes) {
-                        results.push({
-                            time: `${h}:${String(m).padStart(2, '0')} `,
-                            minutes: stopMinutes,
-                            progress: originalIndex / sched.stops.length,
-                            patternSuffix: patternSuffix // Include for direction detection
-                        });
-                        break; // Found the next time for THIS specific stop occurrence
-                    }
-                }
-            });
-
-            return results.length > 0 ? results : null;
-        };
-
-        // Get Current Minutes in Tbilisi
-        const now = new Date();
-        const tbilisiParts = new Intl.DateTimeFormat('en-US', {
-            timeZone: "Asia/Tbilisi",
-            hour: 'numeric',
-            minute: 'numeric',
-            hour12: false
-        }).formatToParts(now);
-        const h = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
-        const m = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
-        const curMinutes = h * 60 + m;
-
-        let nextTimes = findNextTime(daySchedule, curMinutes);
-
-        // Fallback: Check tomorrow if no time found today
-        if (!nextTimes) {
-            // Calculate tomorrow string safe for Tbilisi Timezone
-            // 1. Get current Tbilisi time
-            const now = new Date();
-            const tbilisiDate = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tbilisi' }));
-
-            // 2. Add 1 day
-            tbilisiDate.setDate(tbilisiDate.getDate() + 1);
-
-            // 3. Format back to YYYY-MM-DD
-            // CAUTION: toISOString uses UTC. We must manually format or use CA locale trick again
-            const tomorrowStr = new Intl.DateTimeFormat('en-CA', {
-                timeZone: 'Asia/Tbilisi',
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit'
-            }).format(tbilisiDate);
-
-            const tmrSchedule = schedule.find(s => s.serviceDates.includes(tomorrowStr));
-            nextTimes = findNextTime(tmrSchedule, -1);
-
-            if (!nextTimes) {
-                // console.warn(`[V3 Debug] No next time found for tomorrow(${ tomorrowStr }) either.`);
-            }
-        }
-
-        if (!nextTimes) {
-            // ... (tomorrow logic) ...
-        } else {
-            console.log(`[V3 Debug] Found next times for today: `, nextTimes);
-        }
-
-        return nextTimes;
-
-    } catch (err) {
-        console.warn(`[V3] Logic Error parsing schedule: `, err);
-    }
-    return null;
-}
-
-// Helper to format minutes from now to HH:mm (Tbilisi Time)
-function formatScheduledTime(minutesFromNow) {
-    const now = new Date();
-    const target = new Date(now.getTime() + minutesFromNow * 60000);
-
-    // Force Tbilisi Timezone display
-    return new Intl.DateTimeFormat('en-GB', {
-        timeZone: "Asia/Tbilisi",
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: false
-    }).format(target);
-}
-
-// Let's implement the DOM sorting helper
-function getMinutesFromNow(timeStr) {
-    if (!timeStr || timeStr === '--:--' || timeStr === '...') return 9999;
-
-    // Parse timeStr (HH:mm) strings
-    const [h, m] = timeStr.split(':').map(Number);
-    if (isNaN(h) || isNaN(m)) return 9999;
-
-    const now = new Date();
-    // Use Tbilisi time components for "current"
-    const tbilisiParts = new Intl.DateTimeFormat('en-US', {
-        timeZone: "Asia/Tbilisi",
-        hour: 'numeric',
-        minute: 'numeric',
-        hour12: false
-    }).formatToParts(now);
-
-    const currH = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
-    const currM = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
-
-    let diff = (h * 60 + m) - (currH * 60 + currM);
-    if (diff < -60) { // Likely tomorrow (e.g. now 23:00, bus 01:00)
-        diff += 24 * 60;
-    }
-    return diff;
-}
-
-function sortArrivalsList() {
-    const listEl = document.getElementById('arrivals-list');
-    if (!listEl) return;
-
-    const allChildren = Array.from(listEl.children);
-    // Exclude the route chips container from sorting
-    const items = allChildren.filter(child => !child.classList.contains('all-routes-container'));
-    const nonSorted = allChildren.filter(child => child.classList.contains('all-routes-container'));
-
-    // Sort logic
-    items.sort((a, b) => {
-        const minA = parseInt(a.getAttribute('data-minutes') || '99999');
-        const minB = parseInt(b.getAttribute('data-minutes') || '99999');
-
-        const diff = minA - minB;
-        if (diff !== 0) return diff;
-
-        // Secondary: Route Number
-        const nameA = a.querySelector('.route-number')?.textContent?.trim() || '';
-        const nameB = b.querySelector('.route-number')?.textContent?.trim() || '';
-        return nameA.localeCompare(nameB, undefined, { numeric: true });
-    });
-
-    // Re-append: non-sorted items first (chips), then sorted arrivals
-    nonSorted.forEach(item => listEl.appendChild(item));
-    items.forEach(item => listEl.appendChild(item));
-}
-
-// getV3ScheduleSync removed
-function getV3ScheduleSync(routeShortName, stopId) {
-    return null;
-}
-
-function renderArrivals(arrivals, currentStopId = null) {
-    const listEl = document.getElementById('arrivals-list');
-    listEl.innerHTML = '';
-
-    const stopId = currentStopId || window.currentStopId;
-
-    // 0. Prepend All Routes (Chips)
-    if (window.lastRoutes) {
-        const tiles = renderAllRoutes(window.lastRoutes, arrivals);
-        if (tiles) listEl.appendChild(tiles);
-    }
-
-    // 1. Identify "Missing" Routes
-    let extraRoutes = [];
-    if (stopId) {
-        const equivalentIds = getEquivalentStops(stopId, false);
-        const uniqueRoutesMap = new Map();
-
-        equivalentIds.forEach(eqId => {
-            const routes = stopToRoutesMap.get(eqId) || [];
-            routes.forEach(r => {
-                // Deduplicate by shortName + key attributes
-                // User requirement: Keep routes that "stop twice" (loops/pseudo-twins).
-                // These often have same Number and same Destination, but distinct Route IDs (different directions in DB).
-                // So we MUST distinguish by Route ID (`r.id`).
-                // This might re-introduce "Rustavi duplicates" if they are distinct IDs but effectively same route.
-                // But hiding a valid loop stop is worse than showing a technical duplicate.
-                const key = `${r.shortName}_${r.longName || ''}_${r.id} `;
-
-                if (stopId === '1354' && String(r.shortName) === '329') {
-                    // console.log(`[Dedup Debug]1354 / 329: Key = "${key}", ID = ${ r.id }, Source LongName = "${r.longName}"`);
-                }
-
-                if (!uniqueRoutesMap.has(key)) {
-                    uniqueRoutesMap.set(key, r);
-                } else if (stopId === '1354' && String(r.shortName) === '329') {
-                    // console.log(`[Dedup Debug]1354 / 329: DROPPED duplicate for key "${key}"(ID = ${ r.id })`);
-                }
-            });
-        });
-
-        const arrivalRouteShortNames = new Set(arrivals.map(a => String(a.shortName)));
-
-        // Filter out routes that are already in arrivals
-        extraRoutes = Array.from(uniqueRoutesMap.values()).filter(r => !arrivalRouteShortNames.has(String(r.shortName)));
-    }
-
-    // 2. Filter Logic (User Route Filter)
-    if (filterManager.state.active) {
-        arrivals = arrivals.filter(a => {
-            const r = allRoutes.find(route => String(route.shortName) === String(a.shortName));
-            return r && filterManager.state.filteredRoutes.includes(r.id);
-        });
-        extraRoutes = extraRoutes.filter(r => filterManager.state.filteredRoutes.includes(r.id));
-    }
-
-    // 2.5 Show Minibuses Filter
-    /* console.log(`[Arrivals Debug] ExtraRoutes before filter: ${ extraRoutes.length } `); */
-    arrivals = arrivals.filter(a => {
-        // Precise matching using ID if possible, fallback to shortName
-        const r = allRoutes.find(route => String(route.id) === String(a.id)) ||
-            allRoutes.find(route => String(route.shortName) === String(a.shortName));
-        return shouldShowRoute(a.shortName, r);
-    });
-    extraRoutes = extraRoutes.filter(r => {
-        const show = shouldShowRoute(r.shortName, r);
-        /* if (!show) console.log(`[Arrivals Debug] Filtered out extraRoute: ${ r.shortName } `); */
-        return show;
-    });
-    console.log(`[Arrivals Debug] ExtraRoutes after filter: ${extraRoutes.length} `);
-
-    // 3. Unified List Creation with Cache Lookup
-    let renderList = [];
-
-    // Add Live Arrivals
-    console.log(`[Arrivals Debug] Processing ${arrivals.length} live arrivals.ShortNames: `, arrivals.map(a => a.shortName));
-    arrivals.forEach(a => {
-        // Robustness: Handle nulls
-        let minutes = 999;
-        if (a.realtime) {
-            minutes = (a.realtimeArrivalMinutes !== undefined && a.realtimeArrivalMinutes !== null) ? a.realtimeArrivalMinutes : 999;
-        } else {
-            minutes = (a.scheduledArrivalMinutes !== undefined && a.scheduledArrivalMinutes !== null) ? a.scheduledArrivalMinutes : 999;
-        }
-
-        // Logic to Apply Overrides (Destinations)
-        // Use pattern suffix to determine direction, with optional inversion
-        let directionIndex = 0;
-
-        const matchedRouteForColor = allRoutes.find(r => r.shortName === a.shortName);
-
-        // Get direction from pattern suffix
-        if (a.patternSuffix) {
-            const part = a.patternSuffix.split(':')[0];
-            directionIndex = parseInt(part) || 0;
-        }
-
-        // Debug for specific routes (LIVE arrivals)
-        const shortNameStr = String(a.shortName);
-        if (shortNameStr.includes('466') || shortNameStr.includes('329')) {
-            console.log(`[Live Direction Debug] Route "${shortNameStr}": patternSuffix = "${a.patternSuffix}" -> initial directionIndex = ${directionIndex} `);
-        }
-
-        // Check if this route has inverted direction mapping
-        // Some routes have API pattern 0 = our dest1, pattern 1 = dest0
-        const invertDirection = matchedRouteForColor?._overrides?.invertDirection === true;
-        if (invertDirection) {
-            directionIndex = directionIndex === 0 ? 1 : 0;
-        }
-
-        // Debug
-        if (shortNameStr.includes('466') || shortNameStr.includes('329')) {
-            console.log(`[Live Direction Debug] Route "${shortNameStr}": patternSuffix = "${a.patternSuffix}", invertDirection = ${invertDirection} -> final directionIndex = ${directionIndex} `);
-        }
-
-        const displayHeadsign = getPatternHeadsign(matchedRouteForColor, directionIndex, a.headsign);
-
-        renderList.push({
-            type: 'live',
-            data: a,
-            minutes: minutes,
-            // Pre-calculate display strings
-            color: getRouteDisplayColor(allRoutes.find(r => r.shortName === a.shortName) || { ...a, id: a.id }),
-            headsign: displayHeadsign,
-            directionIndex: directionIndex
-        });
-    });
-
-    // Add Extra Routes (Try Sync Cache)
-    extraRoutes.forEach(r => {
-        // Try to get time from cache synchronously
-        // Logic changed: Always async
-        const cachedTimeStr = null; // No sync cache access
-        const isAsync = true;
-
-        // Calculate minutes if cached
-        let minutes = 99999;
-        let timeDisplay = '...';
-
-        if (cachedTimeStr) {
-            minutes = getMinutesFromNow(cachedTimeStr);
-            // Smart formatting
-            if (minutes < 60 && minutes >= 0) {
-                timeDisplay = `${minutes} min`;
-            } else {
-                timeDisplay = cachedTimeStr;
-            }
-        }
-
-        renderList.push({
-            type: 'scheduled',
-            data: r,
-            minutes: minutes,
-
-            color: getRouteDisplayColor(r),
-            needsFetch: !cachedTimeStr
-        });
-    });
-
-    // 4. Sort EVERYTHING
-    renderList.sort((a, b) => {
-        const minDiff = a.minutes - b.minutes;
-        if (minDiff !== 0) return minDiff; // Sort by Time
-
-        // Secondary Sort: Route Number
-        const nameA = String(a.data.shortName || '');
-        const nameB = String(b.data.shortName || '');
-        return nameA.localeCompare(nameB, undefined, { numeric: true });
-    });
-
-    if (renderList.length === 0) {
-        const div = document.createElement('div');
-        div.className = 'empty';
-        div.textContent = filterManager.state.active ? 'No arrivals for selected destination' : 'No upcoming arrivals';
-        listEl.appendChild(div);
-        return;
-    }
-
-    // 5. Render Unified List
-    renderList.forEach(item => {
-        const div = document.createElement('div');
-        div.className = 'arrival-item'; // Unified class
-        div.style.borderLeftColor = item.color;
-        div.setAttribute('data-minutes', item.minutes);
-
-        // -- Data Prep --
-        let routeShortName, headsign, timeDisplay, isScheduled, needsDisclaimer, routeIdForClick;
-        let routeColor = item.color;
-
-        if (item.type === 'live') {
-            const a = item.data;
-            routeShortName = a.displayShortName || a.shortName;
-            headsign = item.headsign || a.headsign;
-            isScheduled = !a.realtime;
-            routeIdForClick = a.id; // Use specific ID if available
-
-            // Time Display Logic
-            const rawMins = item.minutes;
-            if (rawMins === 999 || rawMins === null || rawMins === undefined) {
-                timeDisplay = '--:--';
-            } else if (isScheduled && rawMins < 60 && rawMins >= 0) {
-                timeDisplay = `${rawMins} min`;
-            } else if (isScheduled) {
-                timeDisplay = formatScheduledTime(rawMins);
-            } else {
-                timeDisplay = `${rawMins} min`;
-            }
-            if (!timeDisplay || timeDisplay.includes('undefined') || timeDisplay.includes('NaN')) {
-                timeDisplay = '--:--';
-            }
-
-            needsDisclaimer = isScheduled;
-
-            // Resolve proper route object for overrides if possible (re-using logic from prep)
-            // Simplified: we already calculated displayShortName in loop if we could.
-            // But we need routeObj for click handler.
-        } else {
-            // Scheduled
-            const r = item.data;
-            routeShortName = r.customShortName || r.shortName;
-
-            // Heuristic Naming: Match LoopUtils logic
-            // User Feedback: Don't parse non-loop routes if headsign is available.
-            // Priority: Override > API Headsign > Parsed Destination (Heuristic) > Full LongName
-
-            // 0. CHECK OVERRIDES
-            // Resolve fresh route object from allRoutes to ensure we have the latest _overrides
-            // Fuzzy match ID just in case
-            const freshRoute = allRoutes.find(route =>
-                String(route.id) === String(r.id) ||
-                String(route.id) === `1:${r.id} ` ||
-                `1:${route.id} ` === String(r.id)
-            ) || r;
-
-            // Deep Debug for Scheduled 24 structure
-            if (r.shortName === '24') {
-                console.log(`[Sched 24 Structure]ID: ${r.id}, FreshID: ${freshRoute.id} `);
-                console.log(` - Patterns ? `, freshRoute.patterns ? freshRoute.patterns.length : 'None');
-                if (freshRoute.patterns) {
-                    freshRoute.patterns.forEach(p => {
-                        console.log(`   P: ${p.patternSuffix}, Stops: ${p.stops ? p.stops.length : '?'} `);
-                        // Check strict and loose equality for StopID
-                        if (p.stops) console.log(`   Has Stop ${stopId}? ${p.stops.includes(stopId) || p.stops.includes(String(stopId))} `);
-                    });
-                }
-            }
-
-
-
-            let overrideHeadsign = null;
-            if (freshRoute._overrides && freshRoute._overrides.destinations) {
-                // For scheduled items (extraRoutes), we often lack direction context (patternSuffix).
-                // Default to Direction 0? Or try to deduce?
-                // Most extraRoutes are just the generic route object.
-                // We'll try Dir 0 first.
-                // Improve: If we knew the stop sequence/direction for this stop... 
-                // but `stopToRoutesMap` is generic.
-
-                // Try Dir 0 ONLY if we are fairly sure? 
-                // Actually, for scheduled items without direction context, defaulting to Dir 0 
-                // (Forward) is often wrong for the return trip and confuses users.
-                // BETTER: If we don't know the direction, show the FULL LONGNAME (e.g. "Rustavi - Station Square").
-                // Then let the async fetch resolve the specific direction.
-
-                // SO: We SKIP defaulting to destinations[0] here unless we have some hint (which we don't).
-                // overrideHeadsign remains null.
-            }
-
-            if (overrideHeadsign) {
-                headsign = overrideHeadsign;
-            } else if (freshRoute._overrides && freshRoute._overrides.longName) {
-                // Fallback to Overridden LongName (e.g. "Rustavi – Station Square")
-                // This handles cases where we don't know the direction yet, but we want the clean overridden name.
-                const lng = 'en'; // fallback
-                headsign = freshRoute._overrides.longName[lng] || freshRoute._overrides.longName.en || freshRoute._overrides.longName.ka || r.longName;
-            } else if (item.headsign) {
-                headsign = item.headsign;
-            } else {
-                const parsed = LoopUtils.parseRouteName(r.longName);
-                if (parsed.destination) {
-                    headsign = parsed.destination;
-                } else {
-                    headsign = r.longName || '';
-                }
-            }
-
-            isScheduled = true;
-            needsDisclaimer = true;
-            timeDisplay = item.timeDisplay || '--:--';
-
-            // If we have a timeDisplay from cache that is a number, format it
-            if (typeof item.minutes === 'number' && item.minutes < 60 && item.minutes >= 0) {
-                timeDisplay = `${item.minutes} min`;
-            }
-
-            routeIdForClick = r.id;
-        }
-
-        // -- Fallbacks --
-        if (!headsign || headsign === 'undefined') {
-            headsign = 'Destination Unknown';
-        }
-
-        // -- HTML Generation (Unified) --
-        // Structure:
-        // [Route Badge] [Destination       ] [Time]
-        //               [Scheduled (opt)   ]
-
-        // However, the "Live" template was:
-        // [Number] [Destination] [TimeContainer]
-
-        // The "Scheduled" template was:
-        // [Badge] [Details: [Dest] [TimeContainer]]
-
-        // We will use the "Live" template structure for BOTH as it is cleaner and requested.
-
-        const scheduledClass = isScheduled ? 'scheduled-time' : '';
-        const disclaimerHtml = needsDisclaimer ? '<div class="scheduled-disclaimer">Scheduled</div>' : '';
-
-        // Special ID for async update
-        const timeElId = item.type === 'scheduled' ? `time-${item.data.shortName}-${stopId}` : '';
-        const timeElAttr = timeElId ? `id="${timeElId}"` : '';
-
-        const innerContent = `
-            <div class="route-number" style="color: ${routeColor}">${simplifyNumber(routeShortName)}</div>
-            <div class="destination" title="${headsign}">${headsign}</div>
-            <div class="time-container">
-                <div ${timeElAttr} class="led-text ${scheduledClass}">${timeDisplay}</div>
-                ${disclaimerHtml}
-            </div>
-        `;
-
-        div.innerHTML = innerContent;
-
-        // -- Click Handlers --
-        // Resolve Route Object
-        let routeObj = allRoutes.find(r => r.id === routeIdForClick);
-        if (!routeObj && item.data.shortName) {
-            routeObj = allRoutes.find(r => r.shortName === item.data.shortName);
-        }
-
-        if (routeObj) {
-            div.addEventListener('click', () => {
-                showRouteOnMap(routeObj, true, {
-                    preserveBounds: true,
-                    fromStopId: stopId,
-                    targetHeadsign: headsign,
-                    initialDirectionIndex: item.directionIndex
-                });
-            });
-        }
-
-        // Append to list
-        listEl.appendChild(div);
-
-        // -- Async Fetch Hook for Scheduled Items --
-        if (item.type === 'scheduled' && item.needsFetch) {
-            getV3Schedule(item.data.shortName, stopId, item.data.id).then(res => {
-                if (!res) {
-                    // No data found -> --:--
-                    return;
-                }
-
-                // Handle Multiple Arrivals (Loop Route)
-                if (Array.isArray(res) && res.length > 0) {
-                    const firstArrival = res[0];
-                    const minutes = firstArrival.minutes; // Absolute minutes
-
-                    // --- DYNAMIC DIRECTION OVERRIDE ---
-                    let inferredDir = 0; // Default
-
-                    // 1. Try explicit Pattern Suffix (Precision)
-                    if (firstArrival.patternSuffix) {
-                        const part = firstArrival.patternSuffix.split(':')[0]; // "0:25" -> "0"
-                        inferredDir = parseInt(part);
-                        if (isNaN(inferredDir)) inferredDir = 0; // Safety
-
-                        // Debug for specific routes
-                        if (['466', '329'].includes(String(item.data.shortName))) {
-                            console.log(`[Direction Debug] Route ${item.data.shortName}: patternSuffix = "${firstArrival.patternSuffix}" -> direction=${inferredDir} `);
-                        }
-                    }
-                    // 2. Fallback: Infer direction from progress (0.0 - 1.0)
-                    // < 0.5 = Forward (0), >= 0.5 = Backward (1) (Heuristic)
-                    else {
-                        inferredDir = (firstArrival.progress !== undefined && firstArrival.progress >= 0.5) ? 1 : 0;
-
-                        // Debug for specific routes
-                        if (['466', '329'].includes(String(item.data.shortName))) {
-                            console.log(`[Direction Debug] Route ${item.data.shortName}: progress = ${firstArrival.progress} -> direction=${inferredDir} (fallback heuristic)`);
-                        }
-                    }
-
-                    // 3. Apply invertDirection override if set (same as live arrivals)
-                    const matchedRoute = allRoutes.find(r => String(r.shortName) === String(item.data.shortName));
-                    if (matchedRoute?._overrides?.invertDirection === true) {
-                        inferredDir = inferredDir === 0 ? 1 : 0;
-                    }
-
-                    item.directionIndex = inferredDir;
-
-                    // Lookup ID fuzzy
-                    const rId = item.data.id;
-                    const routeId = String(rId);
-                    let ov = window.routesConfig?.routeOverrides?.[routeId];
-                    if (!ov && routeId.includes(':')) ov = window.routesConfig?.routeOverrides?.[routeId.split(':')[1]];
-                    if (!ov && !routeId.includes(':')) ov = window.routesConfig?.routeOverrides?.[`1:${routeId} `];
-
-                    let newHeadsign = null;
-
-                    if (ov && ov.destinations && ov.destinations[inferredDir]) {
-                        const d = ov.destinations[inferredDir];
-                        const lang = 'en'; // fallback
-                        newHeadsign = d.headsign?.[lang] || d.headsign?.en || d.headsign?.ka;
-                    }
-
-                    // Fallback: Parse LongName if no override and we have direction
-                    if (!newHeadsign) {
-                        const longNameToParse = (routeObj && routeObj._overrides && routeObj._overrides.longName &&
-                            (routeObj._overrides.longName.en || routeObj._overrides.longName.ka))
-                            || item.data.longName;
-
-                        const parsed = LoopUtils.parseRouteName(longNameToParse);
-                        if (parsed.origin && parsed.destination) {
-                            if (inferredDir === 1) {
-                                newHeadsign = parsed.origin; // Backward -> Destination is Origin
-                            } else {
-                                newHeadsign = parsed.destination; // Forward -> Destination is Destination
-                            }
-                        }
-                    }
-
-                    if (newHeadsign) {
-                        const destEl = div.querySelector('.destination');
-                        if (destEl) {
-                            destEl.innerText = newHeadsign;
-                            destEl.title = newHeadsign;
-                        }
-                    }
-
-                    // UPDATE TIME UI
-                    const timeEl = document.getElementById(timeElId);
-                    if (timeEl) {
-                        const timeStr = firstArrival.time;
-                        timeEl.textContent = timeStr;
-
-                        // Recalculate minutes relative to now for "X min" display
-                        // We have firstArrival.minutes (absolute day minutes)
-                        // We need minutes from NOW.
-                        const minsFromNow = getMinutesFromNow(timeStr);
-                        div.setAttribute('data-minutes', minsFromNow);
-
-                        if (minsFromNow < 60 && minsFromNow >= 0) {
-                            timeEl.textContent = `${minsFromNow} min`;
-                            // Remove scheduled styling if it looks like live (optional, but requested behavior is usually distinct)
-                        }
-                    }
-
-                } else {
-                    // Single string result (Legacy)
-                    const timeStr = typeof res === 'string' ? res : res.time;
-                    const timeEl = document.getElementById(timeElId);
-                    if (timeEl) {
-                        timeEl.textContent = timeStr;
-                        const mins = getMinutesFromNow(timeStr);
-                        div.setAttribute('data-minutes', mins);
-                        if (mins < 60 && mins >= 0) {
-                            timeEl.textContent = `${mins} min`;
-                        }
-                    }
-                }
-
-                setTimeout(() => sortArrivalsList(), 50);
-            }).catch(err => {
-                console.warn('[V3] Schedule Fetch Error', err);
-            });
-        }
-    });
-
-
-
-    // Initial Sort
-    sortArrivalsList();
-}
 
 // --- REUSABLE: Refresh Stops Logic (Apply Overrides/Merges) ---
 async function refreshStopsLayer(useLocalConfig = false) {
@@ -2617,9 +1773,9 @@ async function refreshStopsLayer(useLocalConfig = false) {
 
             // DEBUG: Log sample data
             const sampleMerges = Object.entries(stopsConfigToUse.merges).slice(0, 5);
-            console.log('[Main DEBUG] Sample merges (pre-norm):', JSON.stringify(sampleMerges));
+            // console.log('[Main DEBUG] Sample merges (pre-norm):', JSON.stringify(sampleMerges));
             const sampleOverrides = Object.entries(stopsConfigToUse.overrides).slice(0, 5);
-            console.log('[Main DEBUG] Sample overrides (pre-norm):', sampleOverrides.map(([k, v]) => `${k}: rot=${v.rotation}`));
+            // console.log('[Main DEBUG] Sample overrides (pre-norm):', sampleOverrides.map(([k, v]) => `${k}: rot=${v.rotation}`));
         } catch (e) {
             console.error('[Main] Failed to load stops config:', e);
             stopsConfigToUse = { overrides: {}, merges: {}, hubs: {} };
@@ -2695,11 +1851,11 @@ async function refreshStopsLayer(useLocalConfig = false) {
     const rustaviOverrides = Object.keys(overrides).filter(id => id.startsWith('r'));
     const rustaviMerges = Object.keys(merges).filter(id => id.startsWith('r'));
     console.log('[Main] Rustavi Matches:', rustaviOverrides.length, 'overrides,', rustaviMerges.length, 'merges');
-    console.log('[Main DEBUG] Normalized merges sample:', JSON.stringify(Object.entries(merges).slice(0, 5)));
-    console.log('[Main DEBUG] RedirectMap size:', redirectMap.size, 'Sample entries:', [...redirectMap.entries()].slice(0, 5));
+    // console.log('[Main DEBUG] Normalized merges sample:', JSON.stringify(Object.entries(merges).slice(0, 5)));
+    // console.log('[Main DEBUG] RedirectMap size:', redirectMap.size, 'Sample entries:', [...redirectMap.entries()].slice(0, 5));
 
     // Build merge mappings
-    console.warn('[Main DEBUG] FRESH CODE v3 - Starting merge build...');
+    // console.warn('[Main DEBUG] FRESH CODE v3 - Starting merge build...');
     try {
         Object.keys(merges).forEach(source => {
             const target = merges[source];
@@ -2707,13 +1863,13 @@ async function refreshStopsLayer(useLocalConfig = false) {
             if (!mergeSourcesMap.has(target)) mergeSourcesMap.set(target, []);
             mergeSourcesMap.get(target).push(source);
         });
-        console.warn('[Main DEBUG] Merge build complete. RedirectMap size:', redirectMap.size);
+        // console.warn('[Main DEBUG] Merge build complete. RedirectMap size:', redirectMap.size);
     } catch (e) {
-        console.error('[Main DEBUG] Error in merge build:', e);
+        // console.error('[Main DEBUG] Error in merge build:', e);
     }
 
     // Build Hub mappings
-    console.warn('[Main DEBUG] Starting hub build...');
+    // console.warn('[Main DEBUG] Starting hub build...');
     try {
         Object.keys(hubs).forEach(hubId => {
             const members = hubs[hubId];
@@ -2724,15 +1880,15 @@ async function refreshStopsLayer(useLocalConfig = false) {
                 hubSourcesMap.set(hubId, members);
             }
         });
-        console.warn('[Main DEBUG] Hub build complete. HubMap size:', hubMap.size);
+        // console.warn('[Main DEBUG] Hub build complete. HubMap size:', hubMap.size);
     } catch (e) {
-        console.error('[Main DEBUG] Error in hub build:', e);
+        // console.error('[Main DEBUG] Error in hub build:', e);
     }
 
-    console.warn('[Main DEBUG] ===== AFTER BUILD =====');
-    console.warn('[Main DEBUG] RedirectMap size:', redirectMap.size, 'MergeSourcesMap size:', mergeSourcesMap.size);
-    console.warn('[Main DEBUG] Sample redirectMap entries:', JSON.stringify([...redirectMap.entries()].slice(0, 5)));
-    console.warn('[Main DEBUG] Sample rawStops IDs:', rawStops.slice(0, 5).map(s => s.id));
+    // console.warn('[Main DEBUG] ===== AFTER BUILD =====');
+    // console.warn('[Main DEBUG] RedirectMap size:', redirectMap.size, 'MergeSourcesMap size:', mergeSourcesMap.size);
+    // console.warn('[Main DEBUG] Sample redirectMap entries:', JSON.stringify([...redirectMap.entries()].slice(0, 5)));
+    // console.warn('[Main DEBUG] Sample rawStops IDs:', rawStops.slice(0, 5).map(s => s.id));
 
     // Filter and Override
     const stops = [];
@@ -2804,15 +1960,15 @@ async function refreshStopsLayer(useLocalConfig = false) {
     // DEBUG: Check if specific stops exist
     const stop806 = freshStops.find(s => s.id === '806' || s.id === '1:806');
     const stop813 = freshStops.find(s => s.id === '813' || s.id === '1:813');
-    console.warn('[Main DEBUG] Stop 806 exists?', !!stop806, stop806?.id);
-    console.warn('[Main DEBUG] Stop 813 exists?', !!stop813, stop813?.id);
-    console.warn('[Main DEBUG] All stop IDs containing "806":', freshStops.filter(s => s.id.includes('806')).map(s => s.id));
+    // console.warn('[Main DEBUG] Stop 806 exists?', !!stop806, stop806?.id);
+    // console.warn('[Main DEBUG] Stop 813 exists?', !!stop813, stop813?.id);
+    // console.warn('[Main DEBUG] All stop IDs containing "806":', freshStops.filter(s => s.id.includes('806')).map(s => s.id));
 
     freshStops.forEach(stop => {
         // If this stop is merged INTO another, skip adding it to map list
         if (merges[stop.id]) {
             if (stop.id === '806' || stop.id === '826') {
-                console.warn('[Main DEBUG] Stop', stop.id, 'FILTERED by merge ->', merges[stop.id]);
+                // console.warn('[Main DEBUG] Stop', stop.id, 'FILTERED by merge ->', merges[stop.id]);
             }
             return;
         }
@@ -2854,7 +2010,7 @@ async function refreshStopsLayer(useLocalConfig = false) {
         if (overrides[stop.id]) {
             const override = { ...overrides[stop.id] };
             if (stop.id === '813') {
-                console.warn('[Main DEBUG] Applying override to stop 813:', override.rotation, override);
+                // console.warn('[Main DEBUG] Applying override to stop 813:', override.rotation, override);
             }
 
             // Special handling for 'name' override (which is {en, ka})
@@ -3112,8 +2268,8 @@ async function updateRouteView(route, options = {}) {
 
         if (originHeadsign && destinationHeadsign && originHeadsign !== destinationHeadsign) {
             document.getElementById('route-info-text').innerHTML = `
-                <div class="origin">${originHeadsign}</div>
-                <div class="destination">→ ${destinationHeadsign}</div>
+                <div class="origin">${originHeadsign} →</div>
+                <div class="destination">${destinationHeadsign}</div>
             `;
         } else {
             document.getElementById('route-info-text').innerHTML = `
@@ -3804,14 +2960,27 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
 
         const targetFeatures = []; // Temporary collection for this target for quality filtering
 
-        // Find connecting routes
-        const originEq = new Set(getEquivalentStops(originId));
+        // Find connecting routes - only from selected origin, not all hub members
+        // Hub equivalents should only be used for excluding destinations, not for route lookup
+        const originIdsForRoutes = new Set();
+        originIdsForRoutes.add(originId);
+        // Include redirect target if this is a redirected stop
+        if (redirectMap.has(originId)) {
+            originIdsForRoutes.add(redirectMap.get(originId));
+        }
+        // Include merge sources if this is a parent stop
+        if (mergeSourcesMap.has(originId)) {
+            mergeSourcesMap.get(originId).forEach(s => originIdsForRoutes.add(s));
+        }
+
         const originRoutesSet = new Set();
-        originEq.forEach(oid => {
+        originIdsForRoutes.forEach(oid => {
             const routes = stopToRoutesMap.get(oid) || [];
             routes.forEach(r => originRoutesSet.add(r));
         });
         const originRoutes = Array.from(originRoutesSet);
+
+
 
         // Group Routes by Path Signature
         const pathGroups = new Map(); // signature -> { routes: [], patternStops: [], pattern: patternObj }
@@ -3828,19 +2997,43 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                 r._details.patterns.some(p => {
                     if (!p.stops) return false;
 
-                    // Iterate once to find first O followed by first T
+                    // For loop routes, we need to check both O→T and T→O directions
+                    // and pick the shorter segment
                     let foundO = -1;
                     let foundT = -1;
+                    let foundT_beforeO = -1; // T that comes before O (for loop routes)
 
                     for (let i = 0; i < p.stops.length; i++) {
                         const sId = p.stops[i].id;
                         const normId = redirectMap.get(sId) || sId;
 
-                        if (foundO === -1 && originEq.has(normId)) {
+                        if (foundO === -1 && originIdsForRoutes.has(normId)) {
                             foundO = i;
                         } else if (foundO !== -1 && targetEq.has(normId)) {
                             foundT = i;
                             break; // Found first T after O, stop.
+                        }
+                        // Track if we found T before O (for loop detection)
+                        if (foundO === -1 && targetEq.has(normId)) {
+                            foundT_beforeO = i;
+                        }
+                    }
+
+                    // For loop routes: if we found T before O AND T after O,
+                    // compare segment lengths and pick shorter one
+                    if (foundO !== -1 && foundT !== -1 && foundT_beforeO !== -1) {
+                        const segmentLengthForward = foundT - foundO;
+                        const segmentLengthBackward = foundO - foundT_beforeO;
+
+                        // If backward segment is shorter, use T→O segment instead
+                        if (segmentLengthBackward < segmentLengthForward) {
+                            segmentStops = p.stops.slice(foundT_beforeO, foundO + 1).map(s => {
+                                const normId = redirectMap.get(s.id) || s.id;
+                                const refStop = allStops.find(as => as.id === normId);
+                                return refStop ? { ...s, id: normId, lat: refStop.lat, lon: refStop.lon } : { ...s, id: normId };
+                            });
+                            matchedPattern = p;
+                            return true;
                         }
                     }
 
@@ -3852,9 +3045,38 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                             // Ensure we use the stop object ID but potentially override coords
                             return refStop ? { ...s, id: normId, lat: refStop.lat, lon: refStop.lon } : { ...s, id: normId };
                         });
+
+                        // DEBUG: Log segment info
+                        if (stateChanged && (originId === '3963' || originId === 3963)) {
+                            console.log(`[Segment Debug] Route ${r.shortName}: O=${foundO}, T=${foundT}, segment=${segmentStops.length} stops, target=${targetId}`);
+                        }
+
                         matchedPattern = p;
                         return true;
                     }
+
+                    // Wrapped route case: T only exists before O (at index 0)
+                    // Special case for circular routes 387/397: bus continues from last to first stop
+                    const CIRCULAR_ROUTES = ['387', '397'];
+                    if (CIRCULAR_ROUTES.includes(String(r.shortName)) && foundO !== -1 && foundT === -1 && foundT_beforeO !== -1 && foundT_beforeO === 0) {
+                        const firstStop = p.stops[0];
+                        // Create wrapped segment: origin → end of pattern + first stop
+                        const afterOrigin = p.stops.slice(foundO).map(s => {
+                            const normId = redirectMap.get(s.id) || s.id;
+                            const refStop = allStops.find(as => as.id === normId);
+                            return refStop ? { ...s, id: normId, lat: refStop.lat, lon: refStop.lon } : { ...s, id: normId };
+                        });
+                        // Add the first stop (target) at the end of the segment
+                        const firstStopHydrated = (() => {
+                            const normId = redirectMap.get(firstStop.id) || firstStop.id;
+                            const refStop = allStops.find(as => as.id === normId);
+                            return refStop ? { ...firstStop, id: normId, lat: refStop.lat, lon: refStop.lon } : { ...firstStop, id: normId };
+                        })();
+                        segmentStops = [...afterOrigin, firstStopHydrated];
+                        matchedPattern = p;
+                        return true;
+                    }
+
                     return false;
                 });
             } else if (r.stops) {
@@ -3866,7 +3088,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                 for (let i = 0; i < stops.length; i++) {
                     const sId = stops[i];
                     const normId = redirectMap.get(sId) || sId;
-                    if (foundO === -1 && originEq.has(normId)) {
+                    if (foundO === -1 && originIdsForRoutes.has(normId)) {
                         foundO = i;
                     } else if (foundO !== -1 && targetEq.has(normId)) {
                         foundT = i;
@@ -3962,6 +3184,12 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
 
             const selectedPatternStops = group.stops.map(s => [s.lon, s.lat]);
 
+            // DEBUG: Check if stops have valid coordinates
+            if (stateChanged && (originId === '3963' || originId === 3963)) {
+                const validCoords = selectedPatternStops.filter(c => c[0] && c[1]);
+                console.log(`[Coords Debug] group.stops=${group.stops.length}, valid=${validCoords.length}, first=${JSON.stringify(group.stops[0])}`);
+            }
+
             // Geometry Logic
             let finalCoordinates = null;
 
@@ -3985,9 +3213,35 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                     if (bestPattern._decodedPolyline) {
                         // Using polyline from pattern for accurate route geometry
                         try {
-                            const sliced = slicePolyline(bestPattern._decodedPolyline, originStop, targetStop);
-                            // Polyline slice succeeded
-                            if (sliced) finalCoordinates = sliced;
+                            // Pass intermediate stops to guide slicing for loop routes
+                            // DEBUG: Log stop coords being passed to slicePolyline
+                            console.log(`[Slice Debug] originStop: lat=${originStop.lat}, lon=${originStop.lon}`);
+                            console.log(`[Slice Debug] targetStop: lat=${targetStop.lat}, lon=${targetStop.lon}`);
+                            const sliced = slicePolyline(bestPattern._decodedPolyline, originStop, targetStop, group.stops);
+
+                            // DEBUG: See what slicePolyline returns
+                            if (sliced) {
+                                const firstPt = sliced[0];
+                                const lastPt = sliced[sliced.length - 1];
+                                const dLon = lastPt[0] - firstPt[0];
+                                const dLat = lastPt[1] - firstPt[1];
+                                const distSq = dLon * dLon + dLat * dLat;
+                                console.log(`[Slice Debug] points=${sliced.length}, distSq=${distSq.toFixed(8)}, first=${firstPt}, last=${lastPt}`);
+                            }
+
+                            // Sanity check: reject sliced polylines that are too short or don't span enough distance
+                            // This prevents garbage 2-point results from replacing good spline data
+                            if (sliced && sliced.length >= 5) {
+                                const firstPt = sliced[0];
+                                const lastPt = sliced[sliced.length - 1];
+                                const dLon = lastPt[0] - firstPt[0];
+                                const dLat = lastPt[1] - firstPt[1];
+                                const distSq = dLon * dLon + dLat * dLat;
+                                // Require at least ~100m span (0.001 degrees ≈ 100m)
+                                if (distSq > 0.000001) {
+                                    finalCoordinates = sliced;
+                                }
+                            }
                         } catch (e) {
                             console.warn('Polyline slice failed', e);
                         }
@@ -4029,7 +3283,33 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             // Let's just add the best available geometry. 
             // If awaiting fetch, simple. If fetched, accurate.
 
-            const activeCoords = finalCoordinates || simpleCoordinates;
+            // Only show high-quality polylines (actual route geometry)
+            // Skip low-quality spline fallbacks - no line is better than a wrong straight line
+            if (!finalCoordinates) {
+                // DEBUG: Check why no finalCoordinates
+                if (stateChanged) {
+                    const hasPattern = !!group.pattern;
+                    const hasSuffix = hasPattern && !!group.pattern.suffix;
+                    const hasDecoded = hasPattern && !!group.pattern._decodedPolyline;
+                    const isFetching = hasPattern && !!group.pattern._fetchingPolyline;
+                    console.log(`[Polyline Debug] No finalCoords. hasPattern=${hasPattern}, hasSuffix=${hasSuffix}, hasDecoded=${hasDecoded}, isFetching=${isFetching}, isPersistent=${isPersistent}`);
+                }
+
+                // Trigger geometry fetch if not available
+                // Use network fetch for persistent selections (skip fetching check), cache-only for hover
+                if (group.pattern && group.pattern.suffix && !group.pattern._decodedPolyline) {
+                    // For persistent selections, allow refetch even if already fetching
+                    if (isPersistent || !group.pattern._fetchingPolyline) {
+                        const bestRoute = group.routes[0];
+                        const fetchOptions = isPersistent ? {} : { strategy: 'cache-only' };
+                        console.log(`[Polyline Debug] Fetching geometry for route ${bestRoute.id}/${bestRoute.shortName}, suffix=${group.pattern.suffix}`);
+                        fetchAndCacheGeometry(bestRoute, group.pattern, fetchOptions);
+                    }
+                }
+                return; // Skip this path group - wait for high quality data
+            }
+
+            const activeCoords = finalCoordinates;
 
             // Safety: Ensure color is never null
             if (!color) {
@@ -4038,7 +3318,14 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             }
 
             // Quality Indicator
-            const quality = finalCoordinates ? 'high' : 'low';
+            const quality = 'high'; // We only reach here with finalCoordinates
+
+            // DEBUG: Check coordinates validity
+            if (stateChanged && activeCoords && activeCoords.length > 0) {
+                const first = activeCoords[0];
+                const last = activeCoords[activeCoords.length - 1];
+                console.log(`[Polyline Debug] quality=${quality}, color=${color}, coords: first=[${first}], last=[${last}], total=${activeCoords.length}`);
+            }
 
             targetFeatures.push({
                 type: 'Feature',
@@ -4056,11 +3343,8 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
         });
 
         // Dedup/Filter Logic per Target
-        // If we have at least one High quality path (polyline) to this target,
-        // hide the Low quality paths (splines) to reduce clutter.
-        // This solves the issue of seeing both a "nice line" and a "straight line".
-        const hasHigh = targetFeatures.some(f => f.properties.quality === 'high');
-        const finalFeatures = hasHigh ? targetFeatures.filter(f => f.properties.quality === 'high') : targetFeatures;
+        // All features are now high quality (we skip low quality above)
+        const finalFeatures = targetFeatures;
 
         // Quality filter: prefer high-quality polylines over splines
 
@@ -4078,7 +3362,12 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
     // Update Source
     const source = map.getSource('filter-connection');
     if (source) {
+        if (features.length > 0 && stateChanged) {
+            console.log(`[Polyline Debug] Setting ${features.length} features to filter-connection source`);
+        }
         source.setData({ type: 'FeatureCollection', features: features });
+    } else {
+        console.warn('[Polyline Debug] filter-connection source NOT FOUND!');
     }
 
     // Switch to Data-Driven Styling if needed
@@ -4086,6 +3375,8 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
         map.setPaintProperty('filter-connection-line', 'line-color', ['get', 'color']);
         map.setPaintProperty('filter-connection-line', 'line-width', 4); // Fixed width or data driven
         map.setPaintProperty('filter-connection-line', 'line-opacity', 0.8);
+    } else {
+        console.warn('[Polyline Debug] filter-connection-line layer NOT FOUND!');
     }
 }
 
@@ -4130,11 +3421,11 @@ function getCatmullRomSpline(points, tension = 0.25, numOfSegments = 16) {
 
 // --- Polyline Slicing & Fetching Helpers ---
 
-function slicePolyline(points, originStop, targetStop) {
+function slicePolyline(points, originStop, targetStop, intermediateStops = null) {
     if (!points || points.length < 2) return null;
 
     // Helper: Find nearest index within a range, preferring the FIRST occurrence (cluster)
-    const getNearestIndex = (pt, startIndex = 0) => {
+    const getNearestIndex = (pt, startIndex = 0, endIndex = points.length) => {
         let minDist = Infinity;
         let globalBestIndex = -1;
 
@@ -4142,27 +3433,21 @@ function slicePolyline(points, originStop, targetStop) {
         let currentClusterMinDist = Infinity;
         let foundFirstCluster = false;
 
-        // Threshold: Approx 30m radius squared (0.00027 deg)^2 ? 
-        // 1 deg ~ 111km. 1 meter ~ 0.000009 deg.
-        // 30 meters ~ 0.00027 deg.
-        // Squared ~ 0.00000007 (7e-8).
+        // Threshold: Approx 30m radius squared
         const THRESHOLD_SQ = 0.0000001;
 
-        for (let i = startIndex; i < points.length; i++) {
+        for (let i = startIndex; i < endIndex; i++) {
             const lng = points[i][0];
             const lat = points[i][1];
 
             const d = (lng - pt.lon) ** 2 + (lat - pt.lat) ** 2;
 
-            // Track Global Best as fallback
             if (d < minDist) {
                 minDist = d;
                 globalBestIndex = i;
             }
 
-            // Cluster Logic
             if (d < THRESHOLD_SQ) {
-                // We are inside a "valid match" zone
                 if (!foundFirstCluster) {
                     if (d < currentClusterMinDist) {
                         currentClusterMinDist = d;
@@ -4170,37 +3455,125 @@ function slicePolyline(points, originStop, targetStop) {
                     }
                 }
             } else {
-                // Outside valid zone
                 if (currentClusterBestIndex !== -1 && !foundFirstCluster) {
-                    // We just finished the first cluster. Lock it in.
                     foundFirstCluster = true;
                 }
             }
         }
 
-        // Return best of first cluster if found
         if (foundFirstCluster) return currentClusterBestIndex;
-        // Edge case: Cluster extended to the end of the line
         if (currentClusterBestIndex !== -1) return currentClusterBestIndex;
-
         return globalBestIndex;
     };
 
-    // 1. Find Origin Index
-    const idxOriginal = getNearestIndex(originStop);
-    if (idxOriginal === -1) return null;
+    // NEW APPROACH: If we have intermediate stops, use them to guide finding the correct segment
+    // This is essential for loop routes where each stop appears twice on the polyline
+    if (intermediateStops && intermediateStops.length >= 2) {
+        // First, find ALL occurrences of the first stop on the polyline
+        // For loop routes, the same stop may appear at multiple positions
+        const firstStop = intermediateStops[0];
+        if (!firstStop.lat || !firstStop.lon) {
+            // Fall through to fallback
+        } else {
+            const THRESHOLD_SQ = 0.0000001; // ~30m
+            const firstStopOccurrences = [];
 
-    // 2. Find Target Index (Forward Search ONLY)
-    const idxTarget = getNearestIndex(targetStop, idxOriginal);
+            for (let i = 0; i < points.length; i++) {
+                const d = (points[i][0] - firstStop.lon) ** 2 + (points[i][1] - firstStop.lat) ** 2;
+                if (d < THRESHOLD_SQ) {
+                    // Found a match - record the cluster center
+                    let clusterBest = i;
+                    let clusterMinDist = d;
+                    // Skip through the cluster to avoid duplicates
+                    while (i + 1 < points.length) {
+                        const d2 = (points[i + 1][0] - firstStop.lon) ** 2 + (points[i + 1][1] - firstStop.lat) ** 2;
+                        if (d2 < THRESHOLD_SQ) {
+                            if (d2 < clusterMinDist) {
+                                clusterMinDist = d2;
+                                clusterBest = i + 1;
+                            }
+                            i++;
+                        } else {
+                            break;
+                        }
+                    }
+                    firstStopOccurrences.push(clusterBest);
+                }
+            }
 
-    if (idxTarget === -1) return null;
+            // Try each occurrence and find the one that gives the best (shortest) valid path
+            let bestResult = null;
+            let bestLength = Infinity;
 
-    if (idxOriginal <= idxTarget) {
-        return points.slice(idxOriginal, idxTarget + 1);
+            for (const startIdx of firstStopOccurrences) {
+                // Try to trace the path from this starting position
+                const stopIndices = [{ stopId: firstStop.id, idx: startIdx }];
+                let searchStart = startIdx;
+                let valid = true;
+
+                for (let i = 1; i < intermediateStops.length; i++) {
+                    const stop = intermediateStops[i];
+                    if (!stop.lat || !stop.lon) continue;
+
+                    // Skip consecutive duplicate stop IDs (avoid failing on same stop at same position)
+                    const prevStop = stopIndices[stopIndices.length - 1];
+                    if (prevStop && prevStop.stopId === stop.id) {
+                        continue; // Same stop ID as previous, skip it
+                    }
+
+                    const idx = getNearestIndex(stop, searchStart);
+                    // console.log(`[Slice Debug] Stop ${i}/${intermediateStops.length}: ${stop.id} at [${stop.lat}, ${stop.lon}] -> idx=${idx} (searchStart=${searchStart})`);
+                    if (idx !== -1 && idx > searchStart) {
+                        stopIndices.push({ stopId: stop.id, idx });
+                        searchStart = idx;
+                    } else {
+                        // console.log(`[Slice Debug] FAILED to find stop ${stop.id} after idx ${searchStart}`);
+                        valid = false;
+                        break;
+                    }
+                }
+
+                if (valid && stopIndices.length >= 2) {
+                    const firstIdx = stopIndices[0].idx;
+                    const lastIdx = stopIndices[stopIndices.length - 1].idx;
+                    const segmentLength = lastIdx - firstIdx;
+                    console.log(`[Slice Debug] Valid path found: firstIdx=${firstIdx}, lastIdx=${lastIdx}, segmentLength=${segmentLength}`);
+
+                    if (segmentLength > 0 && segmentLength < bestLength) {
+                        bestLength = segmentLength;
+                        bestResult = points.slice(firstIdx, lastIdx + 1);
+                    }
+                }
+            }
+
+            if (bestResult) {
+                console.log(`[Slice Debug] Returning best result with ${bestResult.length} points`);
+                return bestResult;
+            }
+        }
+    }
+
+    // FALLBACK: Original approach for non-loop routes or when intermediate stops aren't available
+    const idxOrigin = getNearestIndex(originStop);
+    if (idxOrigin === -1) return null;
+
+    const idxTargetForward = getNearestIndex(targetStop, idxOrigin);
+    const idxTargetBackward = getNearestIndex(targetStop, 0, idxOrigin);
+
+    const forwardLength = idxTargetForward !== -1 ? idxTargetForward - idxOrigin : Infinity;
+    const backwardLength = idxTargetBackward !== -1 ? idxOrigin - idxTargetBackward : Infinity;
+
+    if (idxTargetBackward !== -1 && backwardLength < forwardLength) {
+        return points.slice(idxTargetBackward, idxOrigin + 1).reverse();
+    }
+
+    if (idxTargetForward !== -1 && idxOrigin <= idxTargetForward) {
+        return points.slice(idxOrigin, idxTargetForward + 1);
     }
 
     return null;
 }
+
 
 // fetchRoutePolylineV3 definition removed (moved to api.js)
 
@@ -4370,21 +3743,21 @@ function applyRouteOverrides() {
 
         // Debug specific route
         if (route.id === '1:minibusR1265' || route.id === 'minibusR1265') {
-            console.log(`[Config Debug] Route 466 ID: ${route.id}`);
-            console.log(`[Config Debug] Direct lookup:`, window.routesConfig.routeOverrides[route.id]);
-            console.log(`[Config Debug] Found override:`, !!override, override);
+            // console.log(`[Config Debug] Route 466 ID: ${route.id}`);
+            // console.log(`[Config Debug] Direct lookup:`, window.routesConfig.routeOverrides[route.id]);
+            // console.log(`[Config Debug] Found override:`, !!override, override);
         }
 
         // Debug Rustavi routes
         if (['20', '21', '22', '23', '24', '10'].includes(route.shortName)) {
-            console.log(`[Config Debug] Rustavi route ${route.shortName} ID: "${route.id}"`);
-            console.log(`[Config Debug] Direct lookup:`, window.routesConfig.routeOverrides[route.id]);
+            // console.log(`[Config Debug] Rustavi route ${route.shortName} ID: "${route.id}"`);
+            // console.log(`[Config Debug] Direct lookup:`, window.routesConfig.routeOverrides[route.id]);
             if (route.id.includes(':')) {
                 const stripped = route.id.split(':')[1];
-                console.log(`[Config Debug] Stripped "${stripped}" lookup:`, window.routesConfig.routeOverrides[stripped]);
-                console.log(`[Config Debug] "1:${stripped}" lookup:`, window.routesConfig.routeOverrides[`1:${stripped}`]);
+                // console.log(`[Config Debug] Stripped "${stripped}" lookup:`, window.routesConfig.routeOverrides[stripped]);
+                // console.log(`[Config Debug] "1:${stripped}" lookup:`, window.routesConfig.routeOverrides[`1:${stripped}`]);
             }
-            console.log(`[Config Debug] Found override:`, !!override, override);
+            // console.log(`[Config Debug] Found override:`, !!override, override);
         }
 
         // DEBUG: Log first 3 routes to check ID format
@@ -4430,6 +3803,46 @@ setupEditTools(map, {
     setSheetState,
     renderAllRoutes,
     checkDirtyState: () => { } // handled internally or not needed
+});
+
+// --- Keyboard Listeners ---
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        // 1. All Routes Editor (High priority Modal)
+        const allRoutesEditor = document.getElementById('all-routes-editor');
+        if (allRoutesEditor && !allRoutesEditor.classList.contains('hidden')) {
+            document.getElementById('close-all-routes-editor')?.click();
+            return;
+        }
+
+        // 2. Search Suggestions
+        const suggestions = document.getElementById('search-suggestions');
+        if (suggestions && !suggestions.classList.contains('hidden')) {
+            suggestions.classList.add('hidden');
+            document.getElementById('search-input')?.blur();
+            return;
+        }
+
+        // 3. Settings Menu
+        const settingsMenu = document.getElementById('map-menu-popup');
+        if (settingsMenu && !settingsMenu.classList.contains('hidden')) {
+            settingsMenu.classList.add('hidden');
+            return;
+        }
+
+        // 4. Sheets (Step-by-step: Route Info then Info Panel)
+        const routeInfo = document.getElementById('route-info');
+        if (routeInfo && !routeInfo.classList.contains('hidden')) {
+            document.getElementById('close-route-info')?.click();
+            return;
+        }
+
+        const infoPanel = document.getElementById('info-panel');
+        if (infoPanel && !infoPanel.classList.contains('hidden')) {
+            document.getElementById('close-panel')?.click();
+            return;
+        }
+    }
 });
 
 loadRoutesConfig();

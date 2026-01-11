@@ -2,14 +2,15 @@
 .arrivals-list {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
 }
 
 .arrival-item {
     display: flex;
+    flex-direction: row;
     justify-content: space-between;
-    align-items: center;
-    padding: 12px;
+    align-items: stretch;
+    padding: 0;
     background: var(--bg-panel);
     border-radius: 8px;
     border-left: 4px solid var(--primary);
@@ -19,24 +20,85 @@
     flex-shrink: 0;
 }
 
-.arrival-item:hover {
-    background: var(--bg-secondary);
+@media (hover: hover) {
+    .arrival-item:hover {
+        background: var(--bg-secondary);
+    }
+}
+
+/* Two-column layout */
+.arrival-card-left {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+.arrival-card-right {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 10px 14px 10px 8px;
+    flex-shrink: 0;
+}
+
+.arrival-card-top {
+    display: flex;
+    align-items: flex-start;
+    padding-top: 10px;
+    padding-bottom: 4px;
+    padding-left: 10px;
+    padding-right: 8px;
+}
+
+.arrival-card-bottom {
+    padding-bottom: 10px;
+    padding-left: 10px;
+    padding-right: 8px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    min-height: 10px;
+    line-height: 1.4;
+}
+
+.schedule-times {
+    font-weight: inherit;
+    white-space: nowrap;
+    display: inline;
+}
+
+.interval-desc {
+    display: inline;
+}
+
+/* Larger arrival time in right column */
+.arrival-item .led-text,
+body.dark-mode .arrival-item .led-text {
+    font-size: 1.75rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0;
+    font-feature-settings: 'zero';
 }
 
 .route-number {
     font-weight: 700;
-    font-size: 1.125rem;
+    font-size: 1.250rem;
     color: var(--primary);
+    line-height: 1;
+    width: 38px;
+    flex-shrink: 0;
 }
 
 .destination {
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-    margin-left: 8px;
+    font-size: 1.250rem;
+    color: var(--text-main);
+    margin-left: 12px;
     flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    line-height: 1;
 }
 
 .time {
@@ -51,35 +113,35 @@
 .time-container {
     display: flex;
     flex-direction: column;
-    align-items: flex-end;
-    gap: 2px;
+    align-items: center;
+    justify-content: center;
 }
 
-.time.scheduled-time {
-    background: #f3f4f6;
-    color: #6b7280;
+/* Target led-text specifically since that's what we use now */
+.led-text.scheduled-time {
+    color: #9ca3af !important;
+    /* Force gray */
+    text-shadow: none !important;
+    /* Remove glow */
     font-weight: 500;
 }
 
-.scheduled-disclaimer {
-    font-family: 'Inter', sans-serif;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-top: 2px;
-    color: var(--text-secondary);
-    text-shadow: none;
+/* Ensure dark mode also gets gray */
+body.dark-mode .led-text.scheduled-time {
+    color: #6b7280 !important;
+    /* Darker gray for dark mode? Or lighter? */
+    /* actually #9ca3af is decent for dark mode too (light gray). #6b7280 is darker. */
+    /* Let's use a nice slate gray for both or adapt. */
+    color: #9ca3af !important;
+    text-shadow: none !important;
 }
 
-body.dark-mode .scheduled-disclaimer {
-    color: #FE622C;
-    text-shadow: 0 0 2px #FE622C;
-}
+
 
 /* All Routes Container (wrapper around tiles) */
 .all-routes-container {
     margin-top: 0;
-    margin-bottom: 16px;
+    margin-bottom: 8px;
 }
 
 /* Route Tiles */
@@ -94,12 +156,11 @@ body.dark-mode .scheduled-disclaimer {
     background: var(--bg-secondary);
     border: none;
     border-radius: 6px;
-    padding: 6px 0;
+    padding: 4px 0;
     font-weight: 600;
     font-size: 0.95rem;
     color: var(--text-main);
     cursor: pointer;
-    transition: all 0.2s ease;
     text-align: center;
     min-width: 42px;
     max-width: 60px;
@@ -118,9 +179,21 @@ body.dark-mode .scheduled-disclaimer {
     pointer-events: none;
 }
 
-.route-tile:hover {
-    opacity: 0.8;
-    transform: translateY(-1px);
+@keyframes urgent-pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+/* Urgent arrival fading animation for ≤2 min live arrivals */
+.arrival-time.urgent-arrival {
+    animation: urgent-pulse 1000ms ease-in-out infinite;
 }
 
 .route-tile:active {
@@ -132,19 +205,14 @@ body.dark-mode .scheduled-disclaimer {
     pointer-events: none;
 }
 
-/* Route Info Card Card Polish */
-.route-info-header-content {
-    display: contents;
-}
 
 .route-info-details {
     display: flex;
     flex-direction: column;
     gap: 1px;
     min-width: 0;
-    flex: 999 1 240px;
-    order: 3;
-    margin-top: 4px;
+    width: 100%;
+    margin-top: 8px;
 }
 
 .route-info-details .origin {
@@ -162,6 +230,7 @@ body.dark-mode .scheduled-disclaimer {
     font-size: 1.15rem;
     /* Slightly smaller to fit better */
     line-height: 1.2;
+    margin: 0;
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -190,7 +259,7 @@ body.dark-mode .scheduled-disclaimer {
     color: white;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    order: 1;
+    width: fit-content;
     /* Stay at the start */
 }
 
@@ -268,7 +337,7 @@ body.dark-mode .route-info-number {
     width: 100%;
     background: none;
     border: none;
-    padding: 0 20px 12px 20px;
+    padding: 0 20px 0 20px;
     cursor: pointer;
     text-align: left;
     transition: all 0.2s ease;

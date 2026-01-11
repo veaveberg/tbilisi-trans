@@ -141,17 +141,17 @@ export function extractOverrides(rows, idColumn = 'id') {
                     // Simple fields
                     override[fieldName] = value;
                 }
-            } else if (key === 'mergeParent' || key === 'hubTarget' || key === 'rotation' || key === 'invertDirection') {
+            } else if (key === 'mergeParent' || key === 'hubTarget' || key === 'rotation' || key === 'invertDirection' || key === 'isLoop') {
                 // Special non-override fields that should be included
                 if (key === 'rotation') {
                     override[key] = parseFloat(value);
-                } else if (key === 'invertDirection') {
+                } else if (key === 'invertDirection' || key === 'isLoop') {
                     override[key] = value.toLowerCase() === 'true' || value === '1';
                 } else {
                     override[key] = value;
                 }
                 if (key === 'rotation' && id && id.includes('813')) {
-                    console.log('[CSV DEBUG] Extracted rotation for', id, ':', value, '->', override[key]);
+                    // console.log('[CSV DEBUG] Extracted rotation for', id, ':', value, '->', override[key]);
                 }
             }
         });

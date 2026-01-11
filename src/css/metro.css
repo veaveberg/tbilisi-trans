@@ -1,18 +1,17 @@
 /* --- Metro Specific UI --- */
 .led-text {
-    font-family: 'Roboto Mono', monospace;
+    font-family: 'Matrix Sans', monospace;
     color: var(--text-main);
     text-shadow: none;
     padding: 0;
     font-size: 1.75rem;
     font-weight: 700;
-    line-height: 1;
-    display: inline-block;
+    line-height: 0.9;
+    display: block;
     letter-spacing: -1px;
 }
 
 body.dark-mode .led-text {
-    font-family: 'Matrix Sans', monospace;
     color: #FE622C;
     text-shadow: 0 0 5px #fe602c48;
     font-size: 1.75rem;
@@ -26,6 +25,7 @@ body.dark-mode .led-text {
 
 .metro-header {
     margin-bottom: 16px;
+    margin-top: 8px;
 }
 
 .metro-hours-badge {
@@ -41,13 +41,29 @@ body.dark-mode .led-text {
     border: none;
 }
 
+.metro-hours-badge.warning {
+    background: #fff7ed;
+    color: #9a3412;
+    align-items: flex-start;
+    text-align: left;
+}
+
 body.dark-mode .metro-hours-badge {
     background: #064e3b !important;
     color: #dcfce7 !important;
 }
 
+body.dark-mode .metro-hours-badge.warning {
+    background: #451a03 !important;
+    color: #fdba74 !important;
+}
+
 .metro-hours-badge .icon {
     font-size: 1rem;
+}
+
+.metro-hours-badge.warning .icon {
+    margin-top: 2px;
 }
 
 .metro-consolidated-item {
@@ -81,7 +97,7 @@ body.dark-mode .metro-hours-badge {
 }
 
 .metro-card-top .destination {
-    font-size: 1rem;
+    font-size: 1.5rem;
     font-weight: 600;
     color: var(--text-main);
     margin: 0;
@@ -90,7 +106,7 @@ body.dark-mode .metro-hours-badge {
 .metro-card-bottom {
     width: 100%;
     padding: 8px 16px;
-    background: var(--bg-secondary);
+    background: var(--bg-panel);
     font-size: 0.85rem;
     color: var(--text-secondary);
 }

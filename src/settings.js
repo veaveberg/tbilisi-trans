@@ -4,6 +4,7 @@ export const settings = {
     simplifyNumbers: false,
     showMinibuses: true,
     showRustaviBuses: true,
+    showPoiLabels: false,
     pageScale: 1.0
 };
 
@@ -457,8 +458,9 @@ function addMapSection() {
     if (document.getElementById('map-section')) return;
 
     // Load stored values
-    const show3DBuildings = localStorage.getItem('show3DBuildings') !== 'false'; // Default true
-    const show3DTerrain = localStorage.getItem('show3DTerrain') !== 'false'; // Default true
+    const show3DBuildings = localStorage.getItem('show3DBuildings') === 'true'; // Default false
+    const show3DTerrain = localStorage.getItem('show3DTerrain') === 'true'; // Default false
+    const showPoiLabels = localStorage.getItem('showPoiLabels') === 'true'; // Default false
 
     const section = document.createElement('div');
     section.id = 'map-section';
@@ -511,6 +513,27 @@ function addMapSection() {
                 <span class="slider round"></span>
             </label>
         </div>
+
+        <div id="terrain-safari-warning" style="display: none; padding: 6px 12px 6px 48px; font-size: 11px; color: var(--warning-yellow, #b45309); line-height: 1.4;">
+            To see 3D terrain in Safari please ${/iPhone|iPad|iPod/.test(navigator.userAgent)
+            ? 'tap icon in the left part of address bar and select <b>Reduce Privacy Protections</b>'
+            : 'select <b>View → Reload Reducing Privacy Protections</b>'}
+        </div>
+
+        <div class="menu-item" id="menu-poi-row">
+            <div class="menu-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                </svg>
+            </div>
+            <span class="menu-label">Points of Interest</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="poi-switch" ${showPoiLabels ? 'checked' : ''}>
+                <span class="slider round"></span>
+            </label>
+        </div>
     `;
 
     // Insert before Interface section if it exists, otherwise before status
@@ -551,15 +574,19 @@ function addMapSection() {
 
     // 3D Terrain Switch Logic
     const terrainSwitch = document.getElementById('terrain-3d-switch');
+    const safariWarning = document.getElementById('terrain-safari-warning');
     if (terrainSwitch) {
         terrainSwitch.addEventListener('change', (e) => {
             const enabled = e.target.checked;
             localStorage.setItem('show3DTerrain', enabled);
             window.dispatchEvent(new CustomEvent('map3DTerrainChange', { detail: enabled }));
 
-            // Show/hide exaggeration toggle
+            // Show/hide exaggeration toggle and Safari warning
             if (exaggerateRow) {
                 exaggerateRow.style.display = enabled ? 'flex' : 'none';
+            }
+            if (safariWarning) {
+                safariWarning.style.display = enabled ? 'block' : 'none';
             }
         });
 
@@ -590,11 +617,50 @@ function addMapSection() {
         }
     }
 
-    // Dispatch initial state
+    // POI Switch Logic
+    const poiSwitch = document.getElementById('poi-switch');
+    if (poiSwitch) {
+        poiSwitch.addEventListener('change', (e) => {
+            const enabled = e.target.checked;
+            settings.showPoiLabels = enabled;
+            localStorage.setItem('showPoiLabels', enabled);
+            window.dispatchEvent(new CustomEvent('mapPoiLabelsChange', { detail: enabled }));
+        });
+
+        const row = document.getElementById('menu-poi-row');
+        if (row) {
+            row.addEventListener('click', (e) => {
+                if (e.target.closest('.toggle-switch')) return;
+                poiSwitch.checked = !poiSwitch.checked;
+                poiSwitch.dispatchEvent(new Event('change'));
+            });
+        }
+    }
+
+    // Dispatch initial state and set initial warning visibility
     setTimeout(() => {
         window.dispatchEvent(new CustomEvent('map3DBuildingsChange', { detail: show3DBuildings }));
         window.dispatchEvent(new CustomEvent('map3DTerrainChange', { detail: show3DTerrain }));
+        window.dispatchEvent(new CustomEvent('mapPoiLabelsChange', { detail: showPoiLabels }));
+
+        // Show Safari warning if terrain is already enabled initially
+        const warning = document.getElementById('terrain-safari-warning');
+        if (warning && show3DTerrain) {
+            warning.style.display = 'block';
+        }
     }, 100);
+
+    // Listen for terrain status to auto-hide warning if terrain works fine
+    window.addEventListener('terrainStatusChange', (e) => {
+        const warning = document.getElementById('terrain-safari-warning');
+        if (!warning) return;
+
+        if (e.detail.active) {
+            // Terrain loaded successfully - hide the warning
+            warning.style.display = 'none';
+        }
+        // If terrain failed, keep the warning visible (already shown by toggle handler)
+    });
 }
 
 function init3DToggleButton() {

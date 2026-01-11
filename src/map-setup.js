@@ -19,7 +19,7 @@ export const map = new mapboxgl.Map({
         basemap: {
             lightPreset: initialLightPreset,
             show3dObjects: false, // Back to false by default (will toggle on tilt)
-            showPointOfInterestLabels: false,
+            showPointOfInterestLabels: localStorage.getItem('showPoiLabels') === 'true',
             showTransitLabels: false
         }
     },
@@ -168,7 +168,6 @@ let is3dEnabled = false;
 let currentLightPreset = initialLightPreset;
 
 const PERMANENT_CONFIG = {
-    showPointOfInterestLabels: false,
     showTransitLabels: false
 };
 
@@ -190,6 +189,7 @@ export function setMapLightPreset(preset) {
             map.setConfig('basemap', {
                 lightPreset: preset,
                 show3dObjects: is3dEnabled,
+                showPointOfInterestLabels: userPoiLabels,
                 ...PERMANENT_CONFIG
             });
             if (wasChanged) {
@@ -230,8 +230,15 @@ function ensureTerrain() {
         if (needsUpdate) {
             map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': exaggeration });
         }
+
+        // Verify terrain was actually set (catches Safari privacy issues)
+        setTimeout(() => {
+            const terrainActive = map.getTerrain() !== null;
+            window.dispatchEvent(new CustomEvent('terrainStatusChange', { detail: { active: terrainActive } }));
+        }, 500);
     } catch (err) {
         console.warn('[Map] ensureTerrain error:', err.message);
+        window.dispatchEvent(new CustomEvent('terrainStatusChange', { detail: { active: false, error: err.message } }));
     }
 }
 
@@ -239,6 +246,7 @@ function ensureTerrain() {
 let user3DBuildings = localStorage.getItem('show3DBuildings') !== 'false';
 let user3DTerrain = localStorage.getItem('show3DTerrain') !== 'false';
 let userExaggerate = localStorage.getItem('exaggerateTerrain') === 'true';
+let userPoiLabels = localStorage.getItem('showPoiLabels') === 'true';
 
 // Listen for settings changes
 window.addEventListener('map3DBuildingsChange', (e) => {
@@ -258,6 +266,19 @@ window.addEventListener('mapExaggerateChange', (e) => {
         ensureTerrain();
     }
 });
+
+window.addEventListener('mapPoiLabelsChange', (e) => {
+    userPoiLabels = e.detail;
+    updatePoiLabels();
+});
+
+function updatePoiLabels() {
+    try {
+        map.setConfigProperty('basemap', 'showPointOfInterestLabels', userPoiLabels);
+    } catch (err) {
+        console.warn('[Map] Failed to update POI labels:', err.message);
+    }
+}
 
 function update3DBuildings() {
     try {
@@ -286,6 +307,7 @@ function initMapFeatures() {
     try {
         update3DBuildings();
         update3DTerrain();
+        updatePoiLabels();
         hideShieldLayers();
     } catch (err) {
         console.error('[Map] Failed to init features:', err);
@@ -460,6 +482,15 @@ function startPersistentOrientationTracking() {
         if (heading === undefined || heading === null) return;
         latestHeading = heading;
 
+        // Show the heading indicator if we have valid compass data
+        if (!document.documentElement.classList.contains('show-heading-indicator')) {
+            document.documentElement.classList.add('show-heading-indicator');
+        }
+
+        // We do NOT update the transform manually here anymore, because Mapbox GeolocateControl
+        // (initialized with showUserHeading: true) handles the element rotation internally.
+        // Manually updating it caused conflicts/fighting with Mapbox's internal loop.
+
         // Throttle bearing updates to once per 100ms to avoid race conditions with drag
         const now = Date.now();
         if (!onOrientation.lastUpdate || now - onOrientation.lastUpdate > 100) {
@@ -495,10 +526,20 @@ if (navigator.permissions && navigator.permissions.query) {
             };
 
             isAutoShowingMarker = true;
-            // Override map methods to prevent centering - stays until user clicks locate
-            map.flyTo = () => map; // No-op
-            map.jumpTo = () => map; // No-op
-            map.easeTo = () => map; // No-op
+            // Override map methods to prevent centering - but allow zoom/pitch/bearing changes
+            map.flyTo = (options) => {
+                // Block center changes, allow everything else
+                if (options && options.center) return map;
+                return window._originalMapMethods.flyTo(options);
+            };
+            map.jumpTo = (options) => {
+                if (options && options.center) return map;
+                return window._originalMapMethods.jumpTo(options);
+            };
+            map.easeTo = (options) => {
+                if (options && options.center) return map;
+                return window._originalMapMethods.easeTo(options);
+            };
 
             geolocate.trigger();
 
@@ -529,6 +570,7 @@ if (navigator.permissions && navigator.permissions.query) {
         // Permissions API not supported or failed - don't auto-trigger
     });
 }
+
 
 geolocate.on('geolocate', (e) => {
     const coords = e.coords;
@@ -771,16 +813,11 @@ export function setupMapControls() {
                 };
 
                 if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    // iOS 13+ - needs explicit permission request
-                    DeviceOrientationEvent.requestPermission()
-                        .then(res => {
-                            if (res === 'granted') {
-                                enableHeadingIndicator();
-                            }
-                        })
-                        .catch(e => console.warn('[Location] Compass permission request failed:', e));
+                    // iOS 13+ - Skip permission request for FOLLOW mode
+                    // We only request permission when switching to HEADING mode (second click)
+                    // enableHeadingIndicator(); // Skip indicator in follow mode to avoid prompt
                 } else {
-                    // Non-iOS - just enable it directly
+                    // Non-iOS - enable it directly as it doesn't require permission
                     enableHeadingIndicator();
                 }
             } else if (currentLocationState === LOCATION_STATES.FOLLOW) {
@@ -828,6 +865,7 @@ export function setupMapControls() {
                         DeviceOrientationEvent.requestPermission()
                             .then(res => {
                                 if (res === 'granted') {
+                                    localStorage.setItem('compassPermissionGranted', 'true');
                                     attemptHeadingTransition();
                                 } else {
                                     console.warn('[Location] Compass permission denied');
@@ -1171,6 +1209,7 @@ export function addStopsToMap(stops, options = {}) {
         id: 'stops-layer-hit-target',
         type: 'circle',
         source: 'stops',
+        slot: 'top',
         paint: {
             'circle-color': '#000000',
             'circle-opacity': 0,
@@ -1183,6 +1222,7 @@ export function addStopsToMap(stops, options = {}) {
         id: 'stops-layer-glow',
         type: 'circle',
         source: 'stops',
+        slot: 'top',
         paint: {
             'circle-color': '#FFED74',
             'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 12, 16, 20, 18, 25],
@@ -1197,6 +1237,7 @@ export function addStopsToMap(stops, options = {}) {
         type: 'circle',
         source: 'stops',
         maxzoom: 15.2,
+        slot: 'top',
         paint: {
             'circle-color': '#000000',
             'circle-stroke-color': '#ffffff',
@@ -1212,6 +1253,7 @@ export function addStopsToMap(stops, options = {}) {
         type: 'symbol',
         source: 'stops',
         minzoom: 15.2,
+        slot: 'top',
         layout: {
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
@@ -1236,6 +1278,7 @@ export function addStopsToMap(stops, options = {}) {
         id: 'stops-highlight',
         type: 'symbol',
         source: 'selected-stop',
+        slot: 'top',
         layout: {
             'icon-image': ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], 'stop-selected-icon', 'stop-icon'],
             'icon-size': ['case', ['==', ['get', 'mode'], 'SUBWAY'], 1.5, 1.2],
@@ -1258,6 +1301,7 @@ export function addStopsToMap(stops, options = {}) {
         id: 'filter-connection-line',
         type: 'line',
         source: 'filter-connection',
+        slot: 'top',
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
             'line-color': '#2563eb',
@@ -1270,28 +1314,50 @@ export function addStopsToMap(stops, options = {}) {
 
     if (filterManager && updateConnectionLine) {
         const hoverLayers = ['stops-layer', 'stops-layer-circle', 'stops-layer-hit-target'];
-        hoverLayers.forEach(layerId => {
-            map.on('mousemove', layerId, (e) => {
-                if (filterManager.state.picking) {
-                    let selectedFeature = null;
-                    for (const f of e.features) {
-                        const p = f.properties;
-                        const normId = (redirectMap && redirectMap.get(p.id)) || p.id;
-                        if (filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId)) {
-                            selectedFeature = f;
-                            break;
-                        }
-                    }
-                    if (selectedFeature) {
-                        updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, true, selectedFeature.properties.id);
-                    }
-                }
+        let filterHoverTimeout = null;
+
+        // Single handler for all layers - use queryRenderedFeatures to get ALL overlapping stops
+        map.on('mousemove', (e) => {
+            if (!filterManager.state.picking) return;
+
+            // Query all stop layers at this point
+            const allFeatures = map.queryRenderedFeatures(e.point, { layers: hoverLayers.filter(l => map.getLayer(l)) });
+
+            // Filter to only reachable/target stops
+            const reachableFeatures = allFeatures.filter(f => {
+                const p = f.properties;
+                const normId = (redirectMap && redirectMap.get(p.id)) || p.id;
+                return filterManager.state.reachableStopIds.has(normId) || filterManager.state.targetIds.has(normId);
             });
-            map.on('mouseleave', layerId, () => {
-                if (filterManager.state.picking) {
+
+            // Dedupe by stop ID (same stop can appear in multiple layers)
+            const seenIds = new Set();
+            const uniqueFeatures = reachableFeatures.filter(f => {
+                if (seenIds.has(f.properties.id)) return false;
+                seenIds.add(f.properties.id);
+                return true;
+            });
+
+            if (uniqueFeatures.length > 0) {
+                // Clear any pending leave timeout
+                if (filterHoverTimeout) {
+                    clearTimeout(filterHoverTimeout);
+                    filterHoverTimeout = null;
+                }
+
+                // Use same proximity-based selection as regular view
+                const sorted = proximitySort(uniqueFeatures, e.point);
+                const selectedFeature = sorted ? sorted[0] : null;
+                if (selectedFeature) {
+                    updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, true, selectedFeature.properties.id);
+                }
+            } else if (filterManager.state.picking && !filterHoverTimeout) {
+                // Delay clearing to avoid flicker when moving between stops
+                filterHoverTimeout = setTimeout(() => {
                     updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
-                }
-            });
+                    filterHoverTimeout = null;
+                }, 100);
+            }
         });
     }
 
@@ -1301,6 +1367,7 @@ export function addStopsToMap(stops, options = {}) {
         id: 'stops-label-selected',
         type: 'symbol',
         source: 'stops',
+        slot: 'top',
         filter: ['in', ['get', 'id'], ['literal', []]],
         layout: {
             'text-field': ['get', 'name'],
@@ -1464,11 +1531,19 @@ export function updateStopHoverEffects(hoveredId) {
 
 function proximitySort(features, point) {
     if (!features || features.length === 0) return null;
+
+    // Use geographic distance instead of screen distance to avoid 3D terrain projection offset
+    // Unproject the cursor point to get geographic coordinates
+    const cursorLngLat = map.unproject(point);
+
     return features.sort((a, b) => {
-        const pA = map.project(a.geometry.coordinates);
-        const pB = map.project(b.geometry.coordinates);
-        const distA = Math.hypot(pA.x - point.x, pA.y - point.y);
-        const distB = Math.hypot(pB.x - point.x, pB.y - point.y);
+        const coordsA = a.geometry.coordinates;
+        const coordsB = b.geometry.coordinates;
+
+        // Calculate squared geographic distance (faster than sqrt for comparison)
+        const distA = Math.pow(coordsA[0] - cursorLngLat.lng, 2) + Math.pow(coordsA[1] - cursorLngLat.lat, 2);
+        const distB = Math.pow(coordsB[0] - cursorLngLat.lng, 2) + Math.pow(coordsB[1] - cursorLngLat.lat, 2);
+
         return distA - distB;
     });
 }
@@ -1532,6 +1607,31 @@ export function setupHoverHandlers(context) {
             if (setFilterOpacity) setFilterOpacity(false);
         }, 50);
     });
+
+    // Broad Pointer cursor for POIs
+    map.on('mousemove', (e) => {
+        if (window.ignoreMapClicks || window.isPickModeActive) return;
+
+        const features = map.queryRenderedFeatures(e.point);
+        const hasClickableFeature = features.some(f => {
+            const layerId = f.layer ? f.layer.id : '';
+            const isTransport = ALL_STOP_LAYERS.includes(layerId) ||
+                layerId.startsWith('metro-') ||
+                layerId.startsWith('stops-');
+            if (isTransport) return true;
+
+            const props = f.properties;
+            const hasName = props.name || props.name_en;
+            const isMapboxNative = layerId.includes('label') || layerId.includes('symbol');
+            return hasName && isMapboxNative;
+        });
+
+        if (hasClickableFeature) {
+            map.getCanvas().style.cursor = 'pointer';
+        } else {
+            map.getCanvas().style.cursor = '';
+        }
+    });
 }
 
 export function setupClickHandlers(context) {
@@ -1572,6 +1672,46 @@ export function setupClickHandlers(context) {
         } else {
             // Normal selection
             showStopInfo(stop, true, true);
+        }
+    });
+
+    // Broad POI Interactivity
+    map.on('click', (e) => {
+        if (window.ignoreMapClicks) return;
+
+        const features = map.queryRenderedFeatures(e.point);
+        if (!features || features.length === 0) return;
+
+        const isTransport = features.some(f => {
+            const layerId = f.layer ? f.layer.id : '';
+            return ALL_STOP_LAYERS.includes(layerId) ||
+                layerId.startsWith('metro-') ||
+                layerId.startsWith('stops-');
+        });
+        if (isTransport) return;
+
+        const poi = features.find(f => {
+            const layerId = f.layer ? f.layer.id : '';
+            const props = f.properties;
+            const hasName = props.name || props.name_en;
+            const isMapboxNative = layerId.includes('label') || layerId.includes('symbol');
+            return hasName && isMapboxNative;
+        });
+
+        if (poi) {
+            const name = poi.properties.name || poi.properties.name_en;
+            const category = poi.properties.category || poi.properties.class || 'Location';
+            const displayCat = category.charAt(0).toUpperCase() + category.slice(1).replace(/_/g, ' ');
+
+            new mapboxgl.Popup({ closeButton: false, offset: 10, maxWidth: '200px' })
+                .setLngLat(e.lngLat)
+                .setHTML(`
+                    <div style="padding: 2px 4px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+                        <div style="font-weight: 700; font-size: 14px; margin-bottom: 2px; color: #111; line-height: 1.2;">${name}</div>
+                        <div style="font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500;">${displayCat}</div>
+                    </div>
+                `)
+                .addTo(map);
         }
     });
 }

@@ -209,14 +209,28 @@ export class FilterManager {
     }
 
     async refreshRouteFilter(currentStopId, lastArrivals, lastRoutes) {
-        const originEq = new Set(this.getEquivalentStops(this.state.originId));
-        await this.ensureLazyRoutesForStop(this.state.originId, originEq);
+        const redirectMap = this.dataProvider.getRedirectMap();
+        const mergeSourcesMap = this.dataProvider.getMergeSourcesMap();
+
+        // Hub equivalents only for EXCLUDING destinations
+        const originEqForExclusion = new Set(this.getEquivalentStops(this.state.originId));
+
+        // For route lookup, only use selected origin and its merge sources (not full hub)
+        const originIdsForRoutes = new Set();
+        originIdsForRoutes.add(this.state.originId);
+        if (redirectMap.has(this.state.originId)) {
+            originIdsForRoutes.add(redirectMap.get(this.state.originId));
+        }
+        if (mergeSourcesMap.has(this.state.originId)) {
+            mergeSourcesMap.get(this.state.originId).forEach(s => originIdsForRoutes.add(s));
+        }
+
+        await this.ensureLazyRoutesForStop(this.state.originId, originIdsForRoutes);
 
         const stopToRoutesMap = this.dataProvider.getStopToRoutesMap();
-        const redirectMap = this.dataProvider.getRedirectMap();
 
         const originRoutesSet = new Set();
-        originEq.forEach(oid => {
+        originIdsForRoutes.forEach(oid => {
             const routes = stopToRoutesMap.get(oid) || [];
             routes.forEach(r => originRoutesSet.add(r));
         });
@@ -244,18 +258,32 @@ export class FilterManager {
                 if (r._details && r._details.patterns) {
                     matches = r._details.patterns.some(p => {
                         if (!p.stops) return false;
-                        const idxO = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
+                        const idxO = p.stops.findIndex(s => originIdsForRoutes.has(redirectMap.get(s.id) || s.id));
                         if (idxO === -1) return false;
+
+                        // Normal case: target after origin
                         const idxT = p.stops.findIndex((s, i) => i > idxO && targetEq.has(redirectMap.get(s.id) || s.id));
                         if (idxT !== -1) {
                             return true;
                         }
+
+                        // Wrapped route case: target is at index 0 (first stop)
+                        // Special case for circular routes 387/397: bus continues from last to first stop
+                        const CIRCULAR_ROUTES = ['387', '397'];
+                        if (CIRCULAR_ROUTES.includes(String(r.shortName)) && idxO > 0 && p.stops.length >= 5) {
+                            const firstStop = p.stops[0];
+                            const firstNormId = redirectMap.get(firstStop.id) || firstStop.id;
+                            if (targetEq.has(firstNormId)) {
+                                return true;
+                            }
+                        }
+
                         return false;
                     });
                 } else if (r.stops) {
                     if (!routeStopsNormalized) routeStopsNormalized = r.stops.map(sid => redirectMap.get(sid) || sid);
                     const stops = routeStopsNormalized;
-                    const idxO = stops.findIndex(sid => originEq.has(sid));
+                    const idxO = stops.findIndex(sid => originIdsForRoutes.has(sid));
                     if (idxO !== -1) {
                         const idxT = stops.findIndex((sid, i) => i > idxO && targetEq.has(sid));
                         matches = (idxT !== -1);
@@ -303,12 +331,29 @@ export class FilterManager {
         // Ensure static data is loaded before proceeding with reachability calculation
         await api.preloadStaticRoutesDetails();
 
-        const originEq = new Set(this.getEquivalentStops(this.state.originId));
-        await this.ensureLazyRoutesForStop(this.state.originId, originEq);
+        // Hub equivalents are only for EXCLUDING nearby stops from destinations
+        // We should NOT include routes from all hub members - only from the selected origin
+        const originEqForExclusion = new Set(this.getEquivalentStops(this.state.originId));
+
+        // For route lookup, only use the selected origin and its merge sources (not full hub)
+        const redirectMap = this.dataProvider.getRedirectMap();
+        const mergeSourcesMap = this.dataProvider.getMergeSourcesMap();
+        const originIdsForRoutes = new Set();
+        originIdsForRoutes.add(this.state.originId);
+        // Include redirect target if this is a redirected stop
+        if (redirectMap.has(this.state.originId)) {
+            originIdsForRoutes.add(redirectMap.get(this.state.originId));
+        }
+        // Include merge sources if this is a parent stop
+        if (mergeSourcesMap.has(this.state.originId)) {
+            mergeSourcesMap.get(this.state.originId).forEach(s => originIdsForRoutes.add(s));
+        }
+
+        await this.ensureLazyRoutesForStop(this.state.originId, originIdsForRoutes);
 
         const stopToRoutesMap = this.dataProvider.getStopToRoutesMap();
         const routes = new Set();
-        originEq.forEach(oid => {
+        originIdsForRoutes.forEach(oid => {
             const r = stopToRoutesMap.get(oid) || [];
             r.forEach(route => {
                 if (shouldShowRoute(route.shortName, route)) {
@@ -327,15 +372,48 @@ export class FilterManager {
         }
 
         const reachableStopIds = new Set();
-        const redirectMap = this.dataProvider.getRedirectMap();
 
         originRoutes.forEach(r => {
             if (r._details && r._details.patterns) {
                 r._details.patterns.forEach(p => {
                     if (p.stops) {
-                        const idx = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
+                        // Use originIdsForRoutes (selected origin only) to find position, not full hub
+                        const idx = p.stops.findIndex(s => originIdsForRoutes.has(redirectMap.get(s.id) || s.id));
+
                         if (idx !== -1 && idx < p.stops.length - 1) {
-                            p.stops.slice(idx + 1).forEach(s => {
+                            // Check if this is a loop route using the CSV override flag ONLY
+                            // No fallback detection - routes must be explicitly marked as isLoop in CSV
+                            const isLoopRoute = r._overrides?.isLoop === true || r._overrides?.isLoop === 'true';
+
+                            // For loop routes: only add stops from origin to just past the midpoint (terminal)
+                            // +2 because terminal stop also acts as starting stop, so you can go one more
+                            let stopsToAdd;
+                            if (isLoopRoute) {
+                                // Find the midpoint (approximately where the terminal is)
+                                const midpoint = Math.ceil(p.stops.length * 0.5);
+
+                                // If origin is before midpoint, add stops from origin to just past midpoint
+                                if (idx < midpoint) {
+                                    stopsToAdd = p.stops.slice(idx + 1, midpoint + 2);
+                                } else {
+                                    // Origin is on return leg: add remaining stops (back to origin)
+                                    stopsToAdd = p.stops.slice(idx + 1);
+                                }
+                            } else {
+                                // Regular non-loop route: add all stops after origin
+                                stopsToAdd = p.stops.slice(idx + 1);
+
+                                // Special case for circular routes 387/397: bus continues from last to first stop
+                                // These routes wrap around - add first stop as reachable
+                                const CIRCULAR_ROUTES = ['387', '397'];
+                                if (CIRCULAR_ROUTES.includes(String(r.shortName)) && p.stops.length >= 5 && idx > 0) {
+                                    stopsToAdd = [...stopsToAdd, p.stops[0]];
+                                }
+                            }
+
+
+
+                            stopsToAdd.forEach(s => {
                                 const normId = redirectMap.get(s.id) || s.id;
                                 this.getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
                             });
@@ -345,7 +423,7 @@ export class FilterManager {
             } else if (r._details && r._details.stops) {
                 r._details.stops.forEach(s => {
                     const normId = redirectMap.get(s.id) || s.id;
-                    if (!originEq.has(normId)) {
+                    if (!originEqForExclusion.has(normId)) {
                         this.getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
                     }
                 });
@@ -411,7 +489,7 @@ export class FilterManager {
             const icon = btn.querySelector('.filter-icon');
             if (icon) icon.src = iconFilterOutline;
             const text = btn.querySelector('.filter-text');
-            if (text) text.textContent = 'Filter routes...';
+            if (text) text.textContent = 'Filter by destination...';
         }
 
         // Reset Map Layers

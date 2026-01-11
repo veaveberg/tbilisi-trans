@@ -77,8 +77,10 @@
     border-bottom: none;
 }
 
-.suggestion-item:hover {
-    background: var(--bg-secondary);
+@media (hover: hover) {
+    .suggestion-item:hover {
+        background: var(--bg-secondary);
+    }
 }
 
 .suggestion-icon {
@@ -129,9 +131,11 @@
     transition: background 0.2s;
 }
 
-.clear-input-btn:hover {
-    background: #f3f4f6;
-    color: var(--text);
+@media (hover: hover) {
+    .clear-input-btn:hover {
+        background: #f3f4f6;
+        color: var(--text);
+    }
 }
 
 .clear-input-btn.hidden {
@@ -155,9 +159,11 @@
     z-index: 50;
 }
 
-.suggestion-delete-btn:hover {
-    background: var(--bg-secondary);
-    color: var(--text-main);
+@media (hover: hover) {
+    .suggestion-delete-btn:hover {
+        background: var(--bg-secondary);
+        color: var(--text-main);
+    }
 }
 
 .suggestion-header {
