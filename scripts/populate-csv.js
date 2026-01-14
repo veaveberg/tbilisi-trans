@@ -129,9 +129,16 @@ async function fetchRoutesFromAPI() {
 
         for (const route of routes) {
             try {
+                // Determine which API to use based on route ID
+                // Rustavi routes have IDs like "1:R826" (uppercase R after prefix)
+                const isRustaviRoute = /^\d+:R\d/.test(route.id);
+                const apiBase = isRustaviRoute
+                    ? 'https://rustavi-transit.azrycloud.com/pis-gateway/api/v3'
+                    : 'https://transit.ttc.com.ge/pis-gateway/api/v3';
+
                 const [detailsEn, detailsKa] = await Promise.all([
-                    fetch(`https://transit.ttc.com.ge/pis-gateway/api/v3/routes/${route.id}?locale=en`, { headers: HEADERS }).then(r => r.ok ? r.json() : null),
-                    fetch(`https://transit.ttc.com.ge/pis-gateway/api/v3/routes/${route.id}?locale=ka`, { headers: HEADERS }).then(r => r.ok ? r.json() : null)
+                    fetch(`${apiBase}/routes/${route.id}?locale=en`, { headers: HEADERS }).then(r => r.ok ? r.json() : null),
+                    fetch(`${apiBase}/routes/${route.id}?locale=ka`, { headers: HEADERS }).then(r => r.ok ? r.json() : null)
                 ]);
 
                 if (detailsEn?.patterns && detailsEn.patterns.length > 0) {

@@ -149,17 +149,7 @@
     margin-top: 4px;
 }
 
-.edit-badge-mini {
-    font-size: 9px;
-    font-weight: 700;
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
-    padding: 2px 6px;
-    border-radius: 4px;
-    min-width: 24px;
-    text-align: center;
-    border: 1px solid var(--border-light);
-}
+
 
 .edit-restore-btn {
     width: 20px;
@@ -258,8 +248,9 @@ body.dark-mode .edit-restore-btn img {
 }
 
 .route-edit-input.compact {
-    font-size: 12px;
-    padding: 4px 8px;
+    font-size: 14px;
+    padding: 0 8px;
+    height: 32px;
 }
 
 /* Route Names Editor Styles (Modal) */
@@ -402,4 +393,81 @@ body.dark-mode .edit-restore-btn img {
 
 .editor-section-header:first-child {
     padding-top: 8px;
+}
+
+/* Route Edit - Two Column Destination Layout */
+.edit-destinations-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    width: 100%;
+}
+
+.edit-dest-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    /* Tighter gap between fields in destination rows */
+}
+
+/* Inline Original Value (above input) */
+.edit-field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    width: 100%;
+}
+
+.edit-field-row {
+    display: flex;
+    align-items: flex-end;
+    width: 100%;
+    gap: 0;
+}
+
+.edit-column {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.edit-original-inline {
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--text-main);
+    opacity: 0.55;
+    padding: 0 8px 1px 8px;
+    /* Aligned with input text (8px) */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: text;
+    -webkit-user-select: text;
+    display: block;
+}
+
+.edit-original-inline:empty {
+    display: none;
+}
+
+
+.edit-lang-label {
+    font-size: 13px;
+    font-weight: 400;
+    /* Unbold */
+    color: var(--text-secondary);
+    min-width: 28px;
+    text-align: left;
+    opacity: 0.6;
+    height: 32px;
+    /* Match input height */
+    display: flex;
+    align-items: center;
+    /* Center text vertically in its 32px box */
+    user-select: none;
+}
+
+.edit-lang-label.mini {
+    min-width: 24px;
+    font-size: 11px;
 }

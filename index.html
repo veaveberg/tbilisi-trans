@@ -168,7 +168,7 @@
         <!-- Filter Toggle Row -->
         <button id="filter-routes-toggle" class="filter-toggle-row">
           <img class="filter-icon" src="/line.3.horizontal.decrease.circle.svg" alt="Filter" width="24" height="24">
-          <span class="filter-text">Filter routes...</span>
+          <span class="filter-text">Filter by destination...</span>
         </button>
 
         <div id="header-extension"></div> <!-- Container for All Routes, Metro badge etc. -->
@@ -186,10 +186,7 @@
         <div class="panel-header">
           <div class="header-top-row">
             <div class="header-title-container">
-              <div class="route-info-header-content">
-                <div id="route-info-number" class="route-info-number"></div>
-                <div id="route-info-text" class="route-info-details"></div>
-              </div>
+              <div id="route-info-number" class="route-info-number"></div>
             </div>
             <div class="panel-controls">
               <button id="back-route-info" class="icon-btn hidden" title="Back">
@@ -206,90 +203,139 @@
               </button>
             </div>
           </div>
+          <div id="route-info-text" class="route-info-details"></div>
         </div>
 
 
         <!-- Route Edit Toolbar -->
         <div id="route-edit-block" class="edit-toolbar vertical hidden">
 
-          <!-- Short Name -->
-          <div class="edit-row full-width">
-            <span class="edit-label-sm" style="width: 60px;">Short:</span>
-            <input id="route-edit-short" class="route-edit-input" type="text" autocomplete="new-password"
-              name="route_short_name_ignore" data-lpignore="true" data-form-type="other">
-            <button id="route-restore-short" class="edit-restore-btn" title="Restore">
-              <img src="/arrow.counterclockwise.circle.fill.svg">
-            </button>
+          <!-- Route ID & Short Name (Debug Info) -->
+          <div class="edit-row full-width"
+            style="margin-bottom: 16px; opacity: 0.5; font-size: 14px; font-weight: 700; gap: 12px;">
+            <span id="route-edit-debug-short"></span>
+            <span id="route-edit-debug-id" style="font-weight: 400; opacity: 0.7;"></span>
           </div>
 
-          <!-- Long Name -->
-          <div class="edit-label-sm">LONG NAME</div>
-          <div class="edit-row full-width">
-            <span class="edit-badge-mini">en</span>
-            <input id="route-edit-long-en" class="route-edit-input compact" type="text" autocomplete="new-password"
-              name="route_long_name_en_ignore" data-lpignore="true" data-form-type="other">
-            <button id="route-restore-long-en" class="edit-restore-btn" title="Restore">
-              <img src="/arrow.counterclockwise.circle.fill.svg">
-            </button>
-          </div>
-          <div class="edit-row full-width">
-            <span class="edit-badge-mini">ქა</span>
-            <input id="route-edit-long-ka" class="route-edit-input compact" type="text" autocomplete="new-password"
-              name="route_long_name_ka_ignore" data-lpignore="true" data-form-type="other">
-            <button id="route-restore-long-ka" class="edit-restore-btn" title="Restore">
-              <img src="/arrow.counterclockwise.circle.fill.svg">
-            </button>
+          <!-- Long Name Overrides -->
+          <div class="edit-field-row">
+            <span class="edit-lang-label">ქა</span>
+            <div class="edit-column">
+              <span id="route-orig-long-ka" class="edit-original-inline"></span>
+              <input id="route-edit-long-ka" class="route-edit-input compact" type="text" autocomplete="off"
+                name="route_long_name_ka_ignore" data-lpignore="true" placeholder="Override">
+            </div>
           </div>
 
-          <!-- Destinations -->
-          <div class="edit-label-sm">HEADSIGNS (DESTINATIONS)</div>
+          <div style="height: 4px;"></div>
 
-          <!-- Forward (Direction 0) -->
-          <div class="edit-row full-width">
-            <span class="edit-badge-mini" style="height: 32px; display: flex; align-items: center;">DIR 0</span>
-            <div class="edit-col edit-spacer">
-              <div class="edit-row">
-                <input id="route-edit-dest0-en" class="route-edit-input compact" placeholder="en"
-                  autocomplete="new-password" name="route_dest0_en_ignore" data-lpignore="true" data-form-type="other">
-                <button id="route-restore-dest0-en" class="edit-restore-btn" title="Restore">
-                  <img src="/arrow.counterclockwise.circle.fill.svg">
-                </button>
+          <div class="edit-field-row">
+            <span class="edit-lang-label">en</span>
+            <div class="edit-column">
+              <span id="route-orig-long-en" class="edit-original-inline"></span>
+              <input id="route-edit-long-en" class="route-edit-input compact" type="text" autocomplete="off"
+                name="route_long_name_en_ignore" data-lpignore="true" placeholder="Override">
+            </div>
+          </div>
+
+          <div style="height: 4px;"></div>
+
+          <div class="edit-field-row">
+            <span class="edit-lang-label">ру</span>
+            <div class="edit-column">
+              <span id="route-orig-long-ru" class="edit-original-inline"></span>
+              <input id="route-edit-long-ru" class="route-edit-input compact" type="text" autocomplete="off"
+                name="route_long_name_ru_ignore" data-lpignore="true" placeholder="Translation">
+            </div>
+          </div>
+
+          <div style="height: 16px;"></div>
+
+          <!-- Destinations - Two Column Layout -->
+          <div class="edit-destinations-grid">
+            <!-- Direction 0 -->
+            <div class="edit-dest-col">
+              <div class="edit-label-sm" style="margin-bottom: 4px; font-size: 13px;">A→B</div>
+
+              <div class="edit-field-row">
+                <span class="edit-lang-label mini">ქა</span>
+                <div class="edit-column">
+                  <span id="route-orig-dest0-ka" class="edit-original-inline"></span>
+                  <input id="route-edit-dest0-ka" class="route-edit-input compact" placeholder="Override"
+                    autocomplete="off" data-lpignore="true">
+                </div>
               </div>
-              <div class="edit-row">
-                <input id="route-edit-dest0-ka" class="route-edit-input compact" placeholder="ქა"
-                  autocomplete="new-password" name="route_dest0_ka_ignore" data-lpignore="true" data-form-type="other">
-                <button id="route-restore-dest0-ka" class="edit-restore-btn" title="Restore">
-                  <img src="/arrow.counterclockwise.circle.fill.svg">
-                </button>
+
+              <div class="edit-field-row">
+                <span class="edit-lang-label mini">en</span>
+                <div class="edit-column">
+                  <span id="route-orig-dest0-en" class="edit-original-inline"></span>
+                  <input id="route-edit-dest0-en" class="route-edit-input compact" placeholder="Override"
+                    autocomplete="off" data-lpignore="true">
+                </div>
+              </div>
+
+              <div class="edit-field-row">
+                <span class="edit-lang-label mini">ру</span>
+                <div class="edit-column">
+                  <span id="route-orig-dest0-ru" class="edit-original-inline"></span>
+                  <input id="route-edit-dest0-ru" class="route-edit-input compact" placeholder="Translation"
+                    autocomplete="off" data-lpignore="true">
+                </div>
+              </div>
+            </div>
+
+            <!-- Direction 1 -->
+            <div class="edit-dest-col">
+              <div class="edit-label-sm" style="margin-bottom: 4px; font-size: 13px;">B→A</div>
+
+              <div class="edit-field-row">
+                <span class="edit-lang-label mini">ქა</span>
+                <div class="edit-column">
+                  <span id="route-orig-dest1-ka" class="edit-original-inline"></span>
+                  <input id="route-edit-dest1-ka" class="route-edit-input compact" placeholder="Override"
+                    autocomplete="off" data-lpignore="true">
+                </div>
+              </div>
+
+              <div class="edit-field-row">
+                <span class="edit-lang-label mini">en</span>
+                <div class="edit-column">
+                  <span id="route-orig-dest1-en" class="edit-original-inline"></span>
+                  <input id="route-edit-dest1-en" class="route-edit-input compact" placeholder="Override"
+                    autocomplete="off" data-lpignore="true">
+                </div>
+              </div>
+
+              <div class="edit-field-row">
+                <span class="edit-lang-label mini">ру</span>
+                <div class="edit-column">
+                  <span id="route-orig-dest1-ru" class="edit-original-inline"></span>
+                  <input id="route-edit-dest1-ru" class="route-edit-input compact" placeholder="Translation"
+                    autocomplete="off" data-lpignore="true">
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- Backward (Direction 1) -->
-          <div class="edit-row full-width">
-            <span class="edit-badge-mini" style="height: 32px; display: flex; align-items: center;">DIR 1</span>
-            <div class="edit-col edit-spacer">
-              <div class="edit-row">
-                <input id="route-edit-dest1-en" class="route-edit-input compact" placeholder="en"
-                  autocomplete="new-password" name="route_dest1_en_ignore" data-lpignore="true" data-form-type="other">
-                <button id="route-restore-dest1-en" class="edit-restore-btn" title="Restore">
-                  <img src="/arrow.counterclockwise.circle.fill.svg">
-                </button>
-              </div>
-              <div class="edit-row">
-                <input id="route-edit-dest1-ka" class="route-edit-input compact" placeholder="ქა"
-                  autocomplete="new-password" name="route_dest1_ka_ignore" data-lpignore="true" data-form-type="other">
-                <button id="route-restore-dest1-ka" class="edit-restore-btn" title="Restore">
-                  <img src="/arrow.counterclockwise.circle.fill.svg">
-                </button>
+          <!-- Loop Settings (Bottom Chip) -->
+          <div id="route-edit-loop-container" style="margin-top: 16px;">
+            <div class="edit-row full-width" style="gap: 8px;">
+              <button id="route-edit-isloop" class="edit-chip"
+                style="font-size: 11px; padding: 4px 10px; border-radius: 12px;">Split Loop</button>
+              <button id="route-edit-invert" class="edit-chip"
+                style="font-size: 11px; padding: 4px 10px; border-radius: 12px;">Invert Directions</button>
+              <div id="route-edit-terminus-group" class="edit-row" style="flex: 1; display: none;">
+                <input id="route-edit-terminus" class="route-edit-input compact" placeholder="Virtual terminus"
+                  autocomplete="off" data-lpignore="true" style="flex: 1;">
               </div>
             </div>
           </div>
 
-          <button id="route-edit-all-routes" class="edit-chip full-width" style="margin-top: 8px;">[All Routes]
-            Editor</button>
-          <button id="route-edit-apply" class="edit-chip apply-btn full-width" disabled style="margin-top: 4px;">Apply
-            Changes</button>
+          <div class="edit-row full-width" style="margin-top: 16px; gap: 8px;">
+            <button id="route-edit-all-routes" class="edit-chip" style="flex: 1; opacity: 0.8;">[All Routes]</button>
+            <button id="route-edit-apply" class="edit-chip apply-btn" disabled style="flex: 2;">Apply Changes</button>
+          </div>
         </div>
 
         <div class="route-actions">

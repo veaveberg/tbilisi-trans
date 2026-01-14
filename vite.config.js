@@ -134,6 +134,124 @@ const saveStopsPlugin = () => ({
                 next();
             }
         });
+
+        // Single route override update (for the edit panel)
+        server.middlewares.use('/api/update-route-override', async (req, res, next) => {
+            console.log('[Middleware] Received request:', req.method, req.url);
+            if (req.method === 'POST') {
+                let body = '';
+                req.on('data', chunk => body += chunk);
+                req.on('end', async () => {
+                    try {
+                        const { id, updates } = JSON.parse(body);
+
+                        if (!id) {
+                            res.statusCode = 400;
+                            res.end('Missing route id');
+                            return;
+                        }
+
+                        console.log(`[Middleware] Updating route ${id} with:`, updates);
+
+                        const csvPath = path.resolve(__dirname, 'public/data/routes_overrides.csv');
+
+                        // Create backup before saving
+                        createBackup(csvPath);
+
+                        // Read existing CSV
+                        const content = fs.readFileSync(csvPath, 'utf8');
+                        const lines = content.split('\n');
+                        const header = lines[0];
+                        const headerCols = header.split(',');
+
+                        // Find column indices
+                        const colIndices = {};
+                        headerCols.forEach((col, idx) => {
+                            colIndices[col] = idx;
+                        });
+
+                        // Parse CSV line
+                        const parseCSVLine = (line) => {
+                            const result = [];
+                            let current = '';
+                            let inQuotes = false;
+                            for (let i = 0; i < line.length; i++) {
+                                const char = line[i];
+                                if (char === '"') {
+                                    inQuotes = !inQuotes;
+                                } else if (char === ',' && !inQuotes) {
+                                    result.push(current);
+                                    current = '';
+                                } else {
+                                    current += char;
+                                }
+                            }
+                            result.push(current);
+                            return result;
+                        };
+
+                        // Escape CSV field
+                        const escapeCSV = (field) => {
+                            const str = String(field || '');
+                            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+                                return `"${str.replace(/"/g, '""')}"`;
+                            }
+                            return str;
+                        };
+
+                        // Find and update the route row
+                        let found = false;
+                        for (let i = 1; i < lines.length; i++) {
+                            if (!lines[i].trim()) continue;
+
+                            const cols = parseCSVLine(lines[i]);
+                            const routeId = cols[colIndices['id']];
+
+                            if (routeId === id) {
+                                found = true;
+
+                                // Update each field from updates
+                                for (const [field, value] of Object.entries(updates)) {
+                                    const colIdx = colIndices[field];
+                                    if (colIdx !== undefined) {
+                                        // Ensure cols array is long enough
+                                        while (cols.length <= colIdx) {
+                                            cols.push('');
+                                        }
+                                        cols[colIdx] = value;
+                                    } else {
+                                        console.warn(`[Middleware] Unknown column: ${field}`);
+                                    }
+                                }
+
+                                lines[i] = cols.map(escapeCSV).join(',');
+                                console.log(`[Middleware] Updated row ${i} for route ${id}`);
+                                break;
+                            }
+                        }
+
+                        if (!found) {
+                            res.statusCode = 404;
+                            res.end(`Route ${id} not found in CSV`);
+                            return;
+                        }
+
+                        // Write back
+                        fs.writeFileSync(csvPath, lines.join('\n'));
+                        console.log('[Middleware] ✓ Route override saved');
+
+                        res.statusCode = 200;
+                        res.end('Saved');
+                    } catch (e) {
+                        console.error('[Middleware] Failed to update route override:', e);
+                        res.statusCode = 500;
+                        res.end('Error: ' + e.message);
+                    }
+                });
+            } else {
+                next();
+            }
+        });
     }
 });
 

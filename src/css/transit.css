@@ -446,3 +446,53 @@ body.dark-mode .filter-toggle-row.active .filter-text {
 .shake {
     animation: shake-horizontal 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
 }
+
+/* --- Full Schedule Grouping --- */
+.route-full-schedule {
+    padding: 12px 20px 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.schedule-hour-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.hour-label {
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--text-secondary);
+    width: 32px;
+    flex-shrink: 0;
+}
+
+.minutes-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text-main);
+}
+
+/* Current hour highlight */
+.schedule-hour-row.current-hour {
+    background: var(--primary-light);
+    margin: 0 -12px;
+    padding: 6px 12px;
+    border-radius: 8px;
+}
+
+.schedule-hour-row.current-hour .hour-label {
+    color: var(--primary);
+    font-weight: 800;
+}
+
+.schedule-hour-row.current-hour .minutes-list {
+    font-weight: 700;
+}

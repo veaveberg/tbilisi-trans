@@ -54,6 +54,9 @@ export async function convertRoutesConfigToCSV(config, existingCsvPath) {
             row.dest1_en_override = '';
             row.dest1_ka_override = '';
             row.dest1_ru_override = '';
+            row.isLoop = '';
+            row.terminusStopId_override = '';
+            row.invertDirection = '';
 
             // Apply new overrides
             if (override.shortName) {
@@ -75,6 +78,19 @@ export async function convertRoutesConfigToCSV(config, existingCsvPath) {
                         if (headsign.ru) row[`dest${dir}_ru_override`] = headsign.ru;
                     }
                 });
+            }
+
+            if (override.isLoop !== undefined) {
+                row.isLoop = override.isLoop ? 'true' : '';
+            }
+            if (override.terminusStopIdOverride !== undefined) {
+                row.terminusStopId_override = override.terminusStopIdOverride;
+            }
+            if (override.invertDirection !== undefined) {
+                row.invertDirection = override.invertDirection ? 'true' : '';
+            }
+            if (override.terminusStopName !== undefined) {
+                row.terminusStopName = override.terminusStopName;
             }
         }
     });
@@ -120,7 +136,9 @@ export async function convertRoutesConfigToCSV(config, existingCsvPath) {
         'dest0_ru_override',
         'dest1_en', 'dest1_en_override',
         'dest1_ka', 'dest1_ka_override',
-        'dest1_ru_override'
+        'dest1_ru_override',
+        'isLoop', 'terminusStopId', 'terminusStopId_override', 'terminusStopName',
+        'invertDirection'
     ];
 
     return rowsToCSV(rows, headers);

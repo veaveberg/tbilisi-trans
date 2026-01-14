@@ -141,7 +141,23 @@ export function extractOverrides(rows, idColumn = 'id') {
                     // Simple fields
                     override[fieldName] = value;
                 }
-            } else if (key === 'mergeParent' || key === 'hubTarget' || key === 'rotation' || key === 'invertDirection' || key === 'isLoop') {
+
+                // FLAT KEYS FOR EDIT PANEL:
+                // Provide flat keys like longNameEnOverride, dest0EnOverride, etc.
+                // so the edit panel can easily find and display them.
+                if (fieldName.startsWith('longName_')) {
+                    const lang = fieldName.replace('longName_', '');
+                    const keyName = `longName${lang.charAt(0).toUpperCase()}${lang.slice(1)}Override`;
+                    override[keyName] = value;
+                } else if (fieldName.startsWith('dest')) {
+                    const match = fieldName.match(/^dest(\d+)_(\w+)$/);
+                    if (match) {
+                        const [, direction, lang] = match;
+                        const keyName = `dest${direction}${lang.charAt(0).toUpperCase()}${lang.slice(1)}Override`;
+                        override[keyName] = value;
+                    }
+                }
+            } else if (key === 'mergeParent' || key === 'hubTarget' || key === 'rotation' || key === 'invertDirection' || key === 'isLoop' || key === 'terminusStopId' || key === 'terminusStopName') {
                 // Special non-override fields that should be included
                 if (key === 'rotation') {
                     override[key] = parseFloat(value);
@@ -152,6 +168,26 @@ export function extractOverrides(rows, idColumn = 'id') {
                 }
                 if (key === 'rotation' && id && id.includes('813')) {
                     // console.log('[CSV DEBUG] Extracted rotation for', id, ':', value, '->', override[key]);
+                }
+            } else if (key === 'terminusStopId_override') {
+                // Terminus override takes precedence over auto-detected
+                override.terminusStopIdOverride = value;
+            } else if (key === 'shortName' && !key.endsWith('_override')) {
+                // Base shortName (for edit panel reference)
+                override.shortName = value;
+            } else if (key === 'longName_en') {
+                override.longNameEn = value;
+            } else if (key === 'longName_ka') {
+                override.longNameKa = value;
+            } else if (key === 'longName_ru') {
+                override.longNameRu = value;
+            } else if (key.startsWith('dest') && !key.endsWith('_override')) {
+                // Base destination fields
+                const match = key.match(/^dest(\d+)_(\w+)$/);
+                if (match) {
+                    const [, direction, lang] = match;
+                    const fieldKey = `dest${direction}${lang.charAt(0).toUpperCase()}${lang.slice(1)}`;
+                    override[fieldKey] = value;
                 }
             }
         });
@@ -239,6 +275,9 @@ export function overridesToCSVRows(overrides, existingRows = [], idColumn = 'id'
         if (override.rotation !== undefined) row.rotation_override = override.rotation;
         if (override.mergeParent) row.mergeParent = override.mergeParent;
         if (override.hubTarget) row.hubTarget = override.hubTarget;
+        if (override.invertDirection !== undefined) row.invertDirection = override.invertDirection ? 'true' : '';
+        if (override.isLoop !== undefined) row.isLoop = override.isLoop ? 'true' : '';
+        if (override.terminusStopIdOverride !== undefined) row.terminusStopId_override = override.terminusStopIdOverride;
 
         rowsMap.set(id, row);
     });

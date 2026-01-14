@@ -1,6 +1,6 @@
 import { db } from './db.js';
 import { sources } from './data/sources.js';
-import { LoopUtils } from './loop-utils.js';
+import { RouteGeometry } from './route-geometry.js';
 
 // Export sources for external usage (e.g. main.js normalization)
 export { sources };
@@ -42,6 +42,7 @@ const pendingRequests = new Map(); // Global in-flight deduplication
 
 const v3Cache = {
     patterns: new Map(), // routeId -> patterns
+    stopPatterns: new Map(), // routeId -> patterns (lightweight, with stops)
     schedules: new Map(), // routeId:suffix:date -> schedule
     polylines: new Map() // routeId:suffix -> polyline data
 };
@@ -677,6 +678,7 @@ export function restoreApiId(id, source) {
     return apiId;
 }
 
+
 /**
  * Restores a "fully qualified" API ID from an internal app ID.
  * e.g. "r123" -> "2:123", "811" -> "1:811"
@@ -754,20 +756,61 @@ function processRoute(route, source) {
 /**
  * Fetches stops from ALL sources, tags them with `_source`, and merges results.
  */
+import { ConvexClient } from "convex/browser";
+
+// ... (existing imports)
+
+// Initialize Convex Client
+export const convex = new ConvexClient(import.meta.env.VITE_CONVEX_URL);
+
+// ...
+
+/**
+ * Fetches stops from ALL sources via Convex, tags them with `_source`, and merges results.
+ */
 export async function fetchStops(options = {}) {
-    // console.log('[API] Fetching Stops from all sources...');
-    const promises = sources.map(source => {
-        const url = `${getApiBaseUrl(source)}/stops`;
-        return fetchWithCache(url, {
-            headers: { 'x-api-key': API_KEY },
-            ...options
-        }).then(data => {
-            if (!Array.isArray(data)) return [];
-            return data.map(item => processStop(item, source));
-        }).catch(err => {
-            console.warn(`[API] Failed to fetch stops from ${source.id}:`, err);
-            return [];
-        });
+    console.log('[API DEBUG] fetchStops called with options:', options);
+    const promises = sources.map(async (source) => {
+        const cacheKey = `convex_stops_${source.id}`;
+        let data = null;
+
+        // 1. Try Cache
+        try {
+            const cached = await db.get(cacheKey);
+            if (cached) {
+                const age = Date.now() - cached.timestamp;
+                if (age < CACHE_DURATION && options.strategy !== 'network-only') {
+                    data = cached.data;
+                }
+                // If stale, we'll fetch in background if not cache-only? 
+                // Creating simplified logic for now: Cache First if available and valid.
+                // Or Stale-While-Revalidate? 
+                // Let's stick to "If cache good, return it. If cache old or missing, fetch."
+                // But options.strategy='cache-only' MUST be respected for fast load.
+                if (options.strategy === 'cache-only' && cached) return cached.data.map(item => processStop(item, source));
+            }
+        } catch (e) { console.warn('Cache Read Error', e); }
+
+        // 2. Fetch Network (if needed)
+        if (!data && options.strategy !== 'cache-only') {
+            try {
+                console.log(`[API DEBUG] fetchStops: Calling Convex for ${source.id}...`);
+                data = await convex.query("transit:getStops", { sourceId: source.id, locale: 'en' });
+                console.log(`[API DEBUG] fetchStops: Got ${data?.length || 0} stops from Convex for ${source.id}`);
+                // Save to Cache
+                await db.set(cacheKey, { timestamp: Date.now(), data });
+            } catch (e) {
+                console.warn(`[API] Failed to fetch stops from Convex (${source.id}):`, e);
+                // Fallback to cache even if stale?
+                if (!data) {
+                    const fallback = await db.get(cacheKey);
+                    if (fallback) data = fallback.data;
+                }
+            }
+        }
+
+        if (!Array.isArray(data)) return [];
+        return data.map(item => processStop(item, source));
     });
 
     const results = await Promise.all(promises);
@@ -817,22 +860,54 @@ export async function fetchStops(options = {}) {
 
 
 /**
- * Fetches routes from ALL sources, tags them with `_source`, and merges results.
+ * Fetches routes from ALL sources via Convex, tags them with `_source`, and merges results.
  */
 export async function fetchRoutes(options = {}) {
-    // console.log('[API] Fetching Routes from all sources...');
-    const promises = sources.map(source => {
-        const url = `${getApiBaseUrl(source)}/routes`;
-        return fetchWithCache(url, {
-            headers: { 'x-api-key': API_KEY },
-            ...options
-        }).then(data => {
-            if (!Array.isArray(data)) return [];
-            return data.map(item => processRoute(item, source));
-        }).catch(err => {
-            console.warn(`[API] Failed to fetch routes from ${source.id}:`, err);
-            return [];
-        });
+    console.log('[API DEBUG] fetchRoutes called with options:', options);
+    const promises = sources.map(async (source) => {
+        const cacheKey = `convex_routes_${source.id}`;
+        let data = null;
+
+        // 1. Try Cache
+        try {
+            const cached = await db.get(cacheKey);
+            if (cached) {
+                const age = Date.now() - cached.timestamp;
+                // Reuse CACHE_DURATION logic
+                if (age < CACHE_DURATION && options.strategy !== 'network-only') {
+                    data = cached.data;
+                }
+                if (options.strategy === 'cache-only' && cached) return cached.data.map(item => processRoute(item, source));
+            }
+        } catch (e) { console.warn('Cache Read Error', e); }
+
+        // 2. Fetch Network
+        if (!data && options.strategy !== 'cache-only') {
+            try {
+                // Fetch EN for now, usually structural data is shared or EN is primary. 
+                // Overrides logic in backend handles localization merging if we passed locale?
+                // Backend 'getRoutes' takes locale.
+                // Validated overrides were fetched with 'en'.
+                // Ideally we should pass the current locale? 
+                // But the app might switch locales partially?
+                // Static Data usually preload EN.
+                // Let's stick to 'en' for structural data as per previous static files.
+                console.log(`[API DEBUG] fetchRoutes: Calling Convex for ${source.id}...`);
+                data = await convex.query("transit:getRoutes", { sourceId: source.id, locale: 'en' });
+                console.log(`[API DEBUG] fetchRoutes: Got ${data?.length || 0} routes from Convex for ${source.id}`);
+                await db.set(cacheKey, { timestamp: Date.now(), data });
+            } catch (e) {
+                console.warn(`[API] Failed to fetch routes from Convex (${source.id}):`, e);
+                // Fallback to cache even if stale?
+                if (!data) {
+                    const fallback = await db.get(cacheKey);
+                    if (fallback) data = fallback.data;
+                }
+            }
+        }
+
+        if (!Array.isArray(data)) return [];
+        return data.map(item => processRoute(item, source));
     });
 
     const results = await Promise.all(promises);
@@ -967,7 +1042,8 @@ async function fetchWithSourceHint(configFn, id, knownSourceId, options = {}) {
 
 
 export async function fetchStopRoutes(stopId, sourceId = null, options = {}) {
-    // Stop Routes V2
+    // Note: Routes from Convex getRoutes don't include stops arrays.
+    // We must use the V2 API endpoint which returns routes for a specific stop.
     const urlGen = (s, id) => `${getApiBaseUrl(s)}/stops/${encodeURIComponent(id)}/routes?locale=en`;
     try {
         const raw = await fetchWithSourceHint(urlGen, stopId, sourceId, options);
@@ -993,67 +1069,115 @@ export async function fetchMetroSchedulePattern(routeId, patternSuffix) {
     return fetchFromSmartSource(urlGen, routeId);
 }
 
-// V3 Routes List
+// V3 Routes List - Now uses Convex-backed fetchRoutes
 export async function fetchV3Routes() {
-    // Aggregate like V2
-    const promises = sources.map(source => {
-        return fetchWithCache(`${getApiV3BaseUrl(source)}/routes?locale=en`, {
-            headers: { 'x-api-key': API_KEY }
-        }).then(data => {
-            if (Array.isArray(data)) return data.map(r => processRoute(r, source));
-            return [];
-        }).catch(e => []);
-    });
-    const results = await Promise.all(promises);
-    return results.flat();
+    console.log('[API DEBUG] fetchV3Routes: Delegating to fetchRoutes()');
+    return fetchRoutes({ strategy: 'cache-first' });
 }
 
 export async function fetchRouteDetailsV3(routeId, options = {}) {
-    // Check static index first if cache-only
-    if (options.strategy === 'cache-only' && staticRouteDetails.has(routeId)) {
-        // console.log(`[API] Static Hit for Route Details (Direct): ${routeId}`);
+    if (!routeId) return null;
+
+    // 1. Try Memory/Static Cache first
+    if (staticRouteDetails.has(routeId)) {
         return staticRouteDetails.get(routeId);
     }
 
-    const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${encodeURIComponent(id)}`;
-    const raw = await fetchFromSmartSource(urlGen, routeId, options);
-
-    if (raw) {
-        const source = sources.find(s => s.id === (raw._sourceId || 'tbilisi'));
-        const route = processRoute(raw, source);
-
-        // --- Loop Virtualization Integration ---
-        // Only run logic if we have patterns and it looks like a single-pattern route
-        if (route.patterns && route.patterns.length === 1) {
-            const originalPattern = route.patterns[0];
-            // Fetch stops to check for loop
-            // Note: recursive call to fetchRouteStopsV3 is safe because original suffix has no _PART
-            try {
-                const stops = await fetchRouteStopsV3(route.id, originalPattern.patternSuffix, options);
-                if (stops && LoopUtils.isLoop(stops, route.shortName)) {
-                    // It is a loop! Split it.
-                    const virtualPatterns = LoopUtils.generateVirtualPatterns(
-                        originalPattern,
-                        stops,
-                        route.longName
-                    );
-                    route.patterns = virtualPatterns;
-                    v3Cache.patterns.set(route.id, virtualPatterns); // Cache for Polyline Slicing use
-                    // console.log(`[API] Virtualized Loop Route ${route.shortName} into 2 patterns`);
-                }
-            } catch (e) {
-                console.warn(`[API] Failed to check loop status for ${route.id}`, e);
-            }
+    try {
+        // Determine source from options or infer from ID prefix
+        let sourceId = options.sourceId || 'tbilisi';
+        if (String(routeId).startsWith('r') && String(routeId).length > 1 && String(routeId)[1] === 'R') {
+            sourceId = 'rustavi';
         }
-        return route;
+
+        const source = sources.find(s => s.id === sourceId) || sources[0];
+
+        // Convert frontend ID to DB format using restoreApiId
+        const dbRouteId = restoreApiId(String(routeId), source);
+
+        // Query Convex
+        // console.log(`[API DEBUG] fetchRouteDetailsV3: Calling Convex for ${routeId} (db: ${dbRouteId}, source: ${sourceId})...`);
+        const data = await convex.query("transit:getRouteDetails", {
+            sourceId: sourceId,
+            locale: 'en',
+            routeId: dbRouteId
+        });
+
+        if (data) {
+            // Tag with source
+            data._source = sourceId;
+
+            // Populate Side-Loaded Data into v3Cache
+            if (data._schedules) {
+                data._schedules.forEach(s => {
+                    const key = `${routeId}:${s.suffix}`;
+                    v3Cache.schedules.set(key, s.data);
+                });
+            }
+            // Note: Polylines are loaded from static files, not Convex (better for caching)
+
+            // Inject Stops into Patterns if available
+            if (data.patterns && data._stopsOfPatterns) {
+                const stopsMap = new Map();
+                if (Array.isArray(data._stopsOfPatterns)) {
+                    data._stopsOfPatterns.forEach(item => {
+                        if (item.patternSuffix) stopsMap.set(item.patternSuffix, item.stops);
+                    });
+                }
+                data.patterns.forEach(p => {
+                    if (stopsMap.has(p.patternSuffix)) {
+                        p.stops = stopsMap.get(p.patternSuffix);
+                    }
+                });
+            }
+
+            const procSource = sources.find(s => s.id === (data._source || 'tbilisi'));
+            const route = processRoute(data, procSource);
+
+            // --- Loop Virtualization Integration ---
+            if (route.patterns && route.patterns.length === 1) {
+                const originalPattern = route.patterns[0];
+                try {
+                    // Start with injected stops if available
+                    let stops = originalPattern.stops;
+
+                    // If no injected stops, maybe fetch them? (Recursive call to fetchRouteStopsV3)
+                    if (!stops) {
+                        stops = await fetchRouteStopsV3(route.id, originalPattern.patternSuffix, options);
+                    } else {
+                        // Ensure stops are processed (IDs etc)
+                        stops = stops.map(s => processStop(s, procSource));
+                    }
+
+                    if (stops && RouteGeometry.isLoop(stops, route.shortName)) {
+                        const virtualPatterns = RouteGeometry.generateVirtualPatterns(
+                            originalPattern,
+                            stops,
+                            route.longName
+                        );
+                        route.patterns = virtualPatterns;
+                        v3Cache.patterns.set(route.id, virtualPatterns);
+                    }
+                } catch (e) {
+                    console.warn(`[API] Failed to check loop status for ${route.id}`, e);
+                }
+            }
+
+            // Cache full details for future calls
+            staticRouteDetails.set(routeId, route);
+            return route;
+        }
+    } catch (e) {
+        console.warn(`[API] Convex fetchRouteDetailsV3 failed for ${routeId}`, e);
     }
-    return raw;
+
+    return null;
 }
 
 export async function fetchRouteStopsV3(routeId, patternSuffix, options = {}) {
     if (!routeId) return [];
 
-    // console.log(`[API] fetchRouteStopsV3 called for ${routeId} / ${patternSuffix}. Cache-Only? ${options.strategy === 'cache-only'}`);
+
 
     // 1. Handle Virtual Suffixes
     let realSuffix = patternSuffix;
@@ -1077,7 +1201,24 @@ export async function fetchRouteStopsV3(routeId, patternSuffix, options = {}) {
     }
 
     const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${encodeURIComponent(id)}/stops?patternSuffix=${encodeURIComponent(realSuffix)}`;
-    let raw = await fetchFromSmartSource(urlGen, routeId, options);
+    let raw;
+    try {
+        raw = await fetchFromSmartSource(urlGen, routeId, options);
+    } catch (e) {
+        // API failed - try static fallback
+        console.warn(`[API] Route stops API failed for ${routeId}, falling back to static data`);
+        if (staticRouteDetails.has(routeId)) {
+            const details = staticRouteDetails.get(routeId);
+            if (details.patterns) {
+                const pattern = details.patterns.find(p => p.patternSuffix === realSuffix);
+                if (pattern && pattern.stops) {
+                    const source = sources.find(s => s.id === details._sourceId);
+                    return pattern.stops.map(s => processStop(s, source));
+                }
+            }
+        }
+        throw e; // Re-throw if no static fallback available
+    }
 
     const source = sources.find(s => s.id === (raw?._sourceId || 'tbilisi'));
 
@@ -1098,7 +1239,7 @@ export async function fetchRouteStopsV3(routeId, patternSuffix, options = {}) {
             const p = cachedPatterns.find(pat => pat.patternSuffix === patternSuffix);
             if (p && p._slice) sliceRange = p._slice;
         }
-        return LoopUtils.sliceStops(stops, patternSuffix, sliceRange);
+        return RouteGeometry.sliceStops(stops, patternSuffix, sliceRange);
     }
 
     return stops;
@@ -1167,35 +1308,47 @@ export async function fetchRoutePolylineV3(routeId, patternSuffixes, options = {
 
     const realSuffixesStr = Array.from(realSuffixesSet).join(',');
 
+
     const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${encodeURIComponent(id)}/polylines?patternSuffixes=${encodeURIComponent(realSuffixesStr)}`;
 
     let polylineData = null;
-    try {
-        polylineData = await fetchFromSmartSource(urlGen, routeId, options);
-    } catch (e) {
-        // API failed (e.g. 500 error) - fall back to local static data
-        console.log(`[API] Polyline API failed for ${routeId}, trying local fallback...`);
 
-        // Determine source from routeId
+    // 1. Try local static cache first (preferred for better caching/performance)
+    try {
         const sourceId = routeId.startsWith('r') ? 'rustavi' : 'tbilisi';
         const sourceConfig = sources.find(s => s.id === sourceId);
         const appRouteId = processId(routeId, sourceConfig);
 
         const cache = await getStaticCache(sourceId, 'polylines');
         if (cache) {
-            polylineData = {};
+            const tempPolylineData = {};
+            const primaryPrefix = sourceConfig.stripPrefixes ? sourceConfig.stripPrefixes[0] : (sourceConfig.stripPrefix || '');
+
             for (const suffix of realSuffixesSet) {
                 const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
-                const key = `${appRouteId}_${safeSuffix}`;
+                const key = `${primaryPrefix}${appRouteId}_${safeSuffix}`;
                 if (cache[key]) {
-                    Object.assign(polylineData, cache[key]);
+                    Object.assign(tempPolylineData, cache[key]);
+                } else if (cache[`${appRouteId}_${safeSuffix}`]) {
+                    // Fallback for keys without prefix
+                    Object.assign(tempPolylineData, cache[`${appRouteId}_${safeSuffix}`]);
                 }
             }
-            if (Object.keys(polylineData).length > 0) {
-                console.log(`[API] Loaded polylines from local fallback for ${routeId}`);
-            } else {
-                polylineData = null;
+            if (Object.keys(tempPolylineData).length > 0) {
+                polylineData = tempPolylineData;
+                console.log(`[API] Loaded polylines from local cache for ${routeId}`);
             }
+        }
+    } catch (e) {
+        console.warn(`[API] Local polyline cache check failed for ${routeId}:`, e);
+    }
+
+    // 2. Fallback to legacy API if not found in local cache
+    if (!polylineData) {
+        try {
+            polylineData = await fetchFromSmartSource(urlGen, routeId, options);
+        } catch (e) {
+            console.error(`[API] Polyline API fetch failed for ${routeId}:`, e);
         }
     }
 
@@ -1224,7 +1377,7 @@ export async function fetchRoutePolylineV3(routeId, patternSuffixes, options = {
                     }
 
                     // Slice using simple geometry midpoint (no stops needed currently)
-                    polylineData[virtual] = LoopUtils.slicePolyline(fullPolylinePoints, virtual, splitPoint);
+                    polylineData[virtual] = RouteGeometry.slicePolyline(fullPolylinePoints, virtual, splitPoint);
                 } catch (e) {
                     console.warn(`[API] Polyline slice failed for ${virtual}`, e);
                     polylineData[virtual] = polylineData[real]; // Fallback to full (encoded string)
@@ -1270,14 +1423,38 @@ export function decodePolyline(encoded) {
     return points;
 }
 
+// Cache for stop arrivals (30 second TTL)
+const arrivalsCache = new Map();
+const ARRIVALS_CACHE_TTL = 30000; // 30 seconds
+
+function getCachedArrivals(stopId) {
+    const cached = arrivalsCache.get(stopId);
+    if (cached && Date.now() - cached.timestamp < ARRIVALS_CACHE_TTL) {
+        return cached.data;
+    }
+    return null;
+}
+
+function setCachedArrivals(stopId, data) {
+    arrivalsCache.set(stopId, { data, timestamp: Date.now() });
+}
+
 /**
  * Fetch arrivals for a list of stop IDs in parallel.
- * UPDATED: Needs to handle mixed sources.
+ * UPDATED: Uses 30-second cache to reduce API requests.
  * @param {string[]} ids
  * @returns {Promise<Array>} Combined flat list of arrivals
  */
 export async function fetchArrivalsForStopIds(ids) {
+    console.log(`[fetchArrivalsForStopIds] Input IDs:`, ids);
     const promises = ids.map(async (id) => {
+        // Check cache first
+        const cached = getCachedArrivals(id);
+        if (cached) {
+            console.log(`[fetchArrivalsForStopIds] Cache HIT for ${id}`);
+            return cached;
+        }
+
         // Use smart source fetch logic
         // We need a custom url generator for arrivals
         const urlGen = (s, i) => `${getApiBaseUrl(s)}/stops/${encodeURIComponent(i)}/arrival-times?locale=en&ignoreScheduledArrivalTimes=false`;
@@ -1286,9 +1463,16 @@ export async function fetchArrivalsForStopIds(ids) {
             async function tryFetch(source) {
                 const apiId = restoreApiId(id, source);
                 const url = urlGen(source, apiId);
+                console.log(`[fetchArrivalsForStopIds] Trying ${source.id}: id=${id} -> apiId=${apiId}, URL=${url}`);
                 const res = await fetch(url, { headers: { 'x-api-key': API_KEY } });
-                if (!res.ok) throw new Error('Fail');
-                return res.json();
+                console.log(`[fetchArrivalsForStopIds] Response for ${apiId}: status=${res.status}`);
+                if (!res.ok) throw new Error(`Fail: ${res.status}`);
+                const arrivals = await res.json();
+                // Tag each arrival with the source stop ID so we know which stop it came from
+                const taggedArrivals = Array.isArray(arrivals) ? arrivals.map(a => ({ ...a, _sourceStopId: id })) : [];
+                // Cache the result
+                setCachedArrivals(id, taggedArrivals);
+                return taggedArrivals;
             }
 
             try {
@@ -1318,224 +1502,157 @@ const v3InFlight = {
     schedules: new Map()
 };
 
-export async function fetchScheduleForStop(routeId, stopIds) {
+export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = null) {
     if (!routeId || !stopIds || stopIds.length === 0) return null;
 
-    console.log(`[API Schedule Debug] fetchScheduleForStop called for RouteID: ${routeId}, Stops: ${stopIds.join(',')}`);
-
-    // 1. Get Patterns
-    let patterns = v3Cache.patterns.get(routeId);
+    // 1. Get Patterns with Stops (Association Data)
+    // Use separate cache key to avoid collision with full route details patterns
+    let patterns = v3Cache.stopPatterns.get(routeId);
+    let routeDataForPrioritization = null;
 
     if (!patterns) {
-        const lsKey = `v3_patterns_${routeId}`;
+        const lsKey = `v3_stop_patterns_${routeId}`;
         try {
             const cached = await db.get(lsKey);
             if (cached && (Date.now() - cached.timestamp < 7 * 24 * 60 * 60 * 1000)) {
                 patterns = cached.data;
-                v3Cache.patterns.set(routeId, patterns);
-                // console.log(`[API Debug] Patterns loaded from LS for ${routeId}`);
+                v3Cache.stopPatterns.set(routeId, patterns);
             }
         } catch (e) { }
     }
 
     if (!patterns) {
-        if (v3InFlight.patterns.has(routeId)) {
-            patterns = await v3InFlight.patterns.get(routeId);
-        } else {
-            const promise = (async () => {
-                try {
-                    // Smart Fetch for Route Details (Patterns)
-                    console.log(`[API Schedule Debug] Pattern IIFE: Fetching route details for ${routeId}`);
-                    const routeData = await fetchRouteDetailsV3(routeId, { strategy: 'cache-first' });
+        // Fetch patterns if not in cache
+        patterns = await (async () => {
+            try {
+                const routeData = await fetchRouteDetailsV3(routeId, { strategy: 'cache-first' });
+                // console.log(`[Debug] details for ${routeId}:`, routeData ? 'Found' : 'Null');
+                routeDataForPrioritization = routeData;
+                if (routeData) {
+                    // Optimization: Use Side-Loaded stops of patterns if available (from Convex)
+                    if (routeData._stopsOfPatterns && Array.isArray(routeData._stopsOfPatterns) && routeData._stopsOfPatterns.length > 0) {
+                        const source = sources.find(s => s.id === (routeData._source || 'tbilisi'));
+                        return routeData._stopsOfPatterns.map(p => ({
+                            ...p,
+                            stop: processStop(p.stop, source)
+                        }));
+                    }
 
-                    if (routeData) console.log(`[API Schedule Debug] Pattern IIFE: routeData found for ${routeId}, patterns: ${routeData.patterns ? routeData.patterns.length : 'None'}`);
-
-                    if (routeData && routeData.patterns) {
+                    if (routeData.patterns) {
                         const suffixes = routeData.patterns.map(p => p.patternSuffix).join(',');
-                        // Retrieve detailed pattern stops
-                        // We need the same source as routeData!
-                        // This implies we need to track which source routeData came from.
-                        // Since `fetchRouteDetailsV3` relies on hunting, we effectively find it.
-                        // But for the NEXT call `stops-of-patterns`, we need to hit the SAME source.
-                        // Refactor opportunity: fetchRouteDetailsV3 could return { data, source }.
-                        // For now, let's risk re-hunting (cached) or smart hunting.
-                        // URL Gen for stops-of-patterns
                         const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${id}/stops-of-patterns?patternSuffixes=${suffixes}&locale=en`;
-                        console.log(`[API Schedule Debug] Pattern IIFE: Calling fetchFromSmartSource for stops-of-patterns`);
                         const res = await fetchFromSmartSource(urlGen, routeId);
-                        console.log(`[API Schedule Debug] Pattern IIFE: stops-of-patterns result: ${res ? (Array.isArray(res) ? `Array(${res.length})` : 'Object') : 'null'}`);
 
-                        // Force Process Pattern Stops (Normalize IDs)
-                        if (res && Array.isArray(res)) {
-                            // Determine correct source config
+                        // console.log(`[Debug] StopsOfPatterns for ${routeId}:`, res ? (Array.isArray(res) ? `Array(${res.length})` : typeof res) : 'Null');
+
+                        if (res && Array.isArray(res) && res.length > 0) {
                             const source = sources.find(s => s.id === (res._sourceId || 'tbilisi')) || sources.find(s => s.id === 'tbilisi');
                             return res.map(p => ({
                                 ...p,
                                 stop: processStop(p.stop, source)
                             }));
+                        } else {
+                            // Empty API result, try static fallback
+                            throw new Error('Empty API result, trying fallback');
                         }
-
-                        return res;
                     }
-                    console.warn(`[API Debug] No patterns found in route details for ${routeId}`);
-                    return [];
-                } catch (e) {
-                    console.warn(`[Schedule] Failed to load patterns from API for ${routeId}:`, e.message);
+                }
+                return [];
+            } catch (e) {
+                // Fallback to static cache
+                try {
+                    const isRustavi = /^r/.test(routeId) || routeId.startsWith('rustavi:');
+                    const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
+                    const sourceConfig = sources.find(s => s.id === sourceId);
+                    const cache = await getStaticCache(sourceId, `${sourceId}_routes_details_en.json`);
+                    if (cache) {
+                        const appRouteId = processId(routeId, sourceConfig);
+                        const apiRouteId = restoreApiId(appRouteId, sourceConfig);
+                        // Try multiple ID formats to hit cache
+                        const routeDataVal = cache[appRouteId] || cache[apiRouteId] || cache[routeId] || cache[`1:${appRouteId}`];
 
-                    // Fallback: Try to load from static route details
-                    try {
-                        const isRustavi = /^[rR]/.test(routeId) || routeId.toLowerCase().startsWith('rustavi:');
-                        const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
-                        const sourceConfig = sources.find(s => s.id === sourceId);
-                        const cache = await getStaticCache(sourceId, `${sourceId}_routes_details_en.json`);
-
-                        if (cache) {
-                            // Try multiple key formats
-                            const appRouteId = processId(routeId, sourceConfig);
-                            const apiRouteId = restoreApiId(appRouteId, sourceConfig);
-                            const routeData = cache[appRouteId] || cache[apiRouteId] || cache[routeId];
-
-                            if (routeData && routeData._stopsOfPatterns) {
-                                console.log(`[Schedule] Loaded ${routeData._stopsOfPatterns.length} patterns from static for ${routeId}`);
-                                // Process stops in patterns
-                                if (Array.isArray(routeData._stopsOfPatterns)) {
-                                    return routeData._stopsOfPatterns.map(p => ({
+                        if (routeDataVal && routeDataVal._stopsOfPatterns) {
+                            if (Array.isArray(routeDataVal._stopsOfPatterns)) {
+                                return routeDataVal._stopsOfPatterns.map(p => {
+                                    if (!p.stop) return p; // Guard against malformed cache
+                                    return {
                                         ...p,
                                         stop: processStop(p.stop, sourceConfig)
-                                    }));
-                                }
-                                return routeData._stopsOfPatterns;
+                                    };
+                                });
                             }
+                            return routeDataVal._stopsOfPatterns;
                         }
-                    } catch (fallbackErr) {
-                        console.warn(`[Schedule] Static patterns fallback also failed:`, fallbackErr.message);
                     }
-
-                    return [];
-                }
-            })();
-
-
-            v3InFlight.patterns.set(routeId, promise);
-            try {
-                patterns = await promise;
-                if (patterns) {
-                    v3Cache.patterns.set(routeId, patterns);
-                    try {
-                        await db.set(`v3_patterns_${routeId}`, {
-                            timestamp: Date.now(),
-                            data: patterns
-                        });
-                    } catch (e) { console.warn('LS Write Failed (Patterns)', e); }
-                }
-            } catch (e) {
-                console.error(`[V3] Pattern fetch error for ${routeId}`, e);
-            } finally {
-                v3InFlight.patterns.delete(routeId);
+                } catch (fallbackErr) { }
+                return [];
+                // End of Fallback Logic
             }
+        })();
+
+        if (patterns && patterns.length > 0) { // Only cache if we actually found something
+            v3Cache.stopPatterns.set(routeId, patterns);
+            try {
+                await db.set(`v3_stop_patterns_${routeId}`, {
+                    timestamp: Date.now(),
+                    data: patterns
+                });
+            } catch (e) { console.warn('LS Write Failed (StopPatterns)', e); }
         }
     }
 
-    if (!patterns) {
-        console.warn(`[API Debug] No patterns loaded for ${routeId} (Final check)`);
-        return null; // Silent return
-    }
+    if (!patterns) return null;
 
-    console.log(`[API Schedule Debug] Patterns loaded for ${routeId}. Count: ${patterns.length}`);
-
-    // 2. Find Pattern containing Stop
     const stopEntry = patterns.find((p, idx) => {
-        if (!p || !p.stop) {
-            if (idx < 3) console.warn(`[API Schedule Debug] Pattern ${idx} invalid:`, p);
-            return false;
-        }
+        if (!p || !p.stop) return false;
         const pId = String(p.stop.id);
         const pCode = String(p.stop.code || '');
-
-        // Helper: Normalize ID by stripping all prefixes (r, 1:, 2:, etc.)
         const normalize = (id) => String(id).replace(/^[rR]/, '').replace(/^\d+:/, '');
-
         return stopIds.some(targetId => {
             const targetStr = String(targetId);
-
-            // 1. Exact match
             if (targetStr === pId) return true;
-
-            // 2. Normalized match (r426 === 1:426 after normalization)
             if (normalize(targetStr) === normalize(pId)) return true;
-
-            // 3. Code match
             if (pCode && normalize(pCode) === normalize(targetStr)) return true;
-
-            // Transformed Match Backup (just in case targetId is raw?)
-            // If targetId is 1:91 and pId is r91.
-            // Assumption: Route ID prefix determines source.
-            // FIX: Case insensitive check for 'r' or 'R' prefix
-            const isRustavi = /^[rR]/.test(routeId) || routeId.toLowerCase().startsWith('rustavi:');
-            const source = isRustavi ? sources.find(s => s.id === 'rustavi') : sources.find(s => s.id === 'tbilisi');
-
-            if (source) {
-                // If target is raw 1:91, restoring it gives 1:91. Not helpful if pId is r91.
-                // We want to PROCESS targetId to see if it matches pId?
-                // Or restore pId?
-
-                // If pId is r91 (processed). Target is 1:91.
-                // processId(1:91) -> r91.
-                // So check processId(target) === pId?
-                const processedTarget = processId(targetId, source);
-                if (processedTarget === pId) return true;
-
-                // Reverse: Restore pId (r91 -> 1:91). Target 1:91.
-                const restoredPid = restoreApiId(pId, source);
-                if (targetStr === restoredPid) return true;
-
-                // Double check restore of target (if target was processed r91 -> 1:91) vs pId raw 1:91?
-                // Should not happen if we normalized.
-                const restoredTarget = restoreApiId(targetId, source);
-                if (restoredTarget === pId) return true;
-
-                // Rustavi Specific: Handle "r" prefix vs "1:" prefix gracefully
-                if (source && source.id === 'rustavi') {
-                    // target=1086, pId=r1086
-                    if (pId === `r${targetStr}`) return true;
-                    if (targetStr === `r${pId}`) return true;
-                    // target=1086, pId=1086 (already matched by exact check line 1158? No, strict check might fail types?)
-                }
-            }
-
             return false;
         });
     });
 
-    console.log(`[API Schedule Debug] Stop Search Result for ${routeId}. StopEntry Found? ${!!stopEntry}`);
+    if (!stopEntry || !stopEntry.patternSuffixes.length) return null;
 
-    if (!stopEntry) {
-        console.warn(`[API Schedule Debug] Stop ${stopIds.join(',')} NOT found in ${patterns.length} patterns. Sample Pattern (0):`, patterns[0]?.stop?.id);
-        return null;
+    // --- Suffix Selection ---
+    let suffix = explicitSuffix;
+    if (!suffix || !stopEntry.patternSuffixes.includes(suffix)) {
+        suffix = stopEntry.patternSuffixes[0];
+
+        // Prioritize non-terminus suffix
+        if (stopEntry.patternSuffixes.length > 1) {
+            if (!routeDataForPrioritization) {
+                routeDataForPrioritization = await fetchRouteDetailsV3(routeId, { strategy: 'cache-first' });
+            }
+            if (routeDataForPrioritization && routeDataForPrioritization.patterns) {
+                const nonTerminus = stopEntry.patternSuffixes.find(sfx => {
+                    const p = routeDataForPrioritization.patterns.find(pat => pat.patternSuffix === sfx);
+                    if (!p || !p.lastStop) return true;
+                    const normalize = (id) => String(id).replace(/^\d+:/, '').replace(/^[rR]/, '');
+                    const isLast = stopIds.some(sid => normalize(sid) === normalize(p.lastStop.id));
+                    return !isLast;
+                });
+                if (nonTerminus) suffix = nonTerminus;
+            }
+        }
     }
 
-    if (!stopEntry || !stopEntry.patternSuffixes.length) {
-        console.warn(`[API Debug] Stop ${stopIds.join(',')} not found in patterns for ${routeId}. Pattern Stops (Sample):`, patterns.slice(0, 5).map(p => p.stop.id).join(', '));
-        return null;
-    }
-
-    const suffix = stopEntry.patternSuffixes[0];
-    // console.log(`[API Debug] Found suffix ${suffix} for stop ${stopEntry.stop.id}`);
-
-    // 3. Fetch Schedule
     const cacheKey = `${routeId}:${suffix}`;
     let schedule = v3Cache.schedules.get(cacheKey);
 
     if (!schedule) {
-        const keySafe = cacheKey.replace(/:/g, '_'); // Safety
+        const keySafe = cacheKey.replace(/:/g, '_');
         const lsKey = `v3_sched_${keySafe}`;
         try {
             const cached = await db.get(lsKey);
             if (cached && (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000)) {
                 schedule = cached.data;
-                schedule = cached.data;
                 v3Cache.schedules.set(cacheKey, schedule);
-                console.log(`[API Schedule Debug] Schedule loaded from LS for ${cacheKey}. Valid? ${!!schedule}`);
             }
         } catch (e) { }
     }
@@ -1547,58 +1664,28 @@ export async function fetchScheduleForStop(routeId, stopIds) {
             const promise = (async () => {
                 const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${id}/schedule?patternSuffix=${suffix}&locale=en`;
                 try {
-                    console.log(`[API Schedule Debug] Fetching schedule for ${routeId}, suffix: ${suffix}`);
                     const schRes = await fetchFromSmartSource(urlGen, routeId);
-
-                    if (!schRes) {
-                        console.warn(`[API Schedule Debug] Schedule API returned null for ${routeId}`);
-                        throw new Error(`Schedule fetch failed`);
-                    }
-                    console.log(`[API Schedule Debug] Schedule fetched successfully. Length: ${schRes.length || 'Obj'}`);
+                    if (!schRes) throw new Error(`Schedule fetch failed`);
                     return schRes;
                 } catch (e) {
-                    // Fallback to Static Data
-                    console.warn(`[V3] Schedule API failed for ${routeId}, trying static fallback...`, e.message);
-
-                    // Determine source from routeId
                     const isRustavi = /^[rR]/.test(routeId) || routeId.toLowerCase().startsWith('rustavi:');
                     const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
                     const sourceConfig = sources.find(s => s.id === sourceId);
-
                     try {
                         const cache = await getStaticCache(sourceId, 'schedules');
                         if (cache) {
-                            // Build possible keys
                             const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
                             const appRouteId = processId(routeId, sourceConfig);
                             const apiRouteId = restoreApiId(appRouteId, sourceConfig);
-
-                            const keys = [
-                                `${appRouteId}_${safeSuffix}`,
-                                `${apiRouteId}_${safeSuffix}`,
-                                `${routeId}_${safeSuffix}`,
-                                `${routeId.replace('1:', '')}_${safeSuffix}`,
-                                // Also try with _v2 suffix for V2 fallback data
-                                `${apiRouteId}_v2`,
-                                `${appRouteId}_v2`
-                            ];
-
+                            const keys = [`${appRouteId}_${safeSuffix}`, `${apiRouteId}_${safeSuffix}`, `${routeId}_${safeSuffix}`];
                             for (const key of keys) {
-                                if (cache[key]) {
-                                    console.log(`[V3] Static schedule found with key: ${key}`);
-                                    return cache[key];
-                                }
+                                if (cache[key]) return cache[key];
                             }
-                            console.warn(`[V3] No static schedule found. Tried keys:`, keys.slice(0, 3));
                         }
-                    } catch (fallbackErr) {
-                        console.warn(`[V3] Static fallback also failed:`, fallbackErr.message);
-                    }
-
-                    return null; // Return null instead of throwing to let UI show --:--
+                    } catch (err) { }
+                    return null;
                 }
             })();
-
             v3InFlight.schedules.set(cacheKey, promise);
             try {
                 schedule = await promise;
@@ -1606,23 +1693,246 @@ export async function fetchScheduleForStop(routeId, stopIds) {
                     v3Cache.schedules.set(cacheKey, schedule);
                     try {
                         const keySafe = cacheKey.replace(/:/g, '_');
-                        await db.set(`v3_sched_${keySafe}`, {
-                            timestamp: Date.now(),
-                            data: schedule
-                        });
+                        await db.set(`v3_sched_${keySafe}`, { timestamp: Date.now(), data: schedule });
                     } catch (e) { }
                 }
             } catch (e) {
-                console.warn(`[V3] Schedule fetch completely failed for ${routeId}`, e);
             } finally {
                 v3InFlight.schedules.delete(cacheKey);
             }
         }
     }
 
-    // Return schedule with pattern suffix for direction detection
-    if (schedule) {
-        return { schedule, patternSuffix: suffix };
-    }
-    return null;
+    return schedule ? { schedule, patternSuffix: suffix } : null;
 }
+
+/**
+ * Calculate ETAs for buses approaching a target stop.
+ * Uses arrivals from upstream stops + scheduled inter-stop travel times.
+ * 
+ * @param {string} routeId - Route identifier
+ * @param {string} patternSuffix - Direction/pattern suffix  
+ * @param {string} targetStopId - Target stop ID
+ * @param {Object} options - { primaryArrivalMins: number } for smart stop selection
+ * @returns {Promise<Array<{minutes: number, source: 'live'|'scheduled'}>>}
+ */
+export async function calculateBusETAs(routeId, patternSuffix, targetStopId, options = {}) {
+    try {
+        const { primaryArrivalMins = 15, routeShortName: passedShortName } = options;
+
+        // 1. Get schedule to find route stops and inter-stop times
+        const scheduleResult = await fetchScheduleForStop(routeId, [targetStopId]);
+
+        if (!scheduleResult || !scheduleResult.schedule) {
+            console.log(`[ETA Calc] No schedule data for ${routeId}`);
+            return [];
+        }
+
+        const { schedule, patternSuffix: actualSuffix } = scheduleResult;
+
+        // 2. Find today's schedule
+        const now = new Date();
+        const tbilisiOffset = 4 * 60; // UTC+4
+        const localOffset = now.getTimezoneOffset();
+        const tbilisiTime = new Date(now.getTime() + (tbilisiOffset + localOffset) * 60000);
+        const todayStr = tbilisiTime.toISOString().split('T')[0];
+
+        let daySchedule = schedule.find(s => s.serviceDates?.includes(todayStr));
+        if (!daySchedule && schedule.length > 0) {
+            daySchedule = schedule[0];
+        }
+
+        if (!daySchedule || !daySchedule.stops || daySchedule.stops.length < 3) {
+            console.log(`[ETA Calc] Insufficient schedule data for ${routeId}`);
+            return [];
+        }
+
+        const stops = daySchedule.stops;
+
+        // 3. Find target stop index
+        const normalize = (id) => String(id).replace(/^\d+:/, '').replace(/^[rR]/, '');
+        const targetNorm = normalize(targetStopId);
+
+        const targetIndex = stops.findIndex(s =>
+            normalize(s.id) === targetNorm ||
+            normalize(s.code || '') === targetNorm
+        );
+
+        if (targetIndex <= 0) {
+            const sampleIds = stops.slice(0, 5).map(s => s.id);
+            console.log(`[ETA Calc] Target stop ${targetStopId} (normalized: ${targetNorm}) not found or at start. Sample stop IDs:`, sampleIds);
+            return [];
+        }
+
+        // 4. Calculate average inter-stop time
+        let totalInterStopTime = 0;
+        let interStopCount = 0;
+
+        for (let i = 0; i < stops.length - 1; i++) {
+            const fromTimes = (stops[i].arrivalTimes || '').split(',').filter(Boolean);
+            const toTimes = (stops[i + 1].arrivalTimes || '').split(',').filter(Boolean);
+
+            if (fromTimes.length > 0 && toTimes.length > 0) {
+                const [fh, fm] = fromTimes[0].split(':').map(Number);
+                const [th, tm] = toTimes[0].split(':').map(Number);
+                const diff = (th * 60 + tm) - (fh * 60 + fm);
+
+                if (diff > 0 && diff < 15) {
+                    totalInterStopTime += diff;
+                    interStopCount++;
+                }
+            }
+        }
+
+        const avgInterStopMins = interStopCount > 0 ? totalInterStopTime / interStopCount : 2;
+
+        // 5. SMART STOP SELECTION: Estimate bus position from primary arrival
+        const estimatedStopsAway = Math.ceil(primaryArrivalMins / avgInterStopMins);
+        const bufferStops = 2;
+
+        // Query stops around estimated position
+        const startIdx = Math.max(0, targetIndex - estimatedStopsAway - bufferStops);
+        const endIdx = Math.max(0, targetIndex - Math.max(1, estimatedStopsAway - bufferStops));
+
+        // Get upstream stop IDs (limit to 3-4 stops)
+        const upstreamStops = [];
+        for (let i = startIdx; i <= endIdx && upstreamStops.length < 4; i++) {
+            if (stops[i] && stops[i].id) {
+                upstreamStops.push({
+                    id: stops[i].id,
+                    index: i,
+                    travelTimeToTarget: 0
+                });
+            }
+        }
+
+        if (upstreamStops.length === 0) {
+            console.log(`[ETA Calc] No upstream stops identified for ${routeId}`);
+            return [];
+        }
+
+        // 6. Calculate travel time from each upstream stop to target
+        for (const upstream of upstreamStops) {
+            let travelTime = 0;
+            for (let i = upstream.index; i < targetIndex; i++) {
+                const fromTimes = (stops[i].arrivalTimes || '').split(',').filter(Boolean);
+                const toTimes = (stops[i + 1]?.arrivalTimes || '').split(',').filter(Boolean);
+
+                if (fromTimes.length > 0 && toTimes.length > 0) {
+                    const [fh, fm] = fromTimes[0].split(':').map(Number);
+                    const [th, tm] = toTimes[0].split(':').map(Number);
+                    const diff = (th * 60 + tm) - (fh * 60 + fm);
+                    travelTime += (diff > 0 && diff < 15) ? diff : avgInterStopMins;
+                } else {
+                    travelTime += avgInterStopMins;
+                }
+            }
+            upstream.travelTimeToTarget = Math.round(travelTime);
+        }
+
+        console.log(`[ETA Calc] ${routeId}: Querying ${upstreamStops.length} upstream stops (${startIdx}-${endIdx}), avg inter-stop: ${avgInterStopMins.toFixed(1)}min`);
+
+        // 7. Fetch arrivals for upstream stops
+        const upstreamIds = upstreamStops.map(s => s.id);
+        console.log(`[ETA Calc] Upstream stop IDs to fetch:`, upstreamIds);
+        let upstreamArrivals;
+
+        try {
+            upstreamArrivals = await fetchArrivalsForStopIds(upstreamIds);
+            console.log(`[ETA Calc] Received ${upstreamArrivals?.length || 0} upstream arrivals`);
+        } catch (e) {
+            console.warn(`[ETA Calc] Failed to fetch upstream arrivals:`, e.message);
+            return [];
+        }
+
+        if (!upstreamArrivals || upstreamArrivals.length === 0) {
+            console.log(`[ETA Calc] No upstream arrivals found for ${routeId}`);
+            return [];
+        }
+
+        // 8. Filter arrivals for this route and calculate ETAs
+        // Use passed shortName if available, otherwise try to derive from routeId (fallback)
+        const routeShortName = passedShortName || routeId.replace(/^[rR]/, '').replace(/^\d+:/, '');
+
+        // Debug: Log what routes are in the arrivals
+        const uniqueRoutes = [...new Set(upstreamArrivals.map(a => a.shortName))];
+        const matchingCount = upstreamArrivals.filter(a => String(a.shortName || '').replace(/^[rR]/, '') === routeShortName).length;
+        const realtimeCount = upstreamArrivals.filter(a => a.realtime).length;
+        console.log(`[ETA Calc] Matching for "${routeShortName}": ${matchingCount} name-match, ${realtimeCount} realtime, routes in arrivals: [${uniqueRoutes.slice(0, 10).join(', ')}${uniqueRoutes.length > 10 ? '...' : ''}]`);
+
+        // Debug: Log sample arrival structure to find correct stop ID property
+        if (upstreamArrivals.length > 0) {
+            const sample = upstreamArrivals[0];
+            console.log(`[ETA Calc] Sample arrival structure:`, Object.keys(sample), `_sourceStopId=${sample._sourceStopId}`);
+        }
+
+        const etas = [];
+
+        for (const arrival of upstreamArrivals) {
+            // Match route - compare shortNames
+            const arrivalRouteName = String(arrival.shortName || '').replace(/^[rR]/, '');
+            if (arrivalRouteName !== routeShortName) continue;
+
+            // Only use live arrivals (realtime)
+            if (!arrival.realtime) continue;
+
+            // Find which upstream stop this arrival is for
+            const arrivalStopId = arrival._sourceStopId;
+            const upstreamStop = upstreamStops.find(u =>
+                normalize(u.id) === normalize(arrivalStopId)
+            );
+
+            // Debug: Log matching attempt for route matches
+            if (!upstreamStop) {
+                const upstreamIds = upstreamStops.map(u => `${u.id}→${normalize(u.id)}`);
+                console.log(`[ETA Calc] STOP MISMATCH: arrival._sourceStopId="${arrivalStopId}" (norm: ${normalize(arrivalStopId)}), upstream: [${upstreamIds.join(', ')}]`);
+                continue;
+            }
+
+            // Calculate ETA at target = arrival minutes + travel time
+            const arrivalMins = arrival.realtimeArrivalMinutes ?? arrival.scheduledArrivalMinutes ?? 0;
+            const etaAtTarget = arrivalMins + upstreamStop.travelTimeToTarget;
+
+            etas.push({
+                minutes: Math.round(etaAtTarget),
+                source: 'live',
+                upstreamStopId: upstreamStop.id,
+                upstreamArrivalMins: arrivalMins,
+                travelTime: upstreamStop.travelTimeToTarget
+            });
+        }
+
+        // 9. Deduplicate (same bus might appear at multiple upstream stops)
+        const uniqueEtas = [];
+        const seenMinutes = new Set();
+
+        etas.sort((a, b) => a.minutes - b.minutes);
+
+        for (const eta of etas) {
+            // Skip if within 2 mins of an existing ETA (likely same bus)
+            let isDupe = false;
+            for (const m of seenMinutes) {
+                if (Math.abs(m - eta.minutes) <= 2) {
+                    isDupe = true;
+                    break;
+                }
+            }
+
+            if (!isDupe) {
+                uniqueEtas.push(eta);
+                seenMinutes.add(eta.minutes);
+            }
+
+            if (uniqueEtas.length >= 3) break;
+        }
+
+        console.log(`[ETA Calc] ${routeId}: Found ${uniqueEtas.length} ETAs:`, uniqueEtas.map(e => `${e.minutes}'`));
+
+        return uniqueEtas;
+
+    } catch (err) {
+        console.warn(`[ETA Calc] Error for ${routeId}:`, err.message);
+        return [];
+    }
+}
+

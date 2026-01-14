@@ -128,7 +128,7 @@ export function getIntervalDescription(routeId) {
 
     // Case 2: Has gaps but not overwhelming - mention the gap
     if (gapSegments.length > 0) {
-        const gapRanges = gapSegments.map(s => `${formatHour(s.start)}–${formatHour(s.end)}`);
+        const gapRanges = gapSegments.map(s => `${formatHour(s.start)} – ${formatHour(s.end)}`);
         if (gapRanges.length === 1) {
             description += `, no service ${gapRanges[0]}`;
         } else {
@@ -150,7 +150,7 @@ export function getIntervalDescription(routeId) {
             // Midday variation
             const midday = differentSegments.find(s => s.start >= 12 && s.start < 16);
             if (midday) {
-                description += `, less frequent ${formatHour(midday.start)}–${formatHour(midday.end)}`;
+                description += `, less frequent ${formatHour(midday.start)} – ${formatHour(midday.end)}`;
                 // Also check for evening
                 const evening = differentSegments.find(s => s.start >= 20);
                 if (evening) {
@@ -205,7 +205,7 @@ function mergeServiceRanges(segments) {
             currentEnd = seg.end;
         } else {
             // Push current range and start new one
-            ranges.push(`${formatHour(currentStart)}–${formatHour(currentEnd)}`);
+            ranges.push(`${formatHour(currentStart)} – ${formatHour(currentEnd)}`);
             currentStart = seg.start;
             currentEnd = seg.end;
         }

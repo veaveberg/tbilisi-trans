@@ -10,10 +10,14 @@ import mapboxgl from 'mapbox-gl';
 
 import { Router } from './router.js';
 import * as api from './api.js';
-import { LoopUtils } from './loop-utils.js';
+import { RouteGeometry } from './route-geometry.js';
+import { setSheetState, setPanelState, closeAllPanels, setupPanelDrag } from './panel-manager.js';
 import * as metro from './metro.js';
 const { handleMetroStop } = metro;
-import { map, setupMapControls, getMapHash, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, setupHoverHandlers, setupClickHandlers, setMapFocus, isTrackingActive, isUserInteractingWithMap, stopTracking, setMapLightPreset } from './map-setup.js';
+import { setupGeolocation, isTrackingActive, stopTracking, isUserInteractingWithMap, LOCATION_STATES } from './geolocation.js';
+import { map, getMapHash } from './map-setup.js';
+import { setupVisuals, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, setMapLightPreset } from './map-visuals.js';
+import { setMapFocus, setupHoverHandlers, setupClickHandlers, addMetroHoverLogic } from './map-interactions.js';
 import stopRotations from './data/stop_bearings.json';
 import { db } from './db.js';
 import { historyManager, addToHistory, popHistory, clearHistory, updateBackButtons, peekHistory } from './history.js';
@@ -67,7 +71,9 @@ initSettings({
 });
 
 // Setup Map Controls
-setupMapControls();
+// Setup Geolocation & Map Interactions
+setupGeolocation(map);
+setupVisuals();
 
 // Initial Router State Handling
 Router.init();
@@ -84,7 +90,7 @@ function onRoutesLoaded(data) {
     if (isRouterLogicExecuted) return; // Only run initial routing once
     isRouterLogicExecuted = true;
 
-    console.log('[Init] Router Logic Executing with', data.length, 'routes');
+    // console.log('[Init] Router Logic Executing with', data.length, 'routes');
 
     // 2. Direct Route (Bus only)
     if (initialState.type === 'route' && initialState.shortName) {
@@ -241,53 +247,7 @@ const ALL_STOP_LAYERS = [
 ];
 
 // Explicit Metro Hover Logic (Pop Effect / Overlay)
-// Explicit Metro Hover Logic (Pop Effect / Overlay)
-function addMetroHoverLogic(map, filterManager) {
-    if (!map.getLayer('metro-layer-circle')) return;
-
-    let hoveredStateId = null;
-    const targets = ['metro-layer-circle', 'metro-layer-overlay', 'metro-layer-label', 'metro-transfer-layer'];
-
-    map.on('mouseenter', targets, (e) => {
-        // Disable Metro Hover if Filter is Active (Metro is not "reachable")
-        // Debug
-        // console.log('[MetroHover] Filter Active?', filterManager?.state?.active, filterManager?.state?.picking);
-
-        if (filterManager && (filterManager.state.active || filterManager.state.picking)) return;
-
-        map.getCanvas().style.cursor = 'pointer';
-        if (e.features.length > 0) {
-            const feature = e.features[0];
-
-            if (hoveredStateId !== null) {
-                map.setFeatureState(
-                    { source: 'metro-stops', id: hoveredStateId },
-                    { hover: false }
-                );
-            }
-            hoveredStateId = e.features[0].id; // Use implicit ID for consistency
-            map.setFeatureState(
-                { source: 'metro-stops', id: hoveredStateId },
-                { hover: true }
-            );
-
-            // Debug: Verify State
-            // const state = map.getFeatureState({ source: 'metro-stops', id: hoveredStateId });
-            // console.log('Metro Hover Set:', hoveredStateId, state); 
-        }
-    });
-
-    map.on('mouseleave', targets, () => {
-        map.getCanvas().style.cursor = '';
-        if (hoveredStateId !== null) {
-            map.setFeatureState(
-                { source: 'metro-stops', id: hoveredStateId },
-                { hover: false }
-            );
-        }
-        hoveredStateId = null;
-    });
-}
+// Moved to map-interactions.js
 // Call this after map load or in Setup
 
 
@@ -316,7 +276,7 @@ arrivals.initArrivals({
     // renderArrivals dependencies
     filterManager,
     showRouteOnMap,
-    LoopUtils,
+    RouteGeometry,
     v3RoutesMap: () => v3RoutesMap
 });
 
@@ -337,7 +297,8 @@ setupHoverHandlers({
             });
         }
     },
-    filterManager: filterManager // Pass Manager
+    filterManager: filterManager, // Pass Manager
+    updateConnectionLine: updateConnectionLine // Pass function for hover preview
 });
 
 // Init Metro Hover
@@ -391,7 +352,7 @@ let isDeepLinkHandled = false;
 async function initializeMapData(stopsData, routesData) {
     if (!stopsData || !routesData) return;
 
-    console.log('[Main] Initializing Map Data...');
+    // console.log('[Main] Initializing Map Data...');
 
     // 1. Update Globals
     rawStops = stopsData;
@@ -478,7 +439,7 @@ async function initializeMapData(stopsData, routesData) {
         // Deep link already handled (e.g. by Fast Load).
         // If we just reloaded fresh data, we MUST re-apply the filter to the new objects.
         if (filterManager.state.active && filterManager.state.originId) {
-            console.log('[Main] Fresh data loaded while Filter Active. Re-applying...');
+            // console.log('[Main] Fresh data loaded while Filter Active. Re-applying...');
             // Use refreshRouteFilter, which now includes hydration logic
             filterManager.refreshRouteFilter(filterManager.state.originId);
         }
@@ -554,18 +515,18 @@ map.on('load', async () => {
     // A. FAST PATH (Cache/Static) - Instant Load
     const loadFast = async () => {
         try {
-            console.log('[Fast Load] Attempting...');
+            // console.log('[Fast Load] Attempting...');
             const [stops, routes] = await Promise.all([
                 api.fetchStops({ strategy: 'cache-only' }),
                 api.fetchRoutes({ strategy: 'cache-only' })
             ]);
-            console.log(`[Fast Load] Result - Stops: ${stops ? stops.length : 'MISSING'}, Routes: ${routes ? routes.length : 'MISSING'}`);
+            // console.log(`[Fast Load] Result - Stops: ${stops ? stops.length : 'MISSING'}, Routes: ${routes ? routes.length : 'MISSING'}`);
 
             if (stops && routes) {
-                console.log('[Map] Loading FAST data...');
+                // console.log('[Map] Loading FAST data...');
                 await initializeMapData(stops, routes);
             } else {
-                console.log('[Fast Load] Skipped - missing complete data.');
+                // console.log('[Fast Load] Skipped - missing complete data.');
             }
         } catch (e) { console.warn('Fast Load Failed', e); }
     };
@@ -573,14 +534,14 @@ map.on('load', async () => {
     // B. FRESH PATH (Network) - Updates over time
     const loadFresh = async () => {
         try {
-            console.log('[Fresh Load] Starting...');
+            // console.log('[Fresh Load] Starting...');
             const [stops, routes] = await Promise.all([
                 api.fetchStops(),
                 api.fetchRoutes()
             ]);
-            console.log(`[Fresh Load] Result - Stops: ${stops ? stops.length : 'MISSING'}, Routes: ${routes ? routes.length : 'MISSING'}`);
+            // console.log(`[Fresh Load] Result - Stops: ${stops ? stops.length : 'MISSING'}, Routes: ${routes ? routes.length : 'MISSING'}`);
 
-            console.log('[Map] Loading FRESH data...');
+            // console.log('[Map] Loading FRESH data...');
             await initializeMapData(stops, routes);
         } catch (e) { console.error('Fresh Load Failed', e); }
     };
@@ -592,7 +553,8 @@ map.on('load', async () => {
 
 async function loadMinibusSegments() {
     try {
-        const response = await fetch('data/long_segments.geojson');
+        const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+        const response = await fetch(`${basePath}data/long_segments.geojson`);
         if (!response.ok) return;
         const data = await response.json();
 
@@ -647,7 +609,7 @@ async function loadMinibusSegments() {
                 map.getCanvas().style.cursor = '';
             });
         }
-        console.log(`[Map] Loaded ${data.features.length} minibus segments`);
+        // console.log(`[Map] Loaded ${data.features.length} minibus segments`);
     } catch (e) {
         console.warn('[Map] Failed to load minibus segments:', e);
     }
@@ -664,15 +626,22 @@ window.addEventListener('minibusSegmentsChange', (e) => {
 // ---// Theme Switching Listener
 window.addEventListener('themeChanged', (e) => {
     const { theme, lightPreset } = e.detail;
-    console.log(`[Theme] Switching to: ${theme} (Preset: ${lightPreset})`);
+    // console.log(`[Theme] Switching to: ${theme} (Preset: ${lightPreset})`);
 
     // 1. Update the map's light preset
     setMapLightPreset(lightPreset);
 
     // 2. Update custom label colors (Metro, etc.) after a brief delay
-    setTimeout(() => updateMapTheme(), 50);
+    setTimeout(() => {
+        updateMapTheme();
 
-    // 3. Refresh UI elements if panels are open
+        // 3. Re-apply filter state if active (updateMapTheme resets layer styles)
+        if (filterManager && (filterManager.state.active || filterManager.state.picking)) {
+            filterManager.updateMapFilterState();
+        }
+    }, 50);
+
+    // 4. Refresh UI elements if panels are open
     setTimeout(() => {
         const stopPanelVisible = !document.getElementById('info-panel').classList.contains('hidden');
         const routePanelVisible = !document.getElementById('route-info').classList.contains('hidden');
@@ -716,7 +685,7 @@ function restoreMapLayers() {
 
     // 3. Restore Active Route (Only if actually active/open)
     if (currentRoute) {
-        console.log('[Restore] Re-plotting active route:', currentRoute.shortName);
+        // console.log('[Restore] Re-plotting active route:', currentRoute.shortName);
         // Suppress panel if we have an active stop (Nested view) 
         // OR if we just want to restore the map lines without altering UI state too much
         const hasActiveStop = !!window.currentStopId;
@@ -725,7 +694,7 @@ function restoreMapLayers() {
 
     // 4. Restore Active Stop Selection & Focus
     if (window.currentStopId) {
-        console.log('[Restore] Restoring active stop selection:', window.currentStopId);
+        // console.log('[Restore] Restoring active stop selection:', window.currentStopId);
 
         // Restore Destination Markers if active filter
         if (filterManager.state.active && filterManager.state.targetIds.size > 0) {
@@ -782,11 +751,11 @@ async function handleDeepLinks() {
             String(s.id) === String(rawStopId)
         );
 
-        console.log(`[DeepLink] Processing Stop: ${rawStopId} -> ${normStopId}. Found=${!!stop}`);
+        // console.log(`[DeepLink] Processing Stop: ${rawStopId} -> ${normStopId}. Found=${!!stop}`);
         if (stop) {
             // Check for Filtered State
             if (state.filterActive && state.targetIds && state.targetIds.length > 0) {
-                console.log('[DeepLink] Applying Filter:', state.targetIds);
+                // console.log('[DeepLink] Applying Filter:', state.targetIds);
 
                 // 2. Show Stop (Suppress URL update, NO FlyTo to avoid conflict with Filter flyTo)
                 await showStopInfo(stop, false, false, false);
@@ -963,7 +932,13 @@ async function handleDeepLinks() {
 
 // Listen for Theme Changes
 window.addEventListener('manualThemeChange', () => {
-    if (map && map.getStyle()) updateMapTheme();
+    if (map && map.getStyle()) {
+        updateMapTheme();
+        // Re-apply filter state if active (updateMapTheme resets layer styles)
+        if (filterManager && (filterManager.state.active || filterManager.state.picking)) {
+            filterManager.updateMapFilterState();
+        }
+    }
 });
 
 
@@ -975,259 +950,6 @@ window.addEventListener('manualThemeChange', () => {
 setupPanelDrag('info-panel');
 setupPanelDrag('route-info');
 
-function setupPanelDrag(panelId) {
-    const panel = document.getElementById(panelId);
-    let startY = 0;
-    let currentY = 0;
-    let startTransformY = 0;
-    let isDragging = false;
-    let startTime = 0;
-
-    // Helper to get current translate Y from computed style
-    const getTranslateY = () => {
-        const style = window.getComputedStyle(panel);
-        // Transform is matrix(1, 0, 0, 1, 0, Y)
-        const matrix = new DOMMatrixReadOnly(style.transform);
-        return matrix.m42;
-    };
-
-    // Unified Start Handler (Mouse & Touch)
-    const handleStart = (e) => {
-        const target = e.target;
-
-        // Explicitly ignore Close Buttons
-        if (target.closest('#close-panel') || target.closest('#close-route-info') || target.closest('.icon-btn')) {
-            return;
-        }
-
-        // Allow Text Selection in Route Header (ignore drag start)
-        if (target.closest('#route-info-text') || target.closest('#route-info-number')) {
-            return; // Let browser handle selection
-        }
-
-        // Check if header or body
-        const isHeader = target.closest('.panel-header') ||
-            target.closest('#header-extension') ||
-            target.closest('.drag-handle') ||
-            panel.classList.contains('metro-mode');
-
-        // Normalize coordinates
-        const clientY = e.type.includes('mouse') ? e.clientY : e.touches[0].clientY;
-
-        startY = clientY;
-        startTime = Date.now();
-        startTransformY = getTranslateY();
-
-        // If Header, start dragging immediately
-        if (isHeader) {
-            isDragging = true;
-            panel.style.transition = 'none';
-            panel.classList.add('is-dragging');
-            if (e.type.includes('mouse')) e.preventDefault(); // Prevent text selection
-        } else {
-            // If body, we MIGHT start dragging if they pull down at top
-            isDragging = false;
-        }
-    };
-
-    // Unified Move Handler
-    const handleMove = (e) => {
-        const clientY = e.type.includes('mouse') ? e.clientY : e.touches[0].clientY;
-        const delta = clientY - startY;
-
-        // If NOT yet dragging, check if we should switch to drag
-        if (!isDragging) {
-            // Only care about Pull Down (delta > 0)
-            if (delta > 0) {
-                const scrollable = panel.querySelector('.panel-body');
-                if (scrollable && scrollable.scrollTop <= 0) {
-                    // WE HIT TOP! Switch to drag.
-                    isDragging = true;
-                    startTransformY = getTranslateY(); // Reset start to current position
-                    startY = clientY; // Reset
-
-                    panel.style.transition = 'none';
-                    panel.classList.add('is-dragging');
-
-                    if (e.cancelable) e.preventDefault();
-                }
-            }
-        }
-
-        if (isDragging) {
-            if (e.cancelable) e.preventDefault();
-
-            const currentDelta = clientY - startY;
-            const newTransformY = startTransformY + currentDelta;
-            panel.style.transform = `translateY(${newTransformY}px)`;
-        }
-    };
-
-    // Unified End Handler
-    const handleEnd = (e) => {
-        if (!isDragging) return;
-
-        isDragging = false;
-        panel.classList.remove('is-dragging');
-        panel.style.transition = '';
-
-        // Get end Y
-        let endY;
-        if (e.type.includes('mouse')) {
-            endY = e.clientY;
-        } else {
-            endY = e.changedTouches[0].clientY;
-        }
-
-        const delta = endY - startY;
-        const time = Date.now() - startTime;
-        const velocity = Math.abs(delta / time);
-
-        // Snap Logic
-        snapSheet(delta, velocity);
-    };
-
-    // Helper: Snap Logic (Shared scope)
-    const snapSheet = (delta, velocity) => {
-        const currentY = getTranslateY();
-        const screenH = window.innerHeight;
-
-        // Thresholds
-        const TRIGGER_VELOCITY = 0.3;
-        const HALF_SHEET_Y = screenH * 0.6; // Assuming 40vh height (1 - 0.4)
-
-        let targetState = 'half';
-
-        // 1. Velocity Flick
-        if (velocity > TRIGGER_VELOCITY) {
-            if (delta > 0) {
-                // Flipped Down
-                // If really low or fast, go hidden?
-                // For now, let's Stick to Collapsed to avoid accidental closes, 
-                // UNLESS we are near bottom.
-                targetState = currentY > HALF_SHEET_Y + 50 ? 'collapsed' : 'half';
-            } else {
-                // Flipped Up
-                targetState = 'full';
-            }
-        } else {
-            // 2. Position Check
-            // Tune: easier to leave full (0.3 -> 0.15)
-            if (currentY < screenH * 0.15) targetState = 'full';
-            else if (currentY > screenH * 0.85) targetState = 'collapsed';
-            else targetState = 'half';
-        }
-
-        setSheetState(panel, targetState);
-        panel.style.transform = ''; // Clear inline transform
-    };
-
-    // Touch Listeners
-    panel.addEventListener('touchstart', handleStart, { passive: true });
-    panel.addEventListener('touchmove', handleMove, { passive: false });
-    panel.addEventListener('touchend', handleEnd);
-
-    // Mouse Listeners
-    panel.addEventListener('mousedown', handleStart);
-    window.addEventListener('mousemove', (e) => {
-        if (isDragging) handleMove(e);
-    });
-    window.addEventListener('mouseup', handleEnd);
-
-    // Wheel Logic (Desktop)
-    let wheelTimeout;
-    let isScrollingContent = false;
-    let scrollEndTimeout;
-
-    panel.addEventListener('wheel', (e) => {
-        const currentClass = panel.classList.contains('sheet-full') ? 'full' :
-            panel.classList.contains('sheet-half') ? 'half' :
-                panel.classList.contains('sheet-collapsed') ? 'collapsed' : 'half';
-
-        // Reset scroll end detection
-        clearTimeout(scrollEndTimeout);
-        scrollEndTimeout = setTimeout(() => {
-            isScrollingContent = false;
-        }, 60); // Faster reset (Trackpad friendly)
-
-        // Threshold to prevent accidental jitters for triggers
-        if (Math.abs(e.deltaY) < 5) return;
-
-        // ... (middle code logic remains same, skipping for brevity in replace tool if distinct)
-
-        // ACTUALLY, replace tool needs contiguous block. 
-        // I will target the SnapSheet function first, then the listener debounce if needed.
-        // Wait, the replace tool handles chunks.
-
-
-        if (currentClass === 'collapsed') {
-            if (e.deltaY > 0) { // Scroll Down (pull up) -> Expand
-                e.preventDefault();
-                setSheetState(panel, 'half');
-            }
-        } else if (currentClass === 'half') {
-            if (e.deltaY > 0) { // Scroll Down -> Full
-                e.preventDefault();
-                setSheetState(panel, 'full');
-            } else if (e.deltaY < 0) { // Scroll Up -> Collapse
-                e.preventDefault();
-                setSheetState(panel, 'collapsed');
-            }
-        } else if (currentClass === 'full') {
-            const scrollable = panel.querySelector('.panel-body');
-
-            // Check usage
-            if (scrollable && scrollable.scrollTop > 0) {
-                isScrollingContent = true;
-                // Allow native scroll
-                return;
-            }
-
-            // If we are here, we are at TOP (or no scrollable).
-            // Logic: If we were JUST scrolling content, we must "stumble" (ignore this momentum).
-            // We only allow transition if this is a FREH gesture (isScrollingContent == false).
-
-            if (e.deltaY < 0 && (scrollable && scrollable.scrollTop <= 0)) {
-
-                if (isScrollingContent) {
-                    // STUMBLE: We came from content, hitting the top.
-                    // Absorb the momentum but do NOT transition.
-                    // Doing nothing lets the native "bounce" happen or just stops.
-                    // Usually we want to preventing the sheet drag.
-
-                    // Actually, if we don't preventDefault, mac might trigger page back swipe or bounce.
-                    // Let's preventDefault to show "Hard Stop".
-                    // But maybe user wants bounce?
-                    // Let's start with hard stop.
-                    // e.preventDefault();
-                    return;
-                    // Returning here allows "overscroll" events (bounce) naturally if we don't preventDefault.
-                    // But we MUST NOT run the drag logic below.
-                }
-
-                e.preventDefault();
-
-                // FLUID DRAG LOGIC
-                // 1. Disable transition
-                panel.style.transition = 'none';
-
-                // 2. Move panel
-                const currentY = getTranslateY();
-                const newY = currentY - e.deltaY;
-                panel.style.transform = `translateY(${newY}px)`;
-
-                // 3. Debounce Snap
-                clearTimeout(wheelTimeout);
-                wheelTimeout = setTimeout(() => {
-                    // Restore transition and snap
-                    panel.style.transition = '';
-                    snapSheet(0, 0); // Snap based on position only
-                }, 150);
-            }
-            // Else let native scroll happen
-        }
-    }, { passive: false });
-}
 
 // Zoom Logic for Reset Button
 const resetBtn = document.getElementById('reset-view');
@@ -2103,6 +1825,17 @@ async function updateRouteView(route, options = {}) {
         // Clear previous interval
         if (busUpdateInterval) clearInterval(busUpdateInterval);
 
+        // Close route edit panel if open (to prevent showing stale data)
+        const routeEditBtn = document.getElementById('btn-edit-route');
+        const routeEditBlock = document.getElementById('route-edit-block');
+        if (routeEditBtn && routeEditBtn.classList.contains('active')) {
+            routeEditBtn.classList.remove('active');
+            if (routeEditBlock) {
+                routeEditBlock.classList.add('hidden');
+                routeEditBlock.style.display = 'none';
+            }
+        }
+
         // Close stop info panel (but preserve stop highlight when coming from stop)
         const infoPanel = document.getElementById('info-panel');
         // Temporarily disable highlight clearing by NOT hiding info-panel through setSheetState
@@ -2179,6 +1912,27 @@ async function updateRouteView(route, options = {}) {
         const routeDetails = await api.fetchRouteDetailsV3(route.id, { strategy: 'cache-first' });
         if (requestId !== lastRouteUpdateId) return; // Stale check
         const patterns = routeDetails.patterns;
+
+        // --- RESTORED LOOP LOGIC ---
+        // Pre-process patterns to split loops into virtual directions
+        const processedPatterns = [];
+        for (const p of patterns) {
+            const stops = await api.fetchRouteStopsV3(route.id, p.patternSuffix);
+            if (RouteGeometry.isLoop(stops, route.shortName)) {
+                // console.log(`[Router] Loop detected for ${route.shortName} (${p.patternSuffix}) - Splitting...`);
+                // Split into virtual patterns (Outbound / Inbound)
+                const virtuals = RouteGeometry.generateVirtualPatterns(p, stops, route.longName);
+                processedPatterns.push(...virtuals);
+            } else {
+                processedPatterns.push(p);
+            }
+        }
+        // Use processed patterns (splice into original array to keep reference if needed, or just reassign)
+        routeDetails.patterns = processedPatterns;
+        // Update local reference
+        patterns.length = 0;
+        patterns.push(...processedPatterns);
+        // ---------------------------
 
         // Auto-Direction Logic:
         let directionFound = false;
@@ -2258,14 +2012,6 @@ async function updateRouteView(route, options = {}) {
             }
         }
 
-        // DEBUG for route 532
-        if (route.shortName === '532') {
-            console.log('[Route532Debug] currentPattern:', currentPattern);
-            console.log('[Route532Debug] destinationHeadsign:', destinationHeadsign);
-            console.log('[Route532Debug] originHeadsign:', originHeadsign);
-            console.log('[Route532Debug] patterns count:', patterns.length);
-        }
-
         if (originHeadsign && destinationHeadsign && originHeadsign !== destinationHeadsign) {
             document.getElementById('route-info-text').innerHTML = `
                 <div class="origin">${originHeadsign} →</div>
@@ -2293,7 +2039,59 @@ async function updateRouteView(route, options = {}) {
             switchBtn.classList.add('hidden');
         }
 
+        // --- FULL SCHEDULE DISPLAY ---
+        const routeBodyEl = document.getElementById('route-info-body');
+        if (options.fromStopId) {
+            // Check if current pattern contains the fromStopId
+            // Reuse currentPatternStops fetched above (line 2248)
+            const hasStop = currentPatternStops && currentPatternStops.some(s => {
+                const sId = String(s.id);
+                // Simple ID check + Equivalent ID check
+                if (sId === String(options.fromStopId)) return true;
+                const normalize = id => String(id).replace(/^[rR]/, '').replace(/^\d+:/, '');
+                if (normalize(sId) === normalize(options.fromStopId)) return true;
+                return false;
+            });
+
+            if (!hasStop) {
+                routeBodyEl.innerHTML = `
+                    <div class="empty warning">
+                        <div class="icon">⚠️</div>
+                        <div>The selected stop is in the other direction.</div>
+                        <div class="sub">Switch direction to view schedule.</div>
+                    </div>`;
+            } else {
+                routeBodyEl.innerHTML = '<div class="loading">Loading schedule...</div>';
+                arrivals.getFullScheduleGrouped(route.shortName, options.fromStopId, route.id, currentPattern.patternSuffix).then(grouped => {
+                    if (requestId !== lastRouteUpdateId) return;
+                    if (!grouped || Object.keys(grouped).length === 0) {
+                        routeBodyEl.innerHTML = '<div class="empty">No schedule data available</div>';
+                        return;
+                    }
+                    const currentHour = new Date().getHours();
+                    let html = '<div class="route-full-schedule">';
+                    Object.keys(grouped).sort((a, b) => parseInt(a) - parseInt(b)).forEach(hour => {
+                        const isCurrentHour = parseInt(hour) === currentHour;
+                        html += `
+                            <div class="schedule-hour-row${isCurrentHour ? ' current-hour' : ''}">
+                                <div class="hour-label">${hour}:</div>
+                                <div class="minutes-list">${grouped[hour].join(' ')}</div>
+                            </div>`;
+                    });
+                    html += '</div>';
+                    routeBodyEl.innerHTML = html;
+                }).catch(err => {
+                    console.warn('[Schedule] Failed to load full schedule', err);
+                    routeBodyEl.innerHTML = '<div class="empty">Failed to load schedule</div>';
+                });
+            }
+        } else {
+            routeBodyEl.innerHTML = '';
+        }
+
+
         if (requestId !== lastRouteUpdateId) return; // Stale check before heavy map ops
+
 
         const patternSuffix = currentPattern.patternSuffix;
 
@@ -2548,138 +2346,27 @@ async function updateRouteView(route, options = {}) {
 
     } catch (error) {
         console.error('CRITICAL: Failed to plot route:', error);
-        alert(`Error plotting route: ${error.message}`);
+        // Hide the route info card on error
+        const infoCard = document.getElementById('route-info');
+        if (infoCard) {
+            infoCard.classList.add('hidden');
+            infoCard.classList.remove('sheet-half', 'sheet-full', 'sheet-collapsed');
+        }
+        // Clear currentRoute since it failed to load
+        currentRoute = null;
+        window.currentRoute = null;
+        // Try to go back if there's history
+        if (historyStack.length > 0) {
+            goBack();
+        }
     }
 }
 
 // updateLiveBuses moved to map-setup.js
 
 // Helper for Sheet State (Mobile)
-function setSheetState(panel, state) {
-    // states: hidden, collapsed, peek, half, full
-    panel.classList.remove('hidden', 'sheet-half', 'sheet-full', 'sheet-collapsed', 'sheet-peek');
-    document.body.classList.remove('sheet-half', 'sheet-full', 'sheet-collapsed', 'sheet-peek');
-
-    if (state === 'hidden') {
-        panel.classList.add('hidden');
-        panel.style.display = 'none'; // Force hide
-        // Only clear stop highlight when explicitly closing info-panel (not when switching to route)
-        if (panel.id === 'info-panel' && map.getSource('selected-stop')) {
-            // Preserve highlight if route-info is about to open (fromStopId case)
-            const routePanel = document.getElementById('route-info');
-            if (routePanel.classList.contains('hidden')) {
-                map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
-            }
-        }
-    } else if (state === 'collapsed') {
-        panel.classList.add('sheet-collapsed');
-        document.body.classList.add('sheet-collapsed');
-        panel.classList.remove('hidden');
-    } else if (state === 'peek') {
-        panel.classList.add('sheet-peek');
-        document.body.classList.add('sheet-peek');
-        panel.classList.remove('hidden');
-        panel.style.display = ''; // Reset
-    } else if (state === 'half') {
-        panel.classList.add('sheet-half');
-        document.body.classList.add('sheet-half');
-        panel.classList.remove('hidden');
-        panel.style.display = ''; // Reset
-    } else if (state === 'full') {
-        panel.classList.add('sheet-full');
-        document.body.classList.add('sheet-full');
-        panel.classList.remove('hidden');
-    }
-
-    // For desktop compatibility
-    // We WANT these states to persist now, so we can support the half/full/collapsed logic on desktop too.
-    // The CSS handles the centering and width constraints for desktop.
-
-    // Previous logic forced it to just removed 'hidden' on desktop. 
-    // We'll keep the classes. The CSS for desktop needs to respect them if we want this behavior.
-
-    // However, we might want to ensure 'half' on desktop doesn't mean "bottom 40% of screen" if the design is a sidebar...
-    // Wait, the design IS a sidebar on desktop? 
-    // The user said "Desktop (narrow window)". 
-    // If it's a Sidebar, vertical sliding makes no sense.
-    // Sidebars typically don't "collapse down".
-
-    // If the app switches to Sidebar on Desktop, this whole "Slide Up/Down" logic logic is moot unless we are in Mobile Mode.
-    // My CSS media queries toggle between Bottom Sheet and Sidebar at 768px.
-
-    // Checks:
-    // If width > 768px: Panel is usually top-left or sidebar.
-    // If width < 768px: Panel is bottom sheet.
-
-    // If user says "Desktop (narrow window)", they might mean < 768px responsiveness.
-    // IN THAT CASE, the `window.innerWidth >= 769` check below is valid for "Real Desktop".
-    // AND it overrides the states.
-
-    // IF the user wants this behavior when the window is NARROW, then we are ALREADY in the <768px block effectively?
-    // Unless the breakpoint is different.
-
-    // Let's assume "Desktop (narrow window)" means "Simulating mobile on desktop". 
-    // In that case, `window.innerWidth` would be small, so this `if` block wouldn't run.
-
-    // BUT if the user has a window of say 800px, and they want this behavior? 
-    // Then my CSS still renders a Sidebar.
-    // A Sidebar snapping to "Half Height" is weird.
-
-    // User said: "on desktop (narrow window)". 
-    // Hypotesis: They are testing responsively. 
-    // If they are seeing "unable to scroll from collapsed", it implies they ARE in a mode where 'collapsed' exists (Mobile Mode).
-    // So this function is NOT the blocker for <768px.
-
-    // HOWEVER, if they are testing on a "Desktop" width (e.g. 1000px) but expecting mobile behavior?
-    // That would require a massive CSS refactor.
-    // I will assume they mean <768px (Mobile View).
-
-    // Re-reading: "on desktop (narrow window)". 
-    // If I am in Mobile View (<768), `setSheetState` DOES apply classes. 
-
-    // So why "unable to scroll from collapsed"?
-    // Because my `wheel` listener logic: 
-    // `const currentClass = ...`
-    // If I am in `collapsed` (bottom 80px), and I use the mouse wheel over the map? 
-    // The listener is on the PANEL.
-    // If the panel is collapsed, it is only 80px tall. 
-    // The user has to mouse over that specific 80px strip to trigger the wheel event.
-
-    // If they mouse over that strip and scroll...
-    // My logic: `if (currentClass === 'collapsed')` -> MISSING!
-    // I missed handling 'collapsed' in the wheel event listener! I only did 'half' and 'full'.
-
-    // Fixing setSheetState just in case it's interfering with clean state transitions, 
-    // but the real bug is in `wheel` listener.
-
-    // Unified logic: Desktop now uses the same bottom sheet classes as mobile.
-    // The CSS handles the centering and width constraints for desktop.
-}
-
-// fetchRouteDetailsV3 moved to api.js
-
-
-
-// fetchRouteStopsV3 moved to api.js
-
-// fetchBusPositionsV3 definition removed (moved to api.js)
-
-// Polyline Decoder (Google Encoded Polyline Algorithm)
-// decodePolyline definition removed (moved to api.js)
-
-// Helper to toggle panel state
-function setPanelState(isOpen) {
-    if (isOpen) {
-        document.body.classList.add('panel-open');
-    } else {
-        // Only remove if BOTH panels are hidden
-        const infoHidden = document.getElementById('info-panel').classList.contains('hidden');
-        const routeHidden = document.getElementById('route-info').classList.contains('hidden');
-        if (infoHidden && routeHidden) {
-            document.body.classList.remove('panel-open');
-        }
-    }
-}
+// Helper for Sheet State (Mobile) - Moved to panel-manager.js
+// Helper to toggle panel state - Moved to panel-manager.js
 
 // Filter Button
 
@@ -2946,8 +2633,31 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
     // But typically this called by applyFilter -> permanent.
     // Let's assume the manager handles persistence.
 
-    // Process EACH target independently
+    // Deduplicate targets by equivalence group to avoid drawing duplicate/reversed lines
+    // When multiple targets are equivalent (same physical stop from different datasets),
+    // we only need to draw one line for the group
+    const processedEquivalenceGroups = new Set();
+    const deduplicatedTargets = [];
+
     targets.forEach(targetId => {
+        // Get equivalents for this target
+        const equivalents = getEquivalentStops(targetId);
+        // Create a sorted key to identify the equivalence group
+        const groupKey = equivalents.slice().sort().join(',');
+
+        if (!processedEquivalenceGroups.has(groupKey)) {
+            processedEquivalenceGroups.add(groupKey);
+            // Pick the best representative: prefer one with valid coordinates in allStops
+            const representative = equivalents.find(id => {
+                const stop = allStops.find(s => s.id === id);
+                return stop && stop.lat && stop.lon && !(stop.lat === 0 && stop.lon === 0);
+            }) || targetId; // Fallback to original if no valid coords found
+            deduplicatedTargets.push(representative);
+        }
+    });
+
+    // Process only deduplicated targets
+    deduplicatedTargets.forEach(targetId => {
         const targetStop = allStops.find(s => s.id === targetId);
         if (!targetStop) return;
 
@@ -2997,6 +2707,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                 r._details.patterns.some(p => {
                     if (!p.stops) return false;
 
+
                     // For loop routes, we need to check both O→T and T→O directions
                     // and pick the shorter segment
                     let foundO = -1;
@@ -3021,23 +2732,39 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
 
                     // For loop routes: if we found T before O AND T after O,
                     // compare segment lengths and pick shorter one
-                    if (foundO !== -1 && foundT !== -1 && foundT_beforeO !== -1) {
-                        const segmentLengthForward = foundT - foundO;
-                        const segmentLengthBackward = foundO - foundT_beforeO;
+                    // NOTE: This logic was causing issues with bidirectional routes (e.g., 532)
+                    // where finding T before O simply means we're looking at the wrong pattern
+                    // (the return direction). We should only take O→T (forward) segments.
+                    // The special circular route handling for 387/397 below handles actual loops.
 
-                        // If backward segment is shorter, use T→O segment instead
-                        if (segmentLengthBackward < segmentLengthForward) {
-                            segmentStops = p.stops.slice(foundT_beforeO, foundO + 1).map(s => {
-                                const normId = redirectMap.get(s.id) || s.id;
-                                const refStop = allStops.find(as => as.id === normId);
-                                return refStop ? { ...s, id: normId, lat: refStop.lat, lon: refStop.lon } : { ...s, id: normId };
-                            });
-                            matchedPattern = p;
-                            return true;
-                        }
-                    }
+
 
                     if (foundO !== -1 && foundT !== -1) {
+                        // For loop routes: target must be before the terminus
+                        // Otherwise the stop is only reachable via the return leg, which is "unlooped"
+                        const isLoopRoute = r._overrides?.isLoop === true ||
+                            r._overrides?.isLoop === 'true' ||
+                            (p.patternSuffix && p.patternSuffix.includes('_PART'));
+
+                        // Fix: If it's a virtual pattern (_PART), it's already sliced linearly. Treat as standard.
+                        if (isLoopRoute && !p.patternSuffix.includes('_PART')) {
+                            let terminusIdx = -1;
+                            const terminusStopId = r._overrides?.terminusStopIdOverride || r._overrides?.terminusStopId;
+                            if (terminusStopId) {
+                                terminusIdx = p.stops.findIndex(s => {
+                                    const normId = redirectMap.get(s.id) || s.id;
+                                    return normId === terminusStopId || s.id === terminusStopId;
+                                });
+                            }
+                            if (terminusIdx === -1) {
+                                terminusIdx = Math.ceil(p.stops.length * 0.5) - 1;
+                            }
+                            if (foundO <= terminusIdx && foundT > terminusIdx + 1) {
+                                // Target is past terminus - skip this route for line drawing
+                                return false;
+                            }
+                        }
+
                         segmentStops = p.stops.slice(foundO, foundT + 1).map(s => {
                             const normId = redirectMap.get(s.id) || s.id;
                             // Hydrate with overridden coordinates from allStops if available
@@ -3046,10 +2773,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                             return refStop ? { ...s, id: normId, lat: refStop.lat, lon: refStop.lon } : { ...s, id: normId };
                         });
 
-                        // DEBUG: Log segment info
-                        if (stateChanged && (originId === '3963' || originId === 3963)) {
-                            console.log(`[Segment Debug] Route ${r.shortName}: O=${foundO}, T=${foundT}, segment=${segmentStops.length} stops, target=${targetId}`);
-                        }
+
 
                         matchedPattern = p;
                         return true;
@@ -3187,7 +2911,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             // DEBUG: Check if stops have valid coordinates
             if (stateChanged && (originId === '3963' || originId === 3963)) {
                 const validCoords = selectedPatternStops.filter(c => c[0] && c[1]);
-                console.log(`[Coords Debug] group.stops=${group.stops.length}, valid=${validCoords.length}, first=${JSON.stringify(group.stops[0])}`);
+                // console.log(`[Coords Debug] group.stops=${group.stops.length}, valid=${validCoords.length}, first=${JSON.stringify(group.stops[0])}`);
             }
 
             // Geometry Logic
@@ -3213,21 +2937,8 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                     if (bestPattern._decodedPolyline) {
                         // Using polyline from pattern for accurate route geometry
                         try {
-                            // Pass intermediate stops to guide slicing for loop routes
-                            // DEBUG: Log stop coords being passed to slicePolyline
-                            console.log(`[Slice Debug] originStop: lat=${originStop.lat}, lon=${originStop.lon}`);
-                            console.log(`[Slice Debug] targetStop: lat=${targetStop.lat}, lon=${targetStop.lon}`);
-                            const sliced = slicePolyline(bestPattern._decodedPolyline, originStop, targetStop, group.stops);
+                            const sliced = RouteGeometry.slicePolyline(bestPattern._decodedPolyline, originStop, targetStop, group.stops);
 
-                            // DEBUG: See what slicePolyline returns
-                            if (sliced) {
-                                const firstPt = sliced[0];
-                                const lastPt = sliced[sliced.length - 1];
-                                const dLon = lastPt[0] - firstPt[0];
-                                const dLat = lastPt[1] - firstPt[1];
-                                const distSq = dLon * dLon + dLat * dLat;
-                                console.log(`[Slice Debug] points=${sliced.length}, distSq=${distSq.toFixed(8)}, first=${firstPt}, last=${lastPt}`);
-                            }
 
                             // Sanity check: reject sliced polylines that are too short or don't span enough distance
                             // This prevents garbage 2-point results from replacing good spline data
@@ -3247,7 +2958,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                         }
                     } else {
                         // Trigger Fetch (Cache-Only for stability during picking)
-                        fetchAndCacheGeometry(bestRoute, bestPattern, { strategy: 'cache-only' });
+                        RouteGeometry.fetchAndCacheGeometry(bestRoute, bestPattern, { strategy: 'cache-only' }, { filterManager, updateConnectionLine });
                     }
                 }
             }
@@ -3267,7 +2978,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             // Fallback / Simple Geometry
             let simpleCoordinates = null;
             if (selectedPatternStops.length >= 2) {
-                simpleCoordinates = getCatmullRomSpline(selectedPatternStops);
+                simpleCoordinates = RouteGeometry.getCatmullRomSpline(selectedPatternStops);
             } else {
                 simpleCoordinates = [[originStop.lon, originStop.lat], [targetStop.lon, targetStop.lat]];
             }
@@ -3292,7 +3003,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                     const hasSuffix = hasPattern && !!group.pattern.suffix;
                     const hasDecoded = hasPattern && !!group.pattern._decodedPolyline;
                     const isFetching = hasPattern && !!group.pattern._fetchingPolyline;
-                    console.log(`[Polyline Debug] No finalCoords. hasPattern=${hasPattern}, hasSuffix=${hasSuffix}, hasDecoded=${hasDecoded}, isFetching=${isFetching}, isPersistent=${isPersistent}`);
+                    // console.log(`[Polyline Debug] No finalCoords. hasPattern=${hasPattern}, hasSuffix=${hasSuffix}, hasDecoded=${hasDecoded}, isFetching=${isFetching}, isPersistent=${isPersistent}`);
                 }
 
                 // Trigger geometry fetch if not available
@@ -3302,8 +3013,8 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                     if (isPersistent || !group.pattern._fetchingPolyline) {
                         const bestRoute = group.routes[0];
                         const fetchOptions = isPersistent ? {} : { strategy: 'cache-only' };
-                        console.log(`[Polyline Debug] Fetching geometry for route ${bestRoute.id}/${bestRoute.shortName}, suffix=${group.pattern.suffix}`);
-                        fetchAndCacheGeometry(bestRoute, group.pattern, fetchOptions);
+                        // console.log(`[Polyline Debug] Fetching geometry for route ${bestRoute.id}/${bestRoute.shortName}, suffix=${group.pattern.suffix}`);
+                        RouteGeometry.fetchAndCacheGeometry(bestRoute, group.pattern, fetchOptions, { filterManager, updateConnectionLine });
                     }
                 }
                 return; // Skip this path group - wait for high quality data
@@ -3324,7 +3035,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             if (stateChanged && activeCoords && activeCoords.length > 0) {
                 const first = activeCoords[0];
                 const last = activeCoords[activeCoords.length - 1];
-                console.log(`[Polyline Debug] quality=${quality}, color=${color}, coords: first=[${first}], last=[${last}], total=${activeCoords.length}`);
+                // console.log(`[Polyline Debug] quality=${quality}, color=${color}, coords: first=[${first}], last=[${last}], total=${activeCoords.length}`);
             }
 
             targetFeatures.push({
@@ -3363,7 +3074,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
     const source = map.getSource('filter-connection');
     if (source) {
         if (features.length > 0 && stateChanged) {
-            console.log(`[Polyline Debug] Setting ${features.length} features to filter-connection source`);
+            // console.log(`[Polyline Debug] Setting ${features.length} features to filter-connection source`);
         }
         source.setData({ type: 'FeatureCollection', features: features });
     } else {
@@ -3380,262 +3091,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
     }
 }
 
-// Catmull-Rom Spline Interpolation for smooth curves (Global Version)
-function getCatmullRomSpline(points, tension = 0.25, numOfSegments = 16) {
-    if (points.length < 2) return points;
 
-    let res = [];
-    const _points = points.slice();
-    // duplicate first and last points to close the curve segment
-    _points.unshift(points[0]);
-    _points.push(points[points.length - 1]);
-
-    for (let i = 1; i < _points.length - 2; i++) {
-        const p0 = _points[i - 1];
-        const p1 = _points[i];
-        const p2 = _points[i + 1];
-        const p3 = _points[i + 2];
-
-        // If distance between p1 and p2 is tiny, skip? 
-        // No, keep logic simple.
-
-        for (let t = 0; t <= numOfSegments; t++) {
-            const t1 = t / numOfSegments;
-            const t2 = t1 * t1;
-            const t3 = t2 * t1;
-
-            // Catmull-Rom factors
-            const f1 = -0.5 * t3 + t2 - 0.5 * t1;
-            const f2 = 1.5 * t3 - 2.5 * t2 + 1.0;
-            const f3 = -1.5 * t3 + 2.0 * t2 + 0.5 * t1;
-            const f4 = 0.5 * t3 - 0.5 * t2;
-
-            const x = p0[0] * f1 + p1[0] * f2 + p2[0] * f3 + p3[0] * f4;
-            const y = p0[1] * f1 + p1[1] * f2 + p2[1] * f3 + p3[1] * f4;
-
-            res.push([x, y]);
-        }
-    }
-    return res;
-}
-
-// --- Polyline Slicing & Fetching Helpers ---
-
-function slicePolyline(points, originStop, targetStop, intermediateStops = null) {
-    if (!points || points.length < 2) return null;
-
-    // Helper: Find nearest index within a range, preferring the FIRST occurrence (cluster)
-    const getNearestIndex = (pt, startIndex = 0, endIndex = points.length) => {
-        let minDist = Infinity;
-        let globalBestIndex = -1;
-
-        let currentClusterBestIndex = -1;
-        let currentClusterMinDist = Infinity;
-        let foundFirstCluster = false;
-
-        // Threshold: Approx 30m radius squared
-        const THRESHOLD_SQ = 0.0000001;
-
-        for (let i = startIndex; i < endIndex; i++) {
-            const lng = points[i][0];
-            const lat = points[i][1];
-
-            const d = (lng - pt.lon) ** 2 + (lat - pt.lat) ** 2;
-
-            if (d < minDist) {
-                minDist = d;
-                globalBestIndex = i;
-            }
-
-            if (d < THRESHOLD_SQ) {
-                if (!foundFirstCluster) {
-                    if (d < currentClusterMinDist) {
-                        currentClusterMinDist = d;
-                        currentClusterBestIndex = i;
-                    }
-                }
-            } else {
-                if (currentClusterBestIndex !== -1 && !foundFirstCluster) {
-                    foundFirstCluster = true;
-                }
-            }
-        }
-
-        if (foundFirstCluster) return currentClusterBestIndex;
-        if (currentClusterBestIndex !== -1) return currentClusterBestIndex;
-        return globalBestIndex;
-    };
-
-    // NEW APPROACH: If we have intermediate stops, use them to guide finding the correct segment
-    // This is essential for loop routes where each stop appears twice on the polyline
-    if (intermediateStops && intermediateStops.length >= 2) {
-        // First, find ALL occurrences of the first stop on the polyline
-        // For loop routes, the same stop may appear at multiple positions
-        const firstStop = intermediateStops[0];
-        if (!firstStop.lat || !firstStop.lon) {
-            // Fall through to fallback
-        } else {
-            const THRESHOLD_SQ = 0.0000001; // ~30m
-            const firstStopOccurrences = [];
-
-            for (let i = 0; i < points.length; i++) {
-                const d = (points[i][0] - firstStop.lon) ** 2 + (points[i][1] - firstStop.lat) ** 2;
-                if (d < THRESHOLD_SQ) {
-                    // Found a match - record the cluster center
-                    let clusterBest = i;
-                    let clusterMinDist = d;
-                    // Skip through the cluster to avoid duplicates
-                    while (i + 1 < points.length) {
-                        const d2 = (points[i + 1][0] - firstStop.lon) ** 2 + (points[i + 1][1] - firstStop.lat) ** 2;
-                        if (d2 < THRESHOLD_SQ) {
-                            if (d2 < clusterMinDist) {
-                                clusterMinDist = d2;
-                                clusterBest = i + 1;
-                            }
-                            i++;
-                        } else {
-                            break;
-                        }
-                    }
-                    firstStopOccurrences.push(clusterBest);
-                }
-            }
-
-            // Try each occurrence and find the one that gives the best (shortest) valid path
-            let bestResult = null;
-            let bestLength = Infinity;
-
-            for (const startIdx of firstStopOccurrences) {
-                // Try to trace the path from this starting position
-                const stopIndices = [{ stopId: firstStop.id, idx: startIdx }];
-                let searchStart = startIdx;
-                let valid = true;
-
-                for (let i = 1; i < intermediateStops.length; i++) {
-                    const stop = intermediateStops[i];
-                    if (!stop.lat || !stop.lon) continue;
-
-                    // Skip consecutive duplicate stop IDs (avoid failing on same stop at same position)
-                    const prevStop = stopIndices[stopIndices.length - 1];
-                    if (prevStop && prevStop.stopId === stop.id) {
-                        continue; // Same stop ID as previous, skip it
-                    }
-
-                    const idx = getNearestIndex(stop, searchStart);
-                    // console.log(`[Slice Debug] Stop ${i}/${intermediateStops.length}: ${stop.id} at [${stop.lat}, ${stop.lon}] -> idx=${idx} (searchStart=${searchStart})`);
-                    if (idx !== -1 && idx > searchStart) {
-                        stopIndices.push({ stopId: stop.id, idx });
-                        searchStart = idx;
-                    } else {
-                        // console.log(`[Slice Debug] FAILED to find stop ${stop.id} after idx ${searchStart}`);
-                        valid = false;
-                        break;
-                    }
-                }
-
-                if (valid && stopIndices.length >= 2) {
-                    const firstIdx = stopIndices[0].idx;
-                    const lastIdx = stopIndices[stopIndices.length - 1].idx;
-                    const segmentLength = lastIdx - firstIdx;
-                    console.log(`[Slice Debug] Valid path found: firstIdx=${firstIdx}, lastIdx=${lastIdx}, segmentLength=${segmentLength}`);
-
-                    if (segmentLength > 0 && segmentLength < bestLength) {
-                        bestLength = segmentLength;
-                        bestResult = points.slice(firstIdx, lastIdx + 1);
-                    }
-                }
-            }
-
-            if (bestResult) {
-                console.log(`[Slice Debug] Returning best result with ${bestResult.length} points`);
-                return bestResult;
-            }
-        }
-    }
-
-    // FALLBACK: Original approach for non-loop routes or when intermediate stops aren't available
-    const idxOrigin = getNearestIndex(originStop);
-    if (idxOrigin === -1) return null;
-
-    const idxTargetForward = getNearestIndex(targetStop, idxOrigin);
-    const idxTargetBackward = getNearestIndex(targetStop, 0, idxOrigin);
-
-    const forwardLength = idxTargetForward !== -1 ? idxTargetForward - idxOrigin : Infinity;
-    const backwardLength = idxTargetBackward !== -1 ? idxOrigin - idxTargetBackward : Infinity;
-
-    if (idxTargetBackward !== -1 && backwardLength < forwardLength) {
-        return points.slice(idxTargetBackward, idxOrigin + 1).reverse();
-    }
-
-    if (idxTargetForward !== -1 && idxOrigin <= idxTargetForward) {
-        return points.slice(idxOrigin, idxTargetForward + 1);
-    }
-
-    return null;
-}
-
-
-// fetchRoutePolylineV3 definition removed (moved to api.js)
-
-async function fetchAndCacheGeometry(route, pattern, options = {}) {
-    if (pattern._fetchingPolyline || pattern._polyfailed) return;
-    pattern._fetchingPolyline = true;
-
-    try {
-        const data = await api.fetchRoutePolylineV3(route.id, pattern.suffix, options);
-
-        // console.log(`[Debug] Polyline API Response for ${route.shortName} (${pattern.suffix}):`, JSON.stringify(data));
-        // Data format usually: { [suffix]: "encoded_string" } OR { [suffix]: { encodedValue: "..." } }
-        let entry = data[pattern.suffix];
-        let encoded = null;
-
-        if (typeof entry === 'string') {
-            encoded = entry;
-        } else if (Array.isArray(entry)) {
-            // Updated API returns decoded array for validation/slices
-            encoded = entry;
-        } else if (entry && typeof entry === 'object') {
-            encoded = entry.encodedValue || entry.points || entry.geometry;
-        }
-
-        // Robust Fallback Fallbacks
-        if (!encoded) {
-            // 1. Try finding in array if data is array
-            if (Array.isArray(data)) {
-                const match = data.find(p => p.suffix === pattern.suffix || p.patternSuffix === pattern.suffix);
-                if (match) encoded = match.encodedValue || match.points || match.geometry;
-            }
-            // 2. Try 'polylines' property
-            else if (data.polylines && Array.isArray(data.polylines)) {
-                const match = data.polylines.find(p => p.suffix === pattern.suffix || p.patternSuffix === pattern.suffix);
-                if (match) encoded = match.encodedValue || match.points || match.geometry;
-            }
-            // 3. Try direct 'points' property (if single result)
-            else if (data.points) {
-                encoded = data.points;
-            }
-        }
-
-        if (typeof encoded === 'string' || Array.isArray(encoded)) {
-            pattern._decodedPolyline = (typeof encoded === 'string') ? api.decodePolyline(encoded) : encoded;
-            // console.log(`[Debug] Polyline fetched & decoded for ${route.shortName} (${pattern.suffix}), points: ${pattern._decodedPolyline.length}`);
-
-            // Re-Draw if still selected
-            if (filterManager.state.active && filterManager.state.targetIds.size > 0) {
-                updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
-            }
-        } else {
-            console.warn(`[Debug] No polyline string for ${route.shortName} suffix ${pattern.suffix}`);
-            pattern._polyfailed = true;
-        }
-
-    } catch (e) {
-        console.error('Failed to fetch polyline', e);
-        pattern._polyfailed = true;
-    } finally {
-        pattern._fetchingPolyline = false;
-    }
-}
 // --- Edit Tools Integration ---
 
 // --- Route Overrides Logic ---
@@ -3643,6 +3099,14 @@ let routesConfig = { routeOverrides: {} };
 window.routesConfig = routesConfig;
 
 async function loadRoutesConfig() {
+    // Route overrides are now applied server-side in Convex (transit:getRoutes query).
+    // This CSV loading is kept for backwards compatibility but disabled.
+    console.log('[Config] Route overrides now handled by Convex - skipping CSV load');
+    routesConfig = { routeOverrides: {} };
+    window.routesConfig = routesConfig;
+    return;
+
+    // --- LEGACY CSV LOADING (disabled) ---
     try {
         const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
         // Add cache buster to ensure fresh config on reload
@@ -3687,9 +3151,12 @@ async function loadRoutesConfig() {
 }
 
 function applyRouteOverrides() {
-    console.log('[Config] Applying Route Overrides...', window.routesConfig?.routeOverrides ? Object.keys(window.routesConfig.routeOverrides).length : 0);
+    // Route overrides are now applied server-side in Convex (transit:getRoutes query).
+    // This function is kept for backwards compatibility but disabled.
+    return;
 
-    if (!window.routesConfig?.routeOverrides) return;
+    // --- LEGACY CODE (disabled) ---
+    console.log('[Config] Applying Route Overrides...', window.routesConfig?.routeOverrides ? Object.keys(window.routesConfig.routeOverrides).length : 0);
 
     // Detect locale loosely or assume EN/KA based on something? 
     // Ideally we want to patch the object with the *correct* locale string.
@@ -3748,17 +3215,7 @@ function applyRouteOverrides() {
             // console.log(`[Config Debug] Found override:`, !!override, override);
         }
 
-        // Debug Rustavi routes
-        if (['20', '21', '22', '23', '24', '10'].includes(route.shortName)) {
-            // console.log(`[Config Debug] Rustavi route ${route.shortName} ID: "${route.id}"`);
-            // console.log(`[Config Debug] Direct lookup:`, window.routesConfig.routeOverrides[route.id]);
-            if (route.id.includes(':')) {
-                const stripped = route.id.split(':')[1];
-                // console.log(`[Config Debug] Stripped "${stripped}" lookup:`, window.routesConfig.routeOverrides[stripped]);
-                // console.log(`[Config Debug] "1:${stripped}" lookup:`, window.routesConfig.routeOverrides[`1:${stripped}`]);
-            }
-            // console.log(`[Config Debug] Found override:`, !!override, override);
-        }
+        // Rustavi route debug disabled - CSV needs Rustavi entries
 
         // DEBUG: Log first 3 routes to check ID format
         /*

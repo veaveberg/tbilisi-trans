@@ -132,106 +132,86 @@ function initRouteEditTools() {
         });
     }
 
+    // All text inputs
     const inputs = [
-        'route-edit-short', 'route-edit-long-en', 'route-edit-long-ka',
-        'route-edit-dest0-en', 'route-edit-dest0-ka',
-        'route-edit-dest1-en', 'route-edit-dest1-ka'
+        'route-edit-long-en', 'route-edit-long-ka', 'route-edit-long-ru',
+        'route-edit-dest0-en', 'route-edit-dest0-ka', 'route-edit-dest0-ru',
+        'route-edit-dest1-en', 'route-edit-dest1-ka', 'route-edit-dest1-ru',
+        'route-edit-terminus'
     ];
 
-    const handleInput = () => {
-        // ConstructOverrides
-        const getI = (id) => document.getElementById(id).value.trim();
-        const short = getI('route-edit-short');
-        const longEn = getI('route-edit-long-en');
-        const longKa = getI('route-edit-long-ka');
-
-        // Original checks
-        const orig = routeEditState.original;
-
-        // Update Overrides Object
-        let o = routeEditState.overrides;
-
-        if (short !== (orig.shortName || '')) o.shortName = short; else delete o.shortName;
-
-        // Long Name
-        if (longEn !== (orig.longName?.en || '') || longKa !== (orig.longName?.ka || '')) {
-            if (!o.longName) o.longName = {};
-            if (longEn !== orig.longName?.en) o.longName.en = longEn; else delete o.longName.en;
-            if (longKa !== orig.longName?.ka) o.longName.ka = longKa; else delete o.longName.ka;
-            if (Object.keys(o.longName).length === 0) delete o.longName;
-        } else {
-            delete o.longName;
-        }
-
-        // Destinations
-        const d0en = getI('route-edit-dest0-en');
-        const d0ka = getI('route-edit-dest0-ka');
-        const d1en = getI('route-edit-dest1-en');
-        const d1ka = getI('route-edit-dest1-ka');
-
-        // Helper for dest
-        const checkDest = (dir, en, ka) => {
-            const oDest = orig.destinations?.[dir]?.headsign || {};
-            if (en !== (oDest.en || '') || ka !== (oDest.ka || '')) {
-                if (!o.destinations) o.destinations = {};
-                if (!o.destinations[dir]) o.destinations[dir] = { headsign: {} };
-
-                const d = o.destinations[dir].headsign;
-                if (en !== (oDest.en || '')) d.en = en; else delete d.en;
-                if (ka !== (oDest.ka || '')) d.ka = ka; else delete d.ka;
-
-                if (Object.keys(d).length === 0) {
-                    delete o.destinations[dir]; // empty headsign obj
-                    if (Object.keys(o.destinations).length === 0) delete o.destinations;
-                }
-            } else {
-                // If exists, cleanup? 
-                if (o.destinations?.[dir]) {
-                    delete o.destinations[dir];
-                    if (Object.keys(o.destinations).length === 0) delete o.destinations;
-                }
-            }
-        };
-
-        checkDest(0, d0en, d0ka);
-        checkDest(1, d1en, d1ka);
-
-        checkRouteDirtyState();
-        updateRouteRestoreButtons();
-    };
-
     inputs.forEach(id => {
-        document.getElementById(id).addEventListener('input', handleInput);
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', updateEditedOverrides);
     });
-
-    // Restore Buttons
-    const setupRestore = (btnId, inputId, originalPath) => {
-        const btn = document.getElementById(btnId);
-        if (btn) btn.addEventListener('click', () => {
-            const val = resolvePath(routeEditState.original, originalPath) || '';
-            document.getElementById(inputId).value = val;
-            handleInput();
-        });
-    };
-    const resolvePath = (obj, path) => path.split('.').reduce((o, i) => o?.[i], obj);
-
-    setupRestore('route-restore-short', 'route-edit-short', 'shortName');
-    setupRestore('route-restore-long-en', 'route-edit-long-en', 'longName.en');
-    setupRestore('route-restore-long-ka', 'route-edit-long-ka', 'longName.ka');
-
-    setupRestore('route-restore-dest0-en', 'route-edit-dest0-en', 'destinations.0.headsign.en');
-    setupRestore('route-restore-dest0-ka', 'route-edit-dest0-ka', 'destinations.0.headsign.ka');
-    setupRestore('route-restore-dest1-en', 'route-edit-dest1-en', 'destinations.1.headsign.en');
-    setupRestore('route-restore-dest1-ka', 'route-edit-dest1-ka', 'destinations.1.headsign.ka');
 
     if (applyBtn) applyBtn.addEventListener('click', async () => {
         await saveRouteOverrides();
     });
 }
 
-async function startEditingRoute(routeId) {
-    if (!window.routesConfig) window.routesConfig = { routeOverrides: {} };
+function updateEditedOverrides() {
+    const getVal = (id) => {
+        const el = document.getElementById(id);
+        return el ? el.value.trim() : '';
+    };
 
+    const isLoopBtn = document.getElementById('route-edit-isloop');
+    const isLoop = isLoopBtn ? isLoopBtn.classList.contains('active') : false;
+
+    // Build the edited overrides object to match CSV column names
+    const edited = routeEditState.editedOverrides || {};
+
+    // isLoop & invertDirection
+    edited.isLoop = isLoop;
+    const invertBtn = document.getElementById('route-edit-invert');
+    edited.invertDirection = invertBtn ? invertBtn.classList.contains('active') : false;
+
+    // Terminus
+    const terminus = getVal('route-edit-terminus');
+    if (terminus) {
+        edited.terminusStopIdOverride = terminus;
+    } else {
+        delete edited.terminusStopIdOverride;
+    }
+
+
+
+    // Long name overrides (these are always overrides, stored separately from base)
+    const longEn = getVal('route-edit-long-en');
+    const longKa = getVal('route-edit-long-ka');
+    const longRu = getVal('route-edit-long-ru');
+
+    if (longEn) edited.longNameEnOverride = longEn; else delete edited.longNameEnOverride;
+    if (longKa) edited.longNameKaOverride = longKa; else delete edited.longNameKaOverride;
+    if (longRu) edited.longNameRuOverride = longRu; else delete edited.longNameRuOverride;
+
+    // Destination overrides
+    const dest0En = getVal('route-edit-dest0-en');
+    const dest0Ka = getVal('route-edit-dest0-ka');
+    const dest0Ru = getVal('route-edit-dest0-ru');
+    const dest1En = getVal('route-edit-dest1-en');
+    const dest1Ka = getVal('route-edit-dest1-ka');
+    const dest1Ru = getVal('route-edit-dest1-ru');
+
+    const origDest0En = routeEditState.csvOverrides?.dest0En || '';
+    const origDest0Ka = routeEditState.csvOverrides?.dest0Ka || '';
+    const origDest1En = routeEditState.csvOverrides?.dest1En || '';
+    const origDest1Ka = routeEditState.csvOverrides?.dest1Ka || '';
+
+    // Only store as override if different from base
+    if (dest0En && dest0En !== origDest0En) edited.dest0EnOverride = dest0En; else delete edited.dest0EnOverride;
+    if (dest0Ka && dest0Ka !== origDest0Ka) edited.dest0KaOverride = dest0Ka; else delete edited.dest0KaOverride;
+    if (dest0Ru) edited.dest0RuOverride = dest0Ru; else delete edited.dest0RuOverride;
+    if (dest1En && dest1En !== origDest1En) edited.dest1EnOverride = dest1En; else delete edited.dest1EnOverride;
+    if (dest1Ka && dest1Ka !== origDest1Ka) edited.dest1KaOverride = dest1Ka; else delete edited.dest1KaOverride;
+    if (dest1Ru) edited.dest1RuOverride = dest1Ru; else delete edited.dest1RuOverride;
+
+    routeEditState.editedOverrides = edited;
+    checkRouteDirtyState();
+}
+
+async function startEditingRoute(routeId) {
     // 1. Identify Valid ID (Prefix handling)
     const allRoutes = _dataProvider.getAllRoutes();
     const routeObj = allRoutes.find(r => String(r.id) === String(routeId) || String(r.id) === `1:${routeId}`);
@@ -243,160 +223,212 @@ async function startEditingRoute(routeId) {
 
     const stableId = routeObj.id;
     routeEditState.routeId = stableId;
-    routeEditState.original = JSON.parse(JSON.stringify(routeObj));
+    routeEditState.routeObj = routeObj;
 
-    // Load Existing Overrides
-    if (window.routesConfig.routeOverrides && window.routesConfig.routeOverrides[stableId]) {
-        routeEditState.overrides = JSON.parse(JSON.stringify(window.routesConfig.routeOverrides[stableId]));
-    } else {
-        routeEditState.overrides = {};
+    // Fetch overrides from Convex
+    let convexOverrides = {};
+    try {
+        // Use route's _source if available, or infer from ID prefix
+        let sourceId = routeObj._source || 'tbilisi';
+        if (stableId.startsWith('r') && stableId.length > 1 && stableId[1] === 'R') {
+            sourceId = 'rustavi';
+        }
+
+        const { convex, restoreApiId, sources } = await import('./api.js');
+        const source = sources.find(s => s.id === sourceId) || sources[0];
+        const dbRouteId = restoreApiId(stableId, source);
+
+        const override = await convex.query("transit:getOverride", { routeId: dbRouteId });
+
+        if (override) {
+            console.log('[Edit] Found override in Convex:', override);
+            // Map Convex field names to internal field names
+            // Convex has both base values (longName_en) and override values (longName_en_override)
+            convexOverrides = {
+                isLoop: override.isLoop,
+                invertDirection: override.invertDirection,
+                // Base values (from CSV import)
+                longNameEn: override.longName_en,
+                longNameKa: override.longName_ka,
+                longNameRu: override.longName_ru,
+                dest0En: override.dest0_en,
+                dest0Ka: override.dest0_ka,
+                dest0Ru: override.dest0_ru,
+                dest1En: override.dest1_en,
+                dest1Ka: override.dest1_ka,
+                dest1Ru: override.dest1_ru,
+                terminusStopId: override.terminusStopId,
+                terminusStopName: override.terminusStopName,
+                // Override values (user edits)
+                terminusStopIdOverride: override.terminusStopId_override,
+                longNameEnOverride: override.longName_en_override,
+                longNameKaOverride: override.longName_ka_override,
+                longNameRuOverride: override.longName_ru_override,
+                dest0EnOverride: override.dest0_en_override,
+                dest0KaOverride: override.dest0_ka_override,
+                dest0RuOverride: override.dest0_ru_override,
+                dest1EnOverride: override.dest1_en_override,
+                dest1KaOverride: override.dest1_ka_override,
+                dest1RuOverride: override.dest1_ru_override,
+            };
+            // Clean undefined values
+            Object.keys(convexOverrides).forEach(k => {
+                if (convexOverrides[k] === undefined) delete convexOverrides[k];
+            });
+        } else {
+            console.log('[Edit] No override found in Convex for', dbRouteId);
+        }
+    } catch (e) {
+        console.warn('[Edit] Failed to fetch override from Convex:', e);
     }
 
-    const setVal = (id, v) => document.getElementById(id).value = (v || '');
+    routeEditState.csvRouteId = stableId;
+    routeEditState.csvOverrides = JSON.parse(JSON.stringify(convexOverrides));
+    routeEditState.editedOverrides = JSON.parse(JSON.stringify(convexOverrides));
 
-    // --- FETCH DATA FOR EDITING ---
-    // We need:
-    // 1. Full Details (for Headsigns)
-    // 2. Both English and Georgian Names (Long Name)
+    const setVal = (id, v) => {
+        const el = document.getElementById(id);
+        if (el) el.value = (v || '');
+    };
 
-    let longNameEn = '';
-    let longNameKa = '';
-    let headsigns = { en: [], ka: [] };
+    const setOriginal = (id, v) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.textContent = v || '';
+        }
+    };
 
-    // Prefill from current object (likely mixed or just one locale)
-    setVal('route-edit-short', routeObj.shortName);
+    console.log('[Edit] Loading route data from Convex overrides:', convexOverrides);
 
-    try {
-        console.log('[Edit] Fetching editing data...');
-        // Import API dynamically if not available globally, or use window/module
-        // We are inside a module that has access to imports? No, need to import api
-        const api = await import('./api.js');
+    // --- Debug Info ---
+    const debugId = document.getElementById('route-edit-debug-id');
+    const debugShort = document.getElementById('route-edit-debug-short');
+    if (debugId) debugId.textContent = routeId;
+    if (debugShort) debugShort.textContent = routeObj.shortName || '-';
 
-        // Parallel Fetch: Details (EN), Routes (EN), Routes (KA)
-        // Actually Details usually has headsigns. 
-        // Routes List has Long Names.
+    // --- Inline Original Values ---
+    const getOrig = (csvKey, routeVal) => {
+        // Prefer explicit base value from Convex if available, else use current route object value
+        return convexOverrides[csvKey] || routeVal || '';
+    };
 
-        // Strategy:
-        // 1. Fetch Details (EN) -> Headsigns EN
-        // 2. Fetch Details (KA) -> Headsigns KA
-        // 3. Fetch Route List (EN) -> LongName EN
-        // 4. Fetch Route List (KA) -> LongName KA
+    // Helper to get base destinations from various possible sources
+    const getBaseDest = (dirIndex, lang) => {
+        // 1. Try Convex Override
+        const csvKey = `dest${dirIndex}${lang.charAt(0).toUpperCase()}${lang.slice(1)}`;
+        if (convexOverrides[csvKey]) return convexOverrides[csvKey];
 
-        const fetchDetails = async (lang) => {
-            // We can use a direct fetch because api.fetchRouteDetailsV3 uses default source logic
-            // But we need to force locale. api.fetchRouteDetailsV3 logic is hardcoded?
-            // Checking api.js: fetchRouteDetailsV3 calls fetchFromSmartSource(urlGen).
-            // urlGen uses `.../routes/...`.
-            // It does NOT seem to force locale in the URL for DETAILS (only for schedule?).
-            // Wait, `fetchRouteDetailsV3` urlGen is `${getApiV3BaseUrl(s)}/routes/${encodeURIComponent(id)}`.
-            // It does NOT append ?locale=en.
-            // So it might return default (likely KA or mixed).
-
-            // We can hack the URL generator by passing a custom one? No, `fetchFromSmartSource` isn't exported.
-            // We can use `fetch` directly using the helper.
-
-            // Simpler: Just fetch the route lists for Naming.
-            // For Headsigns, we rely on details.
-
-            // Let's rely on `fetchWithCache` to get raw data for edit.
-            // We know the source from `routeObj._source`.
-        };
-
-        const sourceId = routeObj._source || 'tbilisi';
-        const rawId = routeObj.id.includes(':') ? routeObj.id.split(':')[1] : routeObj.id; // Heuristic
-
-        // Use the API module to get base URLs
-        const sources = api.sources;
-        const source = sources.find(s => s.id === sourceId) || sources[0];
-        const v3Base = import.meta.env.DEV ? (sourceId === 'tbilisi' ? '/pis-gateway/api/v3' : source.apiBaseV3) : source.apiBaseV3;
-
-        // FETCH NAMES (Routes List)
-        // Optimization: Use `fetchRoutes` but we need specific locale.
-        // `api.fetchRoutes` hardcodes locale usually? 
-        // line 603: `url = .../routes`. It doesn't force locale? 
-        // line 749 (v3): `.../routes?locale=en`.
-
-        const fetchName = async (lang) => {
-            const url = `${v3Base}/routes?locale=${lang}`;
-            const res = await api.fetchWithCache(url, { headers: { 'x-api-key': api.API_KEY } });
-            if (Array.isArray(res)) {
-                // Find our route (checking ID or shortName)
-                const found = res.find(r => {
-                    // ID check needs processing?
-                    // Raw API ID vs Processed ID.
-                    // The list returns RAW IDs (e.g. 801).
-                    // routeObj.id is processed (e.g. 1:801).
-                    // We match by `api.processId(r.id, source) === routeObj.id`
-                    return api.processId(r.id, source) === routeObj.id;
-                });
-                return found ? found.longName : '';
+        // 2. Try window.currentRoute (most likely to have patterns if active on map)
+        const curRoute = window.currentRoute;
+        if (curRoute && (String(curRoute.id) === String(routeId) || curRoute.shortName === routeObj.shortName)) {
+            // Check patterns/destinations
+            const patterns = curRoute.patterns || curRoute.destinations;
+            if (patterns && patterns[dirIndex]) {
+                const headsign = patterns[dirIndex].headsign;
+                if (typeof headsign === 'object' && headsign[lang]) return headsign[lang];
+                if (typeof headsign === 'string' && lang === (new URLSearchParams(window.location.search).get('locale') || 'en')) return headsign;
             }
-            return '';
-        };
+        }
 
-        const [enName, kaName] = await Promise.all([fetchName('en'), fetchName('ka')]);
-        longNameEn = enName;
-        longNameKa = kaName;
+        // 3. Try routeObj (from allRoutes)
+        const patterns = routeObj.patterns || routeObj.destinations;
+        if (patterns && patterns[dirIndex]) {
+            const headsign = patterns[dirIndex].headsign;
+            if (typeof headsign === 'object' && headsign[lang]) return headsign[lang];
+        }
 
-        // FETCH HEADSIGNS (Details)
-        const fetchHeadsigns = async (lang) => {
-            const url = `${v3Base}/routes/${rawId}?locale=${lang}`; // Append query param if supported
-            // If API doesn't support ?locale on details, we might act on `Server-Locale` header or accept-language?
-            // Trying query param first.
-            const res = await api.fetchWithCache(url, { headers: { 'x-api-key': api.API_KEY, 'Accept-Language': lang } });
-            // API V3 usually respects Accept-Language or query param.
+        // 4. Fallback: Parse longName (only for en/ka, not ru since API doesn't provide ru)
+        if (lang === 'ru') return '';  // No Russian data from API
+        const longName = routeObj.longName?.[lang] || (typeof routeObj.longName === 'string' && lang === 'en' ? routeObj.longName : '');
+        if (longName && longName.includes(' - ')) {
+            const parts = longName.split(' - ');
+            if (dirIndex === 0) return parts[0];
+            if (dirIndex === 1) return parts[1] || parts[0]; // For loop/circular
+        }
 
-            if (res && res.patterns) {
-                return res.patterns.map(p => p.headsign);
-            }
-            return [];
-        };
+        return '';
+    };
 
-        const [enHeads, kaHeads] = await Promise.all([fetchHeadsigns('en'), fetchHeadsigns('ka')]);
-        // Assumption: Patterns are in same order.
-        headsigns.en = enHeads || [];
-        headsigns.ka = kaHeads || [];
+    setOriginal('route-orig-long-en', getOrig('longNameEn', routeObj.longName?.en));
+    setOriginal('route-orig-long-ka', getOrig('longNameKa', routeObj.longName?.ka));
+    setOriginal('route-orig-long-ru', getOrig('longNameRu', routeObj.longName?.ru));
 
-    } catch (e) {
-        console.warn('[Edit] Failed to fetch localized data', e);
-        // Fallback to what we have
-        const lName = routeObj.longName;
-        if (typeof lName === 'string') {
-            // Guess: if it has non-ascii, it's likely KA
-            if (/[^\u0000-\u007f]/.test(lName)) longNameKa = lName;
-            else longNameEn = lName;
-        } else {
-            longNameEn = lName?.en;
-            longNameKa = lName?.ka;
+    setOriginal('route-orig-dest0-en', getBaseDest(0, 'en'));
+    setOriginal('route-orig-dest0-ka', getBaseDest(0, 'ka'));
+    setOriginal('route-orig-dest0-ru', getBaseDest(0, 'ru'));
+    setOriginal('route-orig-dest1-en', getBaseDest(1, 'en'));
+    setOriginal('route-orig-dest1-ka', getBaseDest(1, 'ka'));
+    setOriginal('route-orig-dest1-ru', getBaseDest(1, 'ru'));
+
+    // --- Populate UI from Convex Overrides ---
+
+    // Loop settings
+    const isLoopBtn = document.getElementById('route-edit-isloop');
+    const terminusGroup = document.getElementById('route-edit-terminus-group');
+    if (isLoopBtn) {
+        const isLoop = convexOverrides.isLoop === true || convexOverrides.isLoop === 'true';
+        isLoopBtn.classList.toggle('active', isLoop);
+        if (terminusGroup) terminusGroup.style.display = isLoop ? 'flex' : 'none';
+
+        // Add one-time listener for the toggle if not already added
+        if (!isLoopBtn._hasToggleListener) {
+            isLoopBtn.addEventListener('click', () => {
+                isLoopBtn.classList.toggle('active');
+                const active = isLoopBtn.classList.contains('active');
+                if (terminusGroup) terminusGroup.style.display = active ? 'flex' : 'none';
+                updateEditedOverrides();
+            });
+            isLoopBtn._hasToggleListener = true;
         }
     }
 
-    // Set Values
-    // Set Values - Prioritize Overrides
-    const ov = routeEditState.overrides;
+    // Invert Direction
+    const invertBtn = document.getElementById('route-edit-invert');
+    if (invertBtn) {
+        const invert = convexOverrides.invertDirection === true || convexOverrides.invertDirection === 'true';
+        invertBtn.classList.toggle('active', invert);
 
-    // Long Names
-    const ovLongEn = ov.longName?.en;
-    const ovLongKa = ov.longName?.ka;
-    setVal('route-edit-long-en', ovLongEn !== undefined ? ovLongEn : longNameEn);
-    setVal('route-edit-long-ka', ovLongKa !== undefined ? ovLongKa : longNameKa);
+        if (!invertBtn._hasToggleListener) {
+            invertBtn.addEventListener('click', () => {
+                invertBtn.classList.toggle('active');
+                updateEditedOverrides();
+            });
+            invertBtn._hasToggleListener = true;
+        }
+    }
 
-    // Destinations
-    // Helper to safely get override destination
-    const getDestOv = (dir, lang) => ov.destinations?.[dir]?.headsign?.[lang];
 
-    setVal('route-edit-dest0-en', getDestOv(0, 'en') !== undefined ? getDestOv(0, 'en') : headsigns.en[0]);
-    setVal('route-edit-dest0-ka', getDestOv(0, 'ka') !== undefined ? getDestOv(0, 'ka') : headsigns.ka[0]);
-    setVal('route-edit-dest1-en', getDestOv(1, 'en') !== undefined ? getDestOv(1, 'en') : headsigns.en[1]);
-    setVal('route-edit-dest1-ka', getDestOv(1, 'ka') !== undefined ? getDestOv(1, 'ka') : headsigns.ka[1]);
+    setVal('route-edit-terminus', convexOverrides.terminusStopIdOverride || convexOverrides.terminusStopId || '');
+
+    const terminusNameEl = document.getElementById('route-edit-terminus-name');
+    if (terminusNameEl) {
+        terminusNameEl.textContent = convexOverrides.terminusStopName || '';
+    }
+
+    // Long name overrides (only overrides, not base values)
+    setVal('route-edit-long-en', convexOverrides.longNameEnOverride || '');
+    setVal('route-edit-long-ka', convexOverrides.longNameKaOverride || '');
+    setVal('route-edit-long-ru', convexOverrides.longNameRuOverride || '');
+
+    // Destinations (only show override values, not base values - those are in the "original" display)
+    setVal('route-edit-dest0-en', convexOverrides.dest0EnOverride || '');
+    setVal('route-edit-dest0-ka', convexOverrides.dest0KaOverride || '');
+    setVal('route-edit-dest0-ru', convexOverrides.dest0RuOverride || '');
+    setVal('route-edit-dest1-en', convexOverrides.dest1EnOverride || '');
+    setVal('route-edit-dest1-ka', convexOverrides.dest1KaOverride || '');
+    setVal('route-edit-dest1-ru', convexOverrides.dest1RuOverride || '');
 
     checkRouteDirtyState();
-    updateRouteRestoreButtons();
 }
 
 function checkRouteDirtyState() {
     const applyBtn = document.getElementById('route-edit-apply');
-    const isDirty = Object.keys(routeEditState.overrides).length > 0;
+
+    // Compare editedOverrides with csvOverrides to detect changes
+    const original = routeEditState.csvOverrides || {};
+    const edited = routeEditState.editedOverrides || {};
+
+    const isDirty = JSON.stringify(original) !== JSON.stringify(edited);
 
     if (applyBtn) {
         applyBtn.disabled = !isDirty;
@@ -405,20 +437,13 @@ function checkRouteDirtyState() {
 }
 
 function updateRouteRestoreButtons() {
-    // Logic to dim/light up restore buttons based on diff?
-    // Implementation not critical, leaving simple for now.
+    // Could highlight restore buttons when field differs from original
+    // Implementation not critical for now
 }
 
 async function saveRouteOverrides() {
-    if (!window.routesConfig.routeOverrides) window.routesConfig.routeOverrides = {};
-
-    let id = routeEditState.routeId;
-
-    if (Object.keys(routeEditState.overrides).length === 0) {
-        delete window.routesConfig.routeOverrides[id];
-    } else {
-        window.routesConfig.routeOverrides[id] = routeEditState.overrides;
-    }
+    const routeId = routeEditState.csvRouteId || routeEditState.routeId;
+    const editedOverrides = routeEditState.editedOverrides || {};
 
     const applyBtn = document.getElementById('route-edit-apply');
     if (applyBtn) {
@@ -426,50 +451,79 @@ async function saveRouteOverrides() {
         applyBtn.textContent = 'Saving...';
     }
 
-    const api = await import('./api.js');
-
-    // Create a cleaned version for saving with fully qualified API IDs
-    const saveRoutesConfig = {
-        routeOverrides: {}
-    };
-
-    Object.keys(window.routesConfig.routeOverrides || {}).forEach(id => {
-        saveRoutesConfig.routeOverrides[api.getApiId(id)] = window.routesConfig.routeOverrides[id];
-    });
-
     try {
-        console.log('[DevTools] Saving route overrides...', JSON.stringify(saveRoutesConfig, null, 2));
-        const res = await fetch('/api/save-routes-config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(saveRoutesConfig, null, 2)
-        });
+        // Build the update payload for Convex
+        const updates = {};
 
-        if (!res.ok) {
-            const errText = await res.text();
-            throw new Error(`Save failed: ${res.status} ${res.statusText} - ${errText}`);
+        if (editedOverrides.isLoop !== undefined) {
+            updates.isLoop = editedOverrides.isLoop;
+        }
+        if (editedOverrides.invertDirection !== undefined) {
+            updates.invertDirection = editedOverrides.invertDirection;
+        }
+        if (editedOverrides.terminusStopIdOverride !== undefined) {
+            updates.terminusStopId_override = editedOverrides.terminusStopIdOverride;
+        }
+        if (editedOverrides.longNameEnOverride !== undefined) {
+            updates.longName_en_override = editedOverrides.longNameEnOverride;
+        }
+        if (editedOverrides.longNameKaOverride !== undefined) {
+            updates.longName_ka_override = editedOverrides.longNameKaOverride;
+        }
+        if (editedOverrides.longNameRuOverride !== undefined) {
+            updates.longName_ru_override = editedOverrides.longNameRuOverride;
+        }
+        if (editedOverrides.dest0EnOverride !== undefined) {
+            updates.dest0_en_override = editedOverrides.dest0EnOverride;
+        }
+        if (editedOverrides.dest0KaOverride !== undefined) {
+            updates.dest0_ka_override = editedOverrides.dest0KaOverride;
+        }
+        if (editedOverrides.dest0RuOverride !== undefined) {
+            updates.dest0_ru_override = editedOverrides.dest0RuOverride;
+        }
+        if (editedOverrides.dest1EnOverride !== undefined) {
+            updates.dest1_en_override = editedOverrides.dest1EnOverride;
+        }
+        if (editedOverrides.dest1KaOverride !== undefined) {
+            updates.dest1_ka_override = editedOverrides.dest1KaOverride;
+        }
+        if (editedOverrides.dest1RuOverride !== undefined) {
+            updates.dest1_ru_override = editedOverrides.dest1RuOverride;
         }
 
-        console.log('[DevTools] Single route save successful');
+        // Use route's _source if available, or infer from ID prefix
+        let sourceId = routeEditState.routeObj?._source || 'tbilisi';
+        if (String(routeId).startsWith('r') && String(routeId).length > 1 && String(routeId)[1] === 'R') {
+            sourceId = 'rustavi';
+        }
+
+        const { convex, restoreApiId, sources } = await import('./api.js');
+        const source = sources.find(s => s.id === sourceId) || sources[0];
+        const dbRouteId = restoreApiId(String(routeId), source);
+
+        console.log('[DevTools] Saving route overrides to Convex:', { routeId: dbRouteId, updates });
+
+        // Call Convex mutation
+        const result = await convex.mutation("transit:updateOverride", {
+            routeId: dbRouteId,
+            updates
+        });
+
+        console.log('[DevTools] Route override saved successfully:', result);
 
         if (applyBtn) {
             applyBtn.textContent = 'Saved!';
             applyBtn.classList.add('success');
         }
 
-        // Re-apply locally (We need to call main.js function? 
-        // We can expose applyRouteOverrides from main.js or just reload?)
-        // applyRouteOverrides is in main.js. 
-        // Ideally we move applyRouteOverrides to here or api.js?
-        // For now, we unfortunately can't easily call it unless passed in callbacks.
-        // Let's assume user reloads or we pass it.
-        // Or we implement a simple version here.
-        if (window.applyRouteOverrides) window.applyRouteOverrides();
-
-        // Update UI
-        if (_uiCallbacks && _uiCallbacks.renderAllRoutes) {
-            _uiCallbacks.renderAllRoutes(window.lastRoutes, window.lastArrivals);
+        // Update the local route object's _overrides to reflect the change
+        if (routeEditState.routeObj) {
+            routeEditState.routeObj._overrides = { ...editedOverrides };
         }
+
+        // Update csvOverrides to match edited (so dirty state is cleared)
+        routeEditState.csvOverrides = JSON.parse(JSON.stringify(editedOverrides));
 
         setTimeout(() => {
             if (applyBtn) {

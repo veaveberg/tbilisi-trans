@@ -10,7 +10,6 @@ export const RouteFilterColorManager = {
         '#ADCD3F', // lime
         '#F58620', // orange
         '#EE4C9B', // magenta
-        '#A1A2A3', // grey
         '#09B096', // mint
         '#8F489C', // purple
         '#FBA919'  // physalis
@@ -21,7 +20,7 @@ export const RouteFilterColorManager = {
     queueIndex: 0,
 
     reset() {
-        console.log('[ColorManager] RESET triggered.');
+        // console.log('[ColorManager] RESET triggered.');
         this.pathColors.clear();
         this.routeColors.clear();
         this.colorQueue = this.shuffle([...this.palette]);
@@ -53,7 +52,7 @@ export const RouteFilterColorManager = {
         }
 
         const color = this.getNextColor(); // Get current peek color
-        console.log(`[ColorManager] Assigning NEW color ${color} to signature ${signature}. Path Queue Index: ${this.queueIndex} -> ${(this.queueIndex + 1) % this.colorQueue.length}`);
+        // console.log(`[ColorManager] Assigning NEW color ${color} to signature ${signature}. Path Queue Index: ${this.queueIndex} -> ${(this.queueIndex + 1) % this.colorQueue.length}`);
         this.pathColors.set(signature, color);
         routeIds.forEach(rid => this.routeColors.set(rid, color));
 

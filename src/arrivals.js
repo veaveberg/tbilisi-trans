@@ -26,9 +26,27 @@ let deps = {
     // renderArrivals dependencies
     filterManager: null,
     showRouteOnMap: null,
-    LoopUtils: null,
+    RouteGeometry: null,
     v3RoutesMap: null
 };
+
+/**
+ * Normalize a route ID for comparison across different formats.
+ * Handles: "1:R835" -> "R835", "rR835" -> "R835", "2:R835" -> "R835"
+ */
+function normalizeRouteId(id) {
+    if (!id) return '';
+    let s = String(id);
+    // Strip numeric prefixes like "1:", "2:"
+    if (/^\d+:/.test(s)) {
+        s = s.replace(/^\d+:/, '');
+    }
+    // Strip lowercase 'r' prefix (Rustavi app-internal format)
+    if (s.startsWith('r') && s.length > 1 && /[A-Z0-9]/.test(s[1])) {
+        s = s.substring(1);
+    }
+    return s;
+}
 
 /**
  * Initialize the arrivals module with dependencies from main.js
@@ -202,7 +220,10 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
         // 1. Collect all departures for the day
         let allDepartures = [];
         if (daySchedule && daySchedule.stops) {
-            const matchedStops = daySchedule.stops.filter(s => {
+            const matchedStops = daySchedule.stops.filter((s, idx) => {
+                const isTerminus = idx === daySchedule.stops.length - 1;
+                if (isTerminus) return false;
+
                 const sId = String(s.id);
                 // Matching logic
                 return potentialIds.some(pid => {
@@ -345,7 +366,7 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
 /**
  * Get schedule for a specific route at a stop
  */
-export async function getV3Schedule(routeShortName, stopId, explicitRouteId = null) {
+export async function getV3Schedule(routeShortName, stopId, explicitRouteId = null, explicitSuffix = null) {
     let routeId = explicitRouteId;
     if (!routeId) {
         if (!v3RoutesMap) await fetchV3Routes();
@@ -362,7 +383,7 @@ export async function getV3Schedule(routeShortName, stopId, explicitRouteId = nu
         deps.mergeSourcesMap.get(stopId).forEach(s => stopIds.push(s));
     }
 
-    const result = await api.fetchScheduleForStop(routeId, stopIds);
+    const result = await api.fetchScheduleForStop(routeId, stopIds, explicitSuffix);
     if (!result) {
         console.warn(`[V3 Debug] No schedule returned from API for ${routeId}`);
         return null;
@@ -370,6 +391,69 @@ export async function getV3Schedule(routeShortName, stopId, explicitRouteId = nu
 
     const { schedule, patternSuffix } = result;
     return parseSchedule(schedule, stopIds, patternSuffix, routeShortName);
+}
+
+/**
+ * Get full schedule grouped by hour for a specific route at a stop
+ * @returns {Promise<Object|null>} Map of hour -> array of minutes
+ */
+export async function getFullScheduleGrouped(routeShortName, stopId, explicitRouteId = null, explicitSuffix = null) {
+    let routeId = explicitRouteId;
+    if (!routeId) {
+        if (!v3RoutesMap) await fetchV3Routes();
+        routeId = v3RoutesMap && v3RoutesMap.get(String(routeShortName));
+    }
+
+    if (!routeId) return null;
+
+    const stopIds = deps.getEquivalentStops ? deps.getEquivalentStops(stopId) : [stopId];
+    if (deps.mergeSourcesMap?.has(stopId)) {
+        deps.mergeSourcesMap.get(stopId).forEach(s => stopIds.push(s));
+    }
+
+    const result = await api.fetchScheduleForStop(routeId, stopIds, explicitSuffix);
+    if (!result || !result.schedule) return null;
+
+    const { schedule } = result;
+    const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
+    let daySchedule = schedule.find(s => s.serviceDates.includes(tbilisiNow));
+    if (!daySchedule && schedule.length > 0) daySchedule = schedule[0];
+    if (!daySchedule || !daySchedule.stops) return null;
+
+    const matchedStops = daySchedule.stops.filter((s, idx) => {
+        const isTerminus = idx === daySchedule.stops.length - 1;
+        if (isTerminus) return false;
+
+        const sId = String(s.id);
+        const sCode = String(s.code || '');
+        return stopIds.some(pid => {
+            const pIdStr = String(pid);
+            const normalize = (id) => String(id).replace(/^\d+:/, '').replace(/^[rR]/, '');
+            return pIdStr === sId || normalize(pIdStr) === normalize(sId) || (sCode && normalize(sCode) === normalize(pIdStr));
+        });
+    });
+
+    if (matchedStops.length === 0) return null;
+
+    const grouped = {};
+    matchedStops.forEach(stop => {
+        if (stop.arrivalTimes) {
+            stop.arrivalTimes.split(',').forEach(t => {
+                const [h, m] = t.split(':');
+                const hour = h.padStart(2, '0');
+                const mins = m.padStart(2, '0');
+                if (!grouped[hour]) grouped[hour] = [];
+                if (!grouped[hour].includes(mins)) grouped[hour].push(mins);
+            });
+        }
+    });
+
+    // Sort minutes in each hour
+    Object.keys(grouped).forEach(hour => {
+        grouped[hour].sort((a, b) => parseInt(a) - parseInt(b));
+    });
+
+    return grouped;
 }
 
 // Legacy sync version (returns null)
@@ -542,8 +626,9 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     // 2.5 Show Minibuses Filter
     /* console.log(`[Arrivals Debug] ExtraRoutes before filter: ${ extraRoutes.length } `); */
     arrivalsData = arrivalsData.filter(a => {
-        // Precise matching using ID if possible, fallback to shortName
+        // Precise matching: exact ID, normalized ID, then shortName
         const r = deps.allRoutes().find(route => String(route.id) === String(a.id)) ||
+            deps.allRoutes().find(route => normalizeRouteId(route.id) === normalizeRouteId(a.id)) ||
             deps.allRoutes().find(route => String(route.shortName) === String(a.shortName));
         return shouldShowRoute(a.shortName, r);
     });
@@ -580,10 +665,22 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             directionIndex = parseInt(part) || 0;
         }
 
-        const matchedRouteForColor = deps.allRoutes().find(r => r.shortName === a.shortName);
+        // Match by ID first (exact), then normalized ID (handles 1:R835 vs rR835), then shortName
+        const matchedRouteForColor = deps.allRoutes().find(r => String(r.id) === String(a.id)) ||
+            deps.allRoutes().find(r => normalizeRouteId(r.id) === normalizeRouteId(a.id)) ||
+            deps.allRoutes().find(r => r.shortName === a.shortName);
         const invertDirection = matchedRouteForColor?._overrides?.invertDirection === true;
         if (invertDirection) {
             directionIndex = directionIndex === 0 ? 1 : 0;
+        }
+
+        // Debug Rustavi routes
+        if (a.id && /^1:R\d/.test(a.id) && !window._rustaviHeadsignDebugDone) {
+            console.log('[Rustavi Debug] Arrival:', { id: a.id, shortName: a.shortName, headsign: a.headsign, patternSuffix: a.patternSuffix });
+            console.log('[Rustavi Debug] Matched route:', matchedRouteForColor?.id, 'Has overrides:', !!matchedRouteForColor?._overrides);
+            console.log('[Rustavi Debug] Destinations:', matchedRouteForColor?._overrides?.destinations);
+            console.log('[Rustavi Debug] Direction index:', directionIndex);
+            window._rustaviHeadsignDebugDone = true;
         }
 
         const displayHeadsign = deps.getPatternHeadsign(matchedRouteForColor, directionIndex, a.headsign);
@@ -597,7 +694,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 primary: a,
                 headsign: displayHeadsign,
                 directionIndex: directionIndex,
-                color: deps.getRouteDisplayColor(deps.allRoutes().find(r => r.shortName === a.shortName) || { ...a, id: a.id }),
+                color: deps.getRouteDisplayColor(matchedRouteForColor || { ...a, id: a.id }),
                 arrivals: []
             });
         }
@@ -741,7 +838,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             } else if (item.headsign) {
                 headsign = item.headsign;
             } else {
-                const parsed = deps.LoopUtils.parseRouteName(r.longName);
+                const parsed = deps.RouteGeometry.parseRouteName(r.longName);
                 if (parsed.destination) {
                     headsign = parsed.destination;
                 } else {
@@ -797,6 +894,10 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
         // -- Click Handlers --
         let routeObj = deps.allRoutes().find(r => r.id === routeIdForClick);
+        if (!routeObj && routeIdForClick) {
+            // Try normalized ID match (handles 1:R835 vs rR835)
+            routeObj = deps.allRoutes().find(r => normalizeRouteId(r.id) === normalizeRouteId(routeIdForClick));
+        }
         if (!routeObj && item.data.shortName) {
             routeObj = deps.allRoutes().find(r => r.shortName === item.data.shortName);
         }

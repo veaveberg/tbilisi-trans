@@ -67,7 +67,7 @@ export class FilterManager {
 
     async toggleFilterMode(currentStopId, isPickModeActive, setEditPickMode, options = {}) {
         const { forceEnable = false, skipFlyTo = false } = options;
-        console.log('[FilterManager] toggleFilterMode. Active:', this.state.active, 'Picking:', this.state.picking, 'Stop:', currentStopId, 'forceEnable:', forceEnable);
+        // console.log('[FilterManager] toggleFilterMode. Active:', this.state.active, 'Picking:', this.state.picking, 'Stop:', currentStopId, 'forceEnable:', forceEnable);
 
         if (isPickModeActive && setEditPickMode) setEditPickMode(null);
 
@@ -140,7 +140,7 @@ export class FilterManager {
         // Reachability Logic
         await this.updateReachableStops();
 
-        console.log(`[FilterManager] Pick Mode. Reachable: ${this.state.reachableStopIds.size}`);
+        // console.log(`[FilterManager] Pick Mode. Reachable: ${this.state.reachableStopIds.size}`);
 
         if (this.state.reachableStopIds.size === 0) {
             alert("No route data available for filtering (Stops list empty).");
@@ -163,7 +163,7 @@ export class FilterManager {
         });
 
         if (!isAllHydrated) {
-            console.log(`[FilterManager] Stop ${stopId} (or equivalents) not fully hydrated. Fetching...`);
+            // console.log(`[FilterManager] Stop ${stopId} (or equivalents) not fully hydrated. Fetching...`);
             try {
                 // Fetch for ALL equivalent IDs that are not hydrated
                 const fetchPromises = Array.from(equivalentStopIdsSet).map(async oid => {
@@ -239,13 +239,13 @@ export class FilterManager {
         // Ensure Hydration (Critical for Fresh Data reload)
         const routesNeedingFetch = originRoutes.filter(r => !r._details || !r._details.patterns);
         if (routesNeedingFetch.length > 0) {
-            console.log(`[FilterManager] Refreshing detected ${routesNeedingFetch.length} unhydrated routes (Cache-Only). Hydrating...`);
+            // console.log(`[FilterManager] Refreshing detected ${routesNeedingFetch.length} unhydrated routes (Cache-Only). Hydrating...`);
             try {
                 await hydrateRouteDetails(routesNeedingFetch, { strategy: 'cache-only' });
             } catch (err) { console.error('[FilterManager] Refresh hydration error', err); }
         }
 
-        console.log(`[FilterManager] Refreshing. Origin: ${this.state.originId}, Targets: ${Array.from(this.state.targetIds).join(',')}. Routes to check: ${originRoutes.length}`);
+        // console.log(`[FilterManager] Refreshing. Origin: ${this.state.originId}, Targets: ${Array.from(this.state.targetIds).join(',')}. Routes to check: ${originRoutes.length}`);
 
         const commonRoutes = originRoutes.filter(r => {
             let routeStopsNormalized = null;
@@ -261,9 +261,40 @@ export class FilterManager {
                         const idxO = p.stops.findIndex(s => originIdsForRoutes.has(redirectMap.get(s.id) || s.id));
                         if (idxO === -1) return false;
 
+                        // Check if this is a loop route:
+                        // 1. CSV override flag isLoop
+                        // 2. Virtual split pattern (has _PART in suffix)
+                        const isLoopRoute = r._overrides?.isLoop === true ||
+                            r._overrides?.isLoop === 'true' ||
+                            (p.patternSuffix && p.patternSuffix.includes('_PART'));
+
                         // Normal case: target after origin
                         const idxT = p.stops.findIndex((s, i) => i > idxO && targetEq.has(redirectMap.get(s.id) || s.id));
                         if (idxT !== -1) {
+                            // Fix: If it's a virtual pattern (_PART), it's already sliced linearly. Treat as standard.
+                            if (isLoopRoute && !p.patternSuffix.includes('_PART')) {
+                                // Find terminus index: prefer CSV override, fall back to midpoint
+                                let terminusIdx = -1;
+                                const terminusStopId = r._overrides?.terminusStopIdOverride || r._overrides?.terminusStopId;
+                                if (terminusStopId) {
+                                    terminusIdx = p.stops.findIndex(s => {
+                                        const normId = redirectMap.get(s.id) || s.id;
+                                        return normId === terminusStopId || s.id === terminusStopId;
+                                    });
+                                }
+                                if (terminusIdx === -1) {
+                                    terminusIdx = Math.ceil(p.stops.length * 0.5) - 1;
+                                }
+
+                                // If origin is before terminus, target must be at or before terminus + 1
+                                if (idxO <= terminusIdx) {
+                                    if (idxT > terminusIdx + 1) {
+                                        return false; // Target is past terminus - not reachable via this route
+                                    }
+                                }
+                                // If origin is on return leg (after terminus), target must be after origin
+                                // (which is already satisfied by idxT > idxO check above)
+                            }
                             return true;
                         }
 
@@ -300,7 +331,7 @@ export class FilterManager {
             return globalMatch;
         });
 
-        console.log(`[FilterManager] Filtered Result: ${commonRoutes.length} routes.`);
+        // console.log(`[FilterManager] Filtered Result: ${commonRoutes.length} routes.`);
 
         this.state.filteredRoutes = commonRoutes.map(r => r.id);
         this.state.active = true;
@@ -381,20 +412,35 @@ export class FilterManager {
                         const idx = p.stops.findIndex(s => originIdsForRoutes.has(redirectMap.get(s.id) || s.id));
 
                         if (idx !== -1 && idx < p.stops.length - 1) {
-                            // Check if this is a loop route using the CSV override flag ONLY
-                            // No fallback detection - routes must be explicitly marked as isLoop in CSV
-                            const isLoopRoute = r._overrides?.isLoop === true || r._overrides?.isLoop === 'true';
+                            // Check if this is a loop route:
+                            // 1. CSV override flag isLoop
+                            // 2. Virtual split pattern (has _PART in suffix)
+                            const isLoopRoute = r._overrides?.isLoop === true ||
+                                r._overrides?.isLoop === 'true' ||
+                                (p.patternSuffix && p.patternSuffix.includes('_PART'));
 
-                            // For loop routes: only add stops from origin to just past the midpoint (terminal)
-                            // +2 because terminal stop also acts as starting stop, so you can go one more
+                            // For loop routes: only add stops from origin to just past the terminal
                             let stopsToAdd;
-                            if (isLoopRoute) {
-                                // Find the midpoint (approximately where the terminal is)
-                                const midpoint = Math.ceil(p.stops.length * 0.5);
+                            // Fix: If it's a virtual pattern (_PART), it's already sliced linearly. Treat as standard.
+                            if (isLoopRoute && !p.patternSuffix.includes('_PART')) {
+                                // Find terminus index: prefer CSV override, fall back to midpoint
+                                let terminusIdx = -1;
+                                const terminusStopId = r._overrides?.terminusStopIdOverride || r._overrides?.terminusStopId;
+                                if (terminusStopId) {
+                                    // Find the terminus stop in the pattern
+                                    terminusIdx = p.stops.findIndex(s => {
+                                        const normId = redirectMap.get(s.id) || s.id;
+                                        return normId === terminusStopId || s.id === terminusStopId;
+                                    });
+                                }
+                                // Fall back to midpoint if terminus not found
+                                if (terminusIdx === -1) {
+                                    terminusIdx = Math.ceil(p.stops.length * 0.5) - 1;
+                                }
 
-                                // If origin is before midpoint, add stops from origin to just past midpoint
-                                if (idx < midpoint) {
-                                    stopsToAdd = p.stops.slice(idx + 1, midpoint + 2);
+                                // If origin is before terminus, add stops from origin to terminus + 1
+                                if (idx <= terminusIdx) {
+                                    stopsToAdd = p.stops.slice(idx + 1, terminusIdx + 2);
                                 } else {
                                     // Origin is on return leg: add remaining stops (back to origin)
                                     stopsToAdd = p.stops.slice(idx + 1);
@@ -436,7 +482,7 @@ export class FilterManager {
     async recalculateFilter(currentStopId, lastArrivals, lastRoutes) {
         if (!this.state.picking && !this.state.active) return;
 
-        console.log('[FilterManager] Recalculating filter due to settings update');
+        // console.log('[FilterManager] Recalculating filter due to settings update');
 
         if (this.state.picking) {
             await this.updateReachableStops();
@@ -615,9 +661,9 @@ export class FilterManager {
         // Handle Glow Layer specifically
         if (this.map.getLayer('stops-layer-glow')) {
             // If picking/active, hide glow for dimmed stops
-            // High opacity IDs get normal glow (0.6 if dark mode, else 0)
+            // High opacity IDs get subtle glow (0.15 if dark mode to avoid blobby effect, else 0)
             // Dimmed IDs get 0
-            const glowOpacity = isDark ? 0.6 : 0;
+            const glowOpacity = isDark ? 0.15 : 0;
 
             const glowExpression = ['match', ['get', 'id']];
             if (editId) glowExpression.push([editId], 0);
@@ -770,7 +816,29 @@ export class FilterManager {
                     const idxO = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
                     if (idxO === -1) return false;
                     const idxT = p.stops.findIndex((s, i) => i > idxO && targetEq.has(redirectMap.get(s.id) || s.id));
-                    return idxT !== -1;
+                    if (idxT === -1) return false;
+
+                    // For loop routes: target must be before the terminus
+                    const isLoopRoute = r._overrides?.isLoop === true ||
+                        r._overrides?.isLoop === 'true' ||
+                        (p.patternSuffix && p.patternSuffix.includes('_PART'));
+                    if (isLoopRoute) {
+                        let terminusIdx = -1;
+                        const terminusStopId = r._overrides?.terminusStopIdOverride || r._overrides?.terminusStopId;
+                        if (terminusStopId) {
+                            terminusIdx = p.stops.findIndex(s => {
+                                const normId = redirectMap.get(s.id) || s.id;
+                                return normId === terminusStopId || s.id === terminusStopId;
+                            });
+                        }
+                        if (terminusIdx === -1) {
+                            terminusIdx = Math.ceil(p.stops.length * 0.5) - 1;
+                        }
+                        if (idxO <= terminusIdx && idxT > terminusIdx + 1) {
+                            return false; // Target is past terminus
+                        }
+                    }
+                    return true;
                 });
             } else if (r.stops) {
                 const routeStopsNormalized = r.stops.map(sid => redirectMap.get(sid) || sid);
