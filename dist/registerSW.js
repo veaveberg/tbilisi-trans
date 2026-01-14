@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/tbilisi-trans/sw.js', { scope: '/tbilisi-trans/' })})}
