@@ -25,21 +25,22 @@ export default {
 
         const targetUrl = targetBase + targetPath + targetSearch;
 
-        const newRequest = new Request(targetUrl, {
-            method: request.method,
-            headers: request.headers,
-            body: request.body
+        // Create fresh headers - minimal set that should work
+        const browserHeaders = new Headers({
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': targetBase + '/',
+            'Origin': targetBase,
+            'x-api-key': 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f',
         });
 
-        // Add required headers for the target API
-        newRequest.headers.set('Referer', targetBase + '/');
-        newRequest.headers.set('Origin', targetBase);
-
-        // Ensure we don't send host header of the worker
-        newRequest.headers.delete('Host');
-
         try {
-            const response = await fetch(newRequest);
+            const response = await fetch(targetUrl, {
+                method: request.method,
+                headers: browserHeaders,
+                body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined,
+            });
 
             // Recreate response to allow CORS
             const newResponse = new Response(response.body, response);

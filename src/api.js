@@ -122,6 +122,36 @@ const staticCache = {
 
 const staticStopToRoutes = new Map(); // stopId -> Set<routeId>
 const staticRouteDetails = new Map(); // routeId -> details
+
+export function invalidateRouteCache(routeId) {
+    if (routeId) {
+        staticRouteDetails.delete(routeId);
+        // Also clear v3Cache entries if any
+        v3Cache.patterns.delete(routeId);
+        v3Cache.stopPatterns.delete(routeId);
+        console.log(`[API] Invalidated cache for route: ${routeId}`);
+    } else {
+        staticRouteDetails.clear();
+        v3Cache.patterns.clear();
+        v3Cache.stopPatterns.clear();
+    }
+}
+
+export async function clearAllCaches() {
+    console.log('[API] Clearing all IndexedDB caches...');
+    try {
+        await db.clear();
+        invalidateRouteCache();
+        console.log('[API] Caches cleared successfully.');
+        return true;
+    } catch (e) {
+        console.error('[API] Failed to clear caches:', e);
+        return false;
+    }
+}
+
+// Expose to window for manual debugging
+window.clearAppCaches = clearAllCaches;
 let preloadPromise = null;
 
 export function preloadStaticRoutesDetails() {
@@ -218,6 +248,22 @@ export function preloadStaticRoutesDetails() {
     })();
 
     return preloadPromise;
+}
+
+/**
+ * Returns a list of route IDs that pass through the given stop, using the preloaded static index.
+ */
+export function getRoutesForStopStatic(stopId) {
+    if (!stopId) return [];
+
+    // Normalize stopId just in case
+    const tbilisiSource = sources.find(s => s.id === 'tbilisi');
+    const normId = processId(stopId, tbilisiSource);
+
+    const routeIds = staticStopToRoutes.get(normId) || staticStopToRoutes.get(stopId);
+    if (!routeIds) return [];
+
+    return Array.from(routeIds);
 }
 
 const pendingCacheRequests = new Map();
@@ -448,7 +494,26 @@ async function fetchStaticFallback(endpoint) {
                 const filename = `${sourceId}_routes_details_${locale}.json`;
                 const cache = await getStaticCache(sourceId, filename);
                 if (cache) {
-                    const routeData = cache[appRouteId] || cache[rawRouteId] || cache[rawRouteId.replace('1:', '')];
+                    // Fix: Also try with restored API ID for Rustavi routes
+                    const apiRouteId = restoreApiId(appRouteId, sourceConfig);
+                    const routeData = cache[appRouteId] || cache[rawRouteId] || cache[apiRouteId] || cache[rawRouteId.replace('1:', '')];
+
+                    // Static data uses _stopsOfPatterns format, not stops array
+                    if (routeData && routeData._stopsOfPatterns) {
+                        const patternSuffix = urlObj.searchParams.get('patternSuffix');
+                        // Filter stops that belong to the requested pattern suffix
+                        const stopsForPattern = routeData._stopsOfPatterns
+                            .filter(entry => !patternSuffix || entry.patternSuffixes?.includes(patternSuffix))
+                            .map(entry => entry.stop);
+
+                        if (stopsForPattern.length > 0) {
+                            const result = stopsForPattern.map(s => processStop(s, sourceConfig));
+                            result._sourceId = sourceId;
+                            return result;
+                        }
+                    }
+
+                    // Fallback: check for legacy stops array
                     if (routeData && routeData.stops) {
                         return routeData.stops.map(sid => processId(sid, sourceConfig));
                     }
@@ -719,6 +784,11 @@ function processStop(stop, source) {
 
 function processRoute(route, source) {
     if (!route) return route;
+
+    if (route.shortName === '497' || route.id === 'minibusR24335' || route.id === '497') {
+        console.log('[API DEBUG] processRoute 497 input:', { id: route.id, hasOv: !!route._overrides, fromConvex: !!route._debug });
+    }
+
     route.id = processId(route.id, source);
     route._source = source.id;
 
@@ -873,10 +943,12 @@ export async function fetchRoutes(options = {}) {
             const cached = await db.get(cacheKey);
             if (cached) {
                 const age = Date.now() - cached.timestamp;
-                // Reuse CACHE_DURATION logic
-                if (age < CACHE_DURATION && options.strategy !== 'network-only') {
+                const forceRefresh = import.meta.env.DEV && options.strategy !== 'cache-only';
+
+                if (age < CACHE_DURATION && options.strategy !== 'network-only' && !forceRefresh) {
                     data = cached.data;
                 }
+
                 if (options.strategy === 'cache-only' && cached) return cached.data.map(item => processRoute(item, source));
             }
         } catch (e) { console.warn('Cache Read Error', e); }
@@ -893,8 +965,23 @@ export async function fetchRoutes(options = {}) {
                 // Static Data usually preload EN.
                 // Let's stick to 'en' for structural data as per previous static files.
                 console.log(`[API DEBUG] fetchRoutes: Calling Convex for ${source.id}...`);
-                data = await convex.query("transit:getRoutes", { sourceId: source.id, locale: 'en' });
+                const response = await convex.query("transit:getRoutes", { sourceId: source.id, locale: 'en' });
+
+                if (response && response._convex_meta) {
+                    console.log(`[API DEBUG] fetchRoutes: Got response from Convex at ${new Date(response._convex_meta.timestamp).toLocaleTimeString()}. Overrides in DB: ${response._convex_meta.totalOverrides}`);
+                    data = response.routes;
+                } else {
+                    console.warn(`[API DEBUG] fetchRoutes: Convex returned unexpected format or no meta for ${source.id}`, response);
+                    data = Array.isArray(response) ? response : [];
+                }
+
                 console.log(`[API DEBUG] fetchRoutes: Got ${data?.length || 0} routes from Convex for ${source.id}`);
+
+                const r497 = data.find(r => r.id === 'minibusR24335' || r.id === '497' || r.shortName === '497');
+                if (r497) {
+                    console.log(`[API DEBUG] Route 497 raw data from Convex:`, JSON.stringify(r497));
+                }
+
                 await db.set(cacheKey, { timestamp: Date.now(), data });
             } catch (e) {
                 console.warn(`[API] Failed to fetch routes from Convex (${source.id}):`, e);
@@ -1078,11 +1165,9 @@ export async function fetchV3Routes() {
 export async function fetchRouteDetailsV3(routeId, options = {}) {
     if (!routeId) return null;
 
-    // 1. Try Memory/Static Cache first
-    if (staticRouteDetails.has(routeId)) {
-        return staticRouteDetails.get(routeId);
-    }
+    // console.log(`[API DEBUG] fetchRouteDetailsV3: ${routeId}`);
 
+    // Try Convex first (contains live overrides)
     try {
         // Determine source from options or infer from ID prefix
         let sourceId = options.sourceId || 'tbilisi';
@@ -1099,9 +1184,14 @@ export async function fetchRouteDetailsV3(routeId, options = {}) {
         // console.log(`[API DEBUG] fetchRouteDetailsV3: Calling Convex for ${routeId} (db: ${dbRouteId}, source: ${sourceId})...`);
         const data = await convex.query("transit:getRouteDetails", {
             sourceId: sourceId,
-            locale: 'en',
+            locale: options.locale || 'en',
             routeId: dbRouteId
         });
+
+        console.log(`[API Debug] fetchRouteDetailsV3(${routeId}) Convex data:`, data);
+        if (data && data._overrides) {
+            console.log(`[API Debug] fetchRouteDetailsV3(${routeId}) Found _overrides:`, data._overrides);
+        }
 
         if (data) {
             // Tag with source
@@ -1171,6 +1261,12 @@ export async function fetchRouteDetailsV3(routeId, options = {}) {
         console.warn(`[API] Convex fetchRouteDetailsV3 failed for ${routeId}`, e);
     }
 
+    // 2. Fallback to Memory/Static Cache (Preloaded Details)
+    if (staticRouteDetails.has(routeId)) {
+        // console.log(`[API] fetchRouteDetailsV3 fallback to static for ${routeId}`);
+        return staticRouteDetails.get(routeId);
+    }
+
     return null;
 }
 
@@ -1203,7 +1299,11 @@ export async function fetchRouteStopsV3(routeId, patternSuffix, options = {}) {
     const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${encodeURIComponent(id)}/stops?patternSuffix=${encodeURIComponent(realSuffix)}`;
     let raw;
     try {
-        raw = await fetchFromSmartSource(urlGen, routeId, options);
+        if (options.strategy === 'cache-only') {
+            raw = await fetchStaticFallback(urlGen(defaultSource, routeId));
+        } else {
+            raw = await fetchFromSmartSource(urlGen, routeId, options);
+        }
     } catch (e) {
         // API failed - try static fallback
         console.warn(`[API] Route stops API failed for ${routeId}, falling back to static data`);
@@ -1346,7 +1446,11 @@ export async function fetchRoutePolylineV3(routeId, patternSuffixes, options = {
     // 2. Fallback to legacy API if not found in local cache
     if (!polylineData) {
         try {
-            polylineData = await fetchFromSmartSource(urlGen, routeId, options);
+            if (options.strategy === 'cache-only') {
+                polylineData = await fetchStaticFallback(urlGen(defaultSource, routeId));
+            } else {
+                polylineData = await fetchFromSmartSource(urlGen, routeId, options);
+            }
         } catch (e) {
             console.error(`[API] Polyline API fetch failed for ${routeId}:`, e);
         }
@@ -1502,7 +1606,7 @@ const v3InFlight = {
     schedules: new Map()
 };
 
-export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = null) {
+export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = null, options = {}) {
     if (!routeId || !stopIds || stopIds.length === 0) return null;
 
     // 1. Get Patterns with Stops (Association Data)
@@ -1525,7 +1629,7 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
         // Fetch patterns if not in cache
         patterns = await (async () => {
             try {
-                const routeData = await fetchRouteDetailsV3(routeId, { strategy: 'cache-first' });
+                const routeData = await fetchRouteDetailsV3(routeId, { strategy: options.strategy === 'cache-only' ? 'cache-only' : 'cache-first' });
                 // console.log(`[Debug] details for ${routeId}:`, routeData ? 'Found' : 'Null');
                 routeDataForPrioritization = routeData;
                 if (routeData) {
@@ -1658,6 +1762,26 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
     }
 
     if (!schedule) {
+        if (options.strategy === 'cache-only') {
+            // Check static cache directly
+            const isRustavi = /^[rR]/.test(routeId) || routeId.toLowerCase().startsWith('rustavi:');
+            const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
+            const sourceConfig = sources.find(s => s.id === sourceId);
+            try {
+                const cache = await getStaticCache(sourceId, 'schedules');
+                if (cache) {
+                    const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
+                    const appRouteId = processId(routeId, sourceConfig);
+                    const apiRouteId = restoreApiId(appRouteId, sourceConfig);
+                    const keys = [`${appRouteId}_${safeSuffix}`, `${apiRouteId}_${safeSuffix}`, `${routeId}_${safeSuffix}`];
+                    for (const key of keys) {
+                        if (cache[key]) return cache[key];
+                    }
+                }
+            } catch (err) { }
+            return null;
+        }
+
         if (v3InFlight.schedules.has(cacheKey)) {
             schedule = await v3InFlight.schedules.get(cacheKey);
         } else {

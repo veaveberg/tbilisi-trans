@@ -43,7 +43,6 @@
     }
 }
 
-/* Global Sheet States (Unified Mobile & Desktop) */
 .panel.sheet-collapsed {
     transform: translateY(calc(100% - 80px - env(safe-area-inset-bottom))) translateZ(0);
 }
@@ -98,34 +97,61 @@
     background: transparent;
     padding: 20px;
     padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+    transition: none;
+    position: relative;
+    display: flex;
+    flex-direction: column;
 }
 
 .panel.sheet-half .panel-body {
-    max-height: calc(42dvh - 105px);
-    padding-bottom: 0;
+    /* Fluid height managed by ::after spacer */
 }
 
 .panel.sheet-half .panel-header {
     margin-bottom: 8px;
 }
 
-/* Fade at bottom of half-open panel */
-.panel.sheet-half::after {
+/* Vertical Spacer - Tied to the hidden portion of the sheet to allow reaching bottom items */
+.panel-body::after {
+    content: '';
+    display: block;
+    width: 100%;
+    height: var(--sheet-hidden-h, 0px);
+    min-height: var(--sheet-hidden-h, 0px);
+    flex-shrink: 0;
+    transition: height 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    pointer-events: none;
+}
+
+.panel.is-dragging .panel-body::after {
+    transition: none;
+}
+
+.panel.is-dragging .panel-body::after {
+    transition: none;
+}
+
+/* Fade at bottom - Fixed to the panel visible area */
+.panel::after {
     content: '';
     position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
-    height: 40px;
+    height: 100px;
     background: linear-gradient(to bottom, transparent, var(--bg-panel));
     pointer-events: none;
-    border-radius: 0 0 0 0;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    z-index: 10;
 }
 
-.panel.sheet-full .panel-body {
-    max-height: none;
-    padding-bottom: calc(env(safe-area-inset-bottom) + 20px);
+.panel.sheet-half::after,
+.panel.sheet-peek::after,
+.panel.sheet-collapsed::after {
+    opacity: 1;
 }
+
 
 .drag-handle,
 .panel-header {

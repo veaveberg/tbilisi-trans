@@ -923,16 +923,14 @@ export class FilterManager {
         if (!routes || routes.length === 0) return ['#888'];
 
         const colors = routes.map(r => {
-            let c = RouteFilterColorManager.pathColors.get(this.getPathSignature(r, originId, targetId));
+            const entry = RouteFilterColorManager.pathColors.get(this.getPathSignature(r, originId, targetId));
+            if (entry) return entry.color;
 
             // Removed fallback to getColorForRoute(r.id) because it persists old colors
             // even after pathColors GC, causing mismatch with main.js logic which wants fresh colors.
 
-            if (!c) {
-                console.warn('[FilterManager] Color not found for signature:', this.getPathSignature(r, originId, targetId), 'Assigning new.');
-                c = RouteFilterColorManager.assignNextColor(this.getPathSignature(r, originId, targetId), [r.id]);
-            }
-            return c;
+            console.warn('[FilterManager] Color not found for signature:', this.getPathSignature(r, originId, targetId), 'Assigning new.');
+            return RouteFilterColorManager.assignNextColor(this.getPathSignature(r, originId, targetId), [r.id]);
         });
 
         // Dedup colors

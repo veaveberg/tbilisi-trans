@@ -9,7 +9,14 @@ REMOTE="origin"
 TIMESTAMP=$(date +%Y%m%d-%H%M)
 BACKUP_BRANCH="main-backup-$TIMESTAMP"
 
-echo "🚀 Starting backup and push process for branch '$BRANCH'..."
+echo "🚀 Starting commit, backup and push process for branch '$BRANCH'..."
+
+# 0. Commit any local changes
+if [[ -n $(git status -s) ]]; then
+    echo "💾 Uncommitted changes detected. Committing..."
+    git add .
+    git commit -m "Deploy: $TIMESTAMP"
+fi
 
 # 1. Create a local backup branch
 echo "📦 Creating backup branch: $BACKUP_BRANCH"

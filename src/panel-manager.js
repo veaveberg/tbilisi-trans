@@ -44,6 +44,23 @@ export function setSheetState(panel, state) {
         panel.classList.remove('hidden');
         panel.style.display = '';
     }
+
+    // Initialize CSS variables for transition sync
+    // These are also defined in CSS, but setting them here ensures JS logic 
+    // (like startTransformY) is in sync with the visual state immediately.
+    const screenH = window.innerHeight;
+    const panelH = panel.offsetHeight || (screenH * 0.92);
+    let targetY = 0;
+
+    if (state === 'half') targetY = screenH * (1 - 0.42);
+    else if (state === 'peek') targetY = screenH * (1 - 0.25);
+    else if (state === 'collapsed') targetY = screenH - 80;
+    else if (state === 'full') targetY = 0;
+
+    const hiddenH = Math.max(0, (targetY + panelH) - screenH);
+
+    panel.style.setProperty('--sheet-y', `${targetY}px`);
+    panel.style.setProperty('--sheet-hidden-h', `${hiddenH}px`);
 }
 
 // Helper to toggle panel open class on body
@@ -112,6 +129,7 @@ export const snapSheet = (panel, delta, velocity) => {
 
     setSheetState(panel, targetState);
     panel.style.transform = ''; // Clear inline transform
+    // Note: --sheet-y and --sheet-hidden-h remain as set by setSheetState for the snap curve
 };
 
 export function setupPanelDrag(panelId) {
@@ -177,20 +195,28 @@ export function setupPanelDrag(panelId) {
 
         // If NOT yet dragging, check if we should switch to drag
         if (!isDragging) {
-            // Only care about Pull Down (delta > 0)
+            const isPartial = panel.classList.contains('sheet-half') ||
+                panel.classList.contains('sheet-peek') ||
+                panel.classList.contains('sheet-collapsed');
+
+            // 1. Pull Down at TOP -> Collapse
             if (delta > 0) {
                 const scrollable = panel.querySelector('.panel-body');
                 if (scrollable && scrollable.scrollTop <= 0) {
-                    // WE HIT TOP! Switch to drag.
                     isDragging = true;
-                    startTransformY = getTranslateY(); // Reset start to current position
-                    startY = clientY; // Reset
-
-                    panel.style.transition = 'none';
-                    panel.classList.add('is-dragging');
-
-                    if (e.cancelable) e.preventDefault();
                 }
+            }
+            // 2. Pull Up in Partial Mode -> Expand
+            else if (delta < 0 && isPartial) {
+                isDragging = true;
+            }
+
+            if (isDragging) {
+                startTransformY = getTranslateY();
+                startY = clientY;
+                panel.style.transition = 'none';
+                panel.classList.add('is-dragging');
+                if (e.cancelable) e.preventDefault();
             }
         }
 
@@ -199,7 +225,13 @@ export function setupPanelDrag(panelId) {
 
             const currentDelta = clientY - startY;
             const newTransformY = startTransformY + currentDelta;
+            const screenH = window.innerHeight;
+            const panelH = panel.offsetHeight;
+            const hiddenH = Math.max(0, (newTransformY + panelH) - screenH);
+
             panel.style.transform = `translateY(${newTransformY}px)`;
+            panel.style.setProperty('--sheet-y', `${newTransformY}px`);
+            panel.style.setProperty('--sheet-hidden-h', `${hiddenH}px`);
         }
     };
 

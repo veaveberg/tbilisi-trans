@@ -517,10 +517,36 @@ async function saveRouteOverrides() {
             applyBtn.classList.add('success');
         }
 
-        // Update the local route object's _overrides to reflect the change
+        // Format the _overrides object for the frontend (specifically getPatternHeadsign)
+        // to match the structure returned by the Convex backend.
+        const formatted = {
+            isLoop: editedOverrides.isLoop,
+            invertDirection: editedOverrides.invertDirection,
+            destinations: [
+                {
+                    headsign: {
+                        en: editedOverrides.dest0EnOverride || editedOverrides.dest0En,
+                        ka: editedOverrides.dest0KaOverride || editedOverrides.dest0Ka,
+                        ru: editedOverrides.dest0RuOverride || editedOverrides.dest0Ru
+                    }
+                },
+                {
+                    headsign: {
+                        en: editedOverrides.dest1EnOverride || editedOverrides.dest1En,
+                        ka: editedOverrides.dest1KaOverride || editedOverrides.dest1Ka,
+                        ru: editedOverrides.dest1RuOverride || editedOverrides.dest1Ru
+                    }
+                }
+            ]
+        };
+
         if (routeEditState.routeObj) {
-            routeEditState.routeObj._overrides = { ...editedOverrides };
+            routeEditState.routeObj._overrides = formatted;
         }
+
+        // Invalidate frontend cache to force re-fetch on next access (if user closes/reopens)
+        const { invalidateRouteCache } = await import('./api.js');
+        invalidateRouteCache(String(routeId));
 
         // Update csvOverrides to match edited (so dirty state is cleared)
         routeEditState.csvOverrides = JSON.parse(JSON.stringify(editedOverrides));

@@ -139,7 +139,7 @@ function proximitySort(features, point) {
 }
 
 export function setupHoverHandlers(context) {
-    const { ALL_STOP_LAYERS, setFilterOpacity, filterManager } = context;
+    const { ALL_STOP_LAYERS, setFilterOpacity, filterManager, updateConnectionLine } = context;
 
     map.on('mousemove', ALL_STOP_LAYERS, (e) => {
         if (window.ignoreMapClicks || window.isPickModeActive) return;
@@ -169,7 +169,6 @@ export function setupHoverHandlers(context) {
                 if (hoverTimeout) clearTimeout(hoverTimeout);
                 // Delay clearing to avoid flicker when moving between stops
                 hoverTimeout = setTimeout(() => {
-                    const { updateConnectionLine } = context;
                     if (updateConnectionLine && filterManager.state.picking) {
                         updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
                     }
@@ -184,7 +183,6 @@ export function setupHoverHandlers(context) {
             const selectedFeature = sorted ? sorted[0] : null;
 
             if (selectedFeature) {
-                const { updateConnectionLine } = context;
                 if (updateConnectionLine && filterManager.state.picking) {
                     // Show preview line to this stop
                     updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, true, selectedFeature.properties.id);
@@ -227,6 +225,9 @@ export function setupHoverHandlers(context) {
         map.getCanvas().style.cursor = '';
         if (hoverTimeout) clearTimeout(hoverTimeout);
         hoverTimeout = setTimeout(() => {
+            if (updateConnectionLine && filterManager && filterManager.state.picking) {
+                updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
+            }
             lastHoveredStopId = null;
             updateStopHoverEffects(null);
             if (setFilterOpacity) setFilterOpacity(false);

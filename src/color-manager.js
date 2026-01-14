@@ -14,7 +14,7 @@ export const RouteFilterColorManager = {
         '#8F489C', // purple
         '#FBA919'  // physalis
     ],
-    pathColors: new Map(), // signature -> color
+    pathColors: new Map(), // signature -> { color, routeIds }
     routeColors: new Map(), // routeId -> color
     colorQueue: [],
     queueIndex: 0,
@@ -47,13 +47,13 @@ export const RouteFilterColorManager = {
         // If already assigned, return existing
         if (this.pathColors.has(signature)) {
             const existing = this.pathColors.get(signature);
-            routeIds.forEach(rid => this.routeColors.set(rid, existing));
-            return existing;
+            routeIds.forEach(rid => this.routeColors.set(rid, existing.color));
+            return existing.color;
         }
 
         const color = this.getNextColor(); // Get current peek color
         // console.log(`[ColorManager] Assigning NEW color ${color} to signature ${signature}. Path Queue Index: ${this.queueIndex} -> ${(this.queueIndex + 1) % this.colorQueue.length}`);
-        this.pathColors.set(signature, color);
+        this.pathColors.set(signature, { color, routeIds });
         routeIds.forEach(rid => this.routeColors.set(rid, color));
 
         // Advance Pointer
@@ -69,5 +69,26 @@ export const RouteFilterColorManager = {
 
     getColorForRoute(routeId) {
         return this.routeColors.get(routeId);
+    },
+
+    /**
+     * Garbage collect signatures and rebuild routeColors map.
+     * @param {Set<string>} activeSignatures Set of signatures that should remain active.
+     */
+    gc(activeSignatures) {
+        let changed = false;
+        for (const sig of this.pathColors.keys()) {
+            if (!activeSignatures.has(sig)) {
+                this.pathColors.delete(sig);
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this.routeColors.clear();
+            for (const data of this.pathColors.values()) {
+                data.routeIds.forEach(rid => this.routeColors.set(rid, data.color));
+            }
+        }
     }
 };

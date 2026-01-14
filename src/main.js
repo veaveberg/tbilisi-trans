@@ -84,6 +84,13 @@ let isRouterLogicExecuted = false;
 
 function onRoutesLoaded(data) {
     if (!data) return;
+
+    // Deep Check for 497
+    const r497 = data.find(r => r.shortName === '497' || r.id.includes('minibusR24335'));
+    if (r497) {
+        console.log('[API DEBUG] onRoutesLoaded 497 check:', { id: r497.id, hasOv: !!r497._overrides });
+    }
+
     allRoutes = data; // Always update global data
     applyRouteOverrides(); // Apply overrides immediately after loading
 
@@ -122,12 +129,8 @@ function onRoutesLoaded(data) {
     }
 }
 
-// 1. Fast Load (Cache/Static) - Instant UI
+// Consolidated loading logic is now inside map.on('load') to avoid race conditions.
 const staticPreloadPromise = api.preloadStaticRoutesDetails(); // Preload for filtering
-api.fetchRoutes({ strategy: 'cache-only' }).then(onRoutesLoaded);
-
-// 2. Fresh Load (Network) - Updates Data/UI
-api.fetchRoutes().then(onRoutesLoaded);
 
 // Update URL hash when map movement ends (including inertia)
 const updateURLHash = () => {
@@ -512,42 +515,34 @@ map.on('load', async () => {
         themeManager.setTheme(newTheme);
     });
 
-    // A. FAST PATH (Cache/Static) - Instant Load
-    const loadFast = async () => {
+    // Unified Loading Path
+    const loadAllAtOnce = async () => {
+        // 1. FAST PATH
         try {
-            // console.log('[Fast Load] Attempting...');
             const [stops, routes] = await Promise.all([
                 api.fetchStops({ strategy: 'cache-only' }),
                 api.fetchRoutes({ strategy: 'cache-only' })
             ]);
-            // console.log(`[Fast Load] Result - Stops: ${stops ? stops.length : 'MISSING'}, Routes: ${routes ? routes.length : 'MISSING'}`);
-
             if (stops && routes) {
-                // console.log('[Map] Loading FAST data...');
+                console.log('[Load] Fast data loaded');
                 await initializeMapData(stops, routes);
-            } else {
-                // console.log('[Fast Load] Skipped - missing complete data.');
+                onRoutesLoaded(routes);
             }
         } catch (e) { console.warn('Fast Load Failed', e); }
-    };
 
-    // B. FRESH PATH (Network) - Updates over time
-    const loadFresh = async () => {
+        // 2. FRESH PATH
         try {
-            // console.log('[Fresh Load] Starting...');
             const [stops, routes] = await Promise.all([
                 api.fetchStops(),
                 api.fetchRoutes()
             ]);
-            // console.log(`[Fresh Load] Result - Stops: ${stops ? stops.length : 'MISSING'}, Routes: ${routes ? routes.length : 'MISSING'}`);
-
-            // console.log('[Map] Loading FRESH data...');
+            console.log('[Load] Fresh data loaded');
             await initializeMapData(stops, routes);
+            onRoutesLoaded(routes);
         } catch (e) { console.error('Fresh Load Failed', e); }
     };
 
-    await loadFast();
-    loadFresh();
+    loadAllAtOnce();
     loadMinibusSegments();
 });
 
@@ -1137,6 +1132,51 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     setSheetState(panel, 'half');
     updateBackButtons();
 
+    // --- PHASE 1: Optimistic Render (Static/Cached) ---
+    try {
+        // Fetch routes from static index and schedule in parallel
+        const staticIds = api.getRoutesForStopStatic(stop.id);
+        const optimisticArrivalsPromise = arrivals.fetchArrivalsOptimistic(stop.id);
+
+        // Reset state for new stop
+        window.lastRoutes = [];
+        window.lastArrivals = [];
+
+        // If we have static route IDs, we can at least show the chips instantly
+        if (staticIds.length > 0) {
+            const optRoutes = [];
+            const seen = new Set();
+            staticIds.forEach(rid => {
+                if (!seen.has(rid)) {
+                    seen.add(rid);
+                    const r = allRoutes.find(route => route.id === rid);
+                    if (r) optRoutes.push(r);
+                }
+            });
+            window.lastRoutes = optRoutes;
+            arrivals.renderArrivals([], stop.id);
+        }
+
+        // Once schedule is ready, re-render optimistically
+        const optimisticArrivals = await optimisticArrivalsPromise;
+        if (optimisticArrivals && optimisticArrivals.length > 0) {
+            window.lastArrivals = optimisticArrivals;
+            // Update lastRoutes too if arrivals found new routes (unlikely but possible)
+            const seen = new Set(window.lastRoutes.map(r => r.id));
+            optimisticArrivals.forEach(a => {
+                if (!seen.has(a.id)) {
+                    seen.add(a.id);
+                    const r = allRoutes.find(route => route.id === a.id);
+                    if (r) window.lastRoutes.push(r);
+                }
+            });
+            arrivals.renderArrivals(optimisticArrivals, stop.id);
+        }
+    } catch (e) {
+        console.warn('[Optimistic] Fetch failed:', e);
+    }
+
+    // --- PHASE 2: Live Fetch (Network) ---
     try {
         const subIds = mergeSourcesMap.get(stop.id) || [];
         const idsAndParent = [stop.id, ...subIds];
@@ -1182,7 +1222,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         const allFetchedRoutes = results.flat();
         // Debug: check if Rustavi routes are in fetched results
         if (stop.id === '810') {
-            console.log(`[Debug 810] Fetched ${allFetchedRoutes.length} routes.Rustavi routes: `,
+            console.log(`[Debug 810] Fetched ${allFetchedRoutes.length} routes. Rustavi routes: `,
                 allFetchedRoutes.filter(r => ['20', '21', '22', '23', '24', '10'].includes(String(r.shortName))).map(r => r.shortName));
         }
         stopToRoutesMap.set(stop.id, allFetchedRoutes);
@@ -1191,7 +1231,10 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         window.arrivalsDataTimestamp = Date.now(); // Track fetch time for staleness check
         arrivals.renderArrivals(arrivalsData, stop.id);
     } catch (error) {
-        listEl.innerHTML = '<div class="error">Failed to load arrivals</div>';
+        // If we already have optimistic data, don't show error unless it's a real failure and we have nothing
+        if (!window.lastArrivals || window.lastArrivals.length === 0) {
+            listEl.innerHTML = '<div class="error">Failed to load arrivals</div>';
+        }
         console.error(error);
     }
 }
@@ -1235,23 +1278,32 @@ function getRouteDisplayColor(route) {
 function getPatternHeadsign(route, directionIndex, defaultHeadsign) {
     if (!route) return defaultHeadsign;
 
-    // 1. Resolve Route & Overrides
-    const matchedRoute = allRoutes.find(r => r.id === route.id || r.shortName === route.shortName);
-    const overrides = (matchedRoute && matchedRoute._overrides) ? matchedRoute._overrides : route._overrides;
+    // DEBUG logs
+    console.log(`[HeadsignDebug] Route ${route.shortName} (${route.id}) Index ${directionIndex}`);
+    console.log(`[HeadsignDebug] Route object has _overrides:`, !!route._overrides);
 
-    // DEBUG for route 466
-    if (route.shortName === '466') {
-        console.log('[HeadsignDebug] Route 466 called with directionIndex:', directionIndex);
-        console.log('[HeadsignDebug] Has overrides:', !!overrides);
-        console.log('[HeadsignDebug] Destinations:', overrides?.destinations);
-        console.log('[HeadsignDebug] Dest for direction:', overrides?.destinations?.[directionIndex]);
+    if (route.shortName === '497') {
+        const global497 = allRoutes.find(r => r.shortName === '497');
+        console.log(`[HeadsignDebug] Global 497 found:`, !!global497);
+        if (global497) console.log(`[HeadsignDebug] Global 497 has _overrides:`, !!global497._overrides);
     }
+    // Priority: 1. Match by full ID 2. Match by normalized ID 3. Match by shortName
+    const norm = (id) => String(id || '').replace(/^\d+:/, '').replace(/^[rR]/, '');
+    const matchedRoute = allRoutes.find(r => String(r.id) === String(route.id)) ||
+        allRoutes.find(r => norm(r.id) === norm(route.id)) ||
+        allRoutes.find(r => String(r.shortName) === String(route.shortName));
+
+    const overrides = (matchedRoute && matchedRoute._overrides) ? matchedRoute._overrides : route._overrides;
 
     if (overrides && overrides.destinations) {
         const destObj = overrides.destinations[directionIndex];
         if (destObj && destObj.headsign) {
             const locale = new URLSearchParams(window.location.search).get('locale') || 'en';
-            return destObj.headsign[locale] || destObj.headsign.en || destObj.headsign.ka || defaultHeadsign;
+            const res = destObj.headsign[locale] || destObj.headsign.en || destObj.headsign.ka || defaultHeadsign;
+            if (res && res !== defaultHeadsign) {
+                // console.log(`[HeadsignDebug] Applied override: "${defaultHeadsign}" -> "${res}"`);
+            }
+            return res;
         }
     }
 
@@ -1908,436 +1960,328 @@ async function updateRouteView(route, options = {}) {
             }
         });
 
-        // 1. Fetch Route Details (v3) to get patterns
-        const routeDetails = await api.fetchRouteDetailsV3(route.id, { strategy: 'cache-first' });
-        if (requestId !== lastRouteUpdateId) return; // Stale check
-        const patterns = routeDetails.patterns;
+        // Helper to perform the actual rendering based on fetched data
+        const renderPhase = async (isOptimistic = false) => {
+            const strategy = isOptimistic ? 'cache-only' : 'cache-first';
 
-        // --- RESTORED LOOP LOGIC ---
-        // Pre-process patterns to split loops into virtual directions
-        const processedPatterns = [];
-        for (const p of patterns) {
-            const stops = await api.fetchRouteStopsV3(route.id, p.patternSuffix);
-            if (RouteGeometry.isLoop(stops, route.shortName)) {
-                // console.log(`[Router] Loop detected for ${route.shortName} (${p.patternSuffix}) - Splitting...`);
-                // Split into virtual patterns (Outbound / Inbound)
-                const virtuals = RouteGeometry.generateVirtualPatterns(p, stops, route.longName);
-                processedPatterns.push(...virtuals);
-            } else {
-                processedPatterns.push(p);
-            }
-        }
-        // Use processed patterns (splice into original array to keep reference if needed, or just reassign)
-        routeDetails.patterns = processedPatterns;
-        // Update local reference
-        patterns.length = 0;
-        patterns.push(...processedPatterns);
-        // ---------------------------
-
-        // Auto-Direction Logic:
-        let directionFound = false;
-
-        // 1. Initial State override (from URL)
-        if (options.initialDirectionIndex !== undefined && patterns[options.initialDirectionIndex]) {
-            currentPatternIndex = options.initialDirectionIndex;
-            directionFound = true;
-            console.log(`[Router] Restoring direction index: ${currentPatternIndex}`);
-        }
-        // 2. Try to match by Headsign (most accurate for specific arrival clicks)
-        else if (options.targetHeadsign && patterns.length > 0) {
-            const normalizedTarget = options.targetHeadsign.toLowerCase().trim();
-            // console.log(`[Router] Attempting Headsign Match: "${normalizedTarget}" vs`, patterns.map(p => `"${p.headsign}"`));
-
-            const matchedIndex = patterns.findIndex(p =>
-                p.headsign && p.headsign.toLowerCase().trim() === normalizedTarget
-            );
-            if (matchedIndex !== -1) {
-                currentPatternIndex = matchedIndex;
-                directionFound = true;
-                console.log(`[Debug] Matched pattern by headsign: ${options.targetHeadsign} -> Index ${matchedIndex}`);
-            }
-        }
-
-        // 2. Fallback: Find pattern that contains the fromStopId (if no headsign match or not provided)
-        if (!directionFound && options.fromStopId && patterns.length > 0) {
+            // 1. Fetch Route Details (v3) to get patterns
+            let routeDetails;
             try {
-                const stopsPromises = patterns.map(p => api.fetchRouteStopsV3(route.id, p.patternSuffix).then(stops => ({
-                    suffix: p.patternSuffix,
-                    stops: stops
-                })));
+                routeDetails = await api.fetchRouteDetailsV3(route.id, { strategy });
+            } catch (e) {
+                if (!isOptimistic) throw e;
+                return false;
+            }
+            if (!routeDetails || requestId !== lastRouteUpdateId) return false;
 
-                const allStopsData = await Promise.all(stopsPromises);
-                if (requestId !== lastRouteUpdateId) return; // Stale check
+            const patterns = routeDetails.patterns;
 
-                // Find index of pattern that has the stop
-                const matchedIndex = patterns.findIndex(p => {
-                    const data = allStopsData.find(d => d.suffix === p.patternSuffix);
-                    return data && data.stops.some(s => {
-                        const sId = String(s.id || s.stopId);
-                        const normId = redirectMap.get(sId) || sId;
-                        // Check against all equivalent stops of fromStopId
-                        const equivs = getEquivalentStops(options.fromStopId);
-                        return equivs.includes(normId);
-                    });
-                });
+            // --- RESTORED LOOP LOGIC ---
+            // Pre-process patterns to split loops into virtual directions
+            const processedPatterns = [];
+            for (const p of patterns) {
+                const stops = await api.fetchRouteStopsV3(route.id, p.patternSuffix, { strategy });
+                if (RouteGeometry.isLoop(stops, route.shortName)) {
+                    const virtuals = RouteGeometry.generateVirtualPatterns(p, stops, route.longName);
+                    processedPatterns.push(...virtuals);
+                } else {
+                    processedPatterns.push(p);
+                }
+            }
+            routeDetails.patterns = processedPatterns;
+            // ---------------------------
 
+            // Auto-Direction Logic:
+            let directionFound = false;
+            if (options.initialDirectionIndex !== undefined && processedPatterns[options.initialDirectionIndex]) {
+                currentPatternIndex = options.initialDirectionIndex;
+                directionFound = true;
+            } else if (options.targetHeadsign && processedPatterns.length > 0) {
+                const normalizedTarget = options.targetHeadsign.toLowerCase().trim();
+                const matchedIndex = processedPatterns.findIndex(p =>
+                    p.headsign && p.headsign.toLowerCase().trim() === normalizedTarget
+                );
                 if (matchedIndex !== -1) {
                     currentPatternIndex = matchedIndex;
                     directionFound = true;
                 }
-            } catch (e) {
-                console.warn('[Router] Failed to auto-detect direction from stop', e);
             }
-        } else {
-            if (!patterns[currentPatternIndex]) {
+
+            if (!directionFound && options.fromStopId && processedPatterns.length > 0) {
+                try {
+                    const stopsPromises = processedPatterns.map(p => api.fetchRouteStopsV3(route.id, p.patternSuffix, { strategy }).then(stops => ({
+                        suffix: p.patternSuffix,
+                        stops: stops
+                    })));
+
+                    const allStopsData = await Promise.all(stopsPromises);
+                    if (requestId !== lastRouteUpdateId) return false;
+
+                    const matchedIndex = processedPatterns.findIndex(p => {
+                        const data = allStopsData.find(d => d.suffix === p.patternSuffix);
+                        return data && data.stops.some(s => {
+                            const sId = String(s.id || s.stopId);
+                            const normId = redirectMap.get(sId) || sId;
+                            const equivs = getEquivalentStops(options.fromStopId);
+                            return equivs.includes(normId);
+                        });
+                    });
+
+                    if (matchedIndex !== -1) {
+                        currentPatternIndex = matchedIndex;
+                        directionFound = true;
+                    }
+                } catch (e) { }
+            }
+
+            if (!processedPatterns[currentPatternIndex]) {
                 currentPatternIndex = 0;
             }
-        }
 
-        // Handle Direction Switching Button
-        const switchBtn = document.getElementById('switch-direction');
-        const currentPattern = patterns[currentPatternIndex];
+            const currentPattern = processedPatterns[currentPatternIndex];
+            if (!currentPattern) return false;
 
-        // Fetch stops for current pattern to get origin → destination
-        const currentPatternStops = await api.fetchRouteStopsV3(route.id, currentPattern.patternSuffix);
-        if (requestId !== lastRouteUpdateId) return; // Stale check
+            // Fetch stops for current pattern to get origin → destination
+            const currentPatternStops = await api.fetchRouteStopsV3(route.id, currentPattern.patternSuffix, { strategy });
+            if (requestId !== lastRouteUpdateId) return false;
 
-        const destinationHeadsign = getPatternHeadsign(route, currentPatternIndex, currentPattern.headsign);
-        let originHeadsign = '';
-        if (patterns.length > 1) {
-            // Find the other pattern to use its headsign as the origin
-            const otherIdx = patterns.findIndex((p, idx) => idx !== currentPatternIndex);
-            if (otherIdx !== -1) {
-                originHeadsign = getPatternHeadsign(route, otherIdx, patterns[otherIdx].headsign);
-            }
-        }
-
-        if (originHeadsign && destinationHeadsign && originHeadsign !== destinationHeadsign) {
-            document.getElementById('route-info-text').innerHTML = `
-                <div class="origin">${originHeadsign} →</div>
-                <div class="destination">${destinationHeadsign}</div>
-            `;
-        } else {
-            document.getElementById('route-info-text').innerHTML = `
-                <div class="destination">${destinationHeadsign || route.longName}</div>
-            `;
-        }
-
-        if (patterns.length > 1) {
-            switchBtn.classList.remove('hidden');
-            switchBtn.onclick = () => {
-                currentPatternIndex = (currentPatternIndex + 1) % patterns.length;
-                updateRouteView(route, { preserveBounds: true }); // Keep bounds when switching directions
-
-                if (window.currentStopId) {
-                    Router.updateNested(window.currentStopId, route.shortName, currentPatternIndex);
-                } else {
-                    Router.updateRoute(route.shortName, currentPatternIndex);
+            const destinationHeadsign = getPatternHeadsign(route, currentPatternIndex, currentPattern.headsign);
+            let originHeadsign = '';
+            if (processedPatterns.length > 1) {
+                const otherIdx = processedPatterns.findIndex((p, idx) => idx !== currentPatternIndex);
+                if (otherIdx !== -1) {
+                    originHeadsign = getPatternHeadsign(route, otherIdx, processedPatterns[otherIdx].headsign);
                 }
-            };
-        } else {
-            switchBtn.classList.add('hidden');
-        }
+            }
 
-        // --- FULL SCHEDULE DISPLAY ---
-        const routeBodyEl = document.getElementById('route-info-body');
-        if (options.fromStopId) {
-            // Check if current pattern contains the fromStopId
-            // Reuse currentPatternStops fetched above (line 2248)
-            const hasStop = currentPatternStops && currentPatternStops.some(s => {
-                const sId = String(s.id);
-                // Simple ID check + Equivalent ID check
-                if (sId === String(options.fromStopId)) return true;
-                const normalize = id => String(id).replace(/^[rR]/, '').replace(/^\d+:/, '');
-                if (normalize(sId) === normalize(options.fromStopId)) return true;
-                return false;
-            });
-
-            if (!hasStop) {
-                routeBodyEl.innerHTML = `
-                    <div class="empty warning">
-                        <div class="icon">⚠️</div>
-                        <div>The selected stop is in the other direction.</div>
-                        <div class="sub">Switch direction to view schedule.</div>
-                    </div>`;
+            if (originHeadsign && destinationHeadsign && originHeadsign !== destinationHeadsign) {
+                document.getElementById('route-info-text').innerHTML = `
+                    <div class="origin">${originHeadsign} →</div>
+                    <div class="destination">${destinationHeadsign}</div>
+                `;
             } else {
-                routeBodyEl.innerHTML = '<div class="loading">Loading schedule...</div>';
-                arrivals.getFullScheduleGrouped(route.shortName, options.fromStopId, route.id, currentPattern.patternSuffix).then(grouped => {
-                    if (requestId !== lastRouteUpdateId) return;
-                    if (!grouped || Object.keys(grouped).length === 0) {
-                        routeBodyEl.innerHTML = '<div class="empty">No schedule data available</div>';
-                        return;
+                document.getElementById('route-info-text').innerHTML = `
+                    <div class="destination">${destinationHeadsign || route.longName}</div>
+                `;
+            }
+
+            const switchBtn = document.getElementById('switch-direction');
+            if (processedPatterns.length > 1) {
+                switchBtn.classList.remove('hidden');
+                switchBtn.onclick = () => {
+                    currentPatternIndex = (currentPatternIndex + 1) % processedPatterns.length;
+                    updateRouteView(route, { preserveBounds: true });
+                    if (window.currentStopId) {
+                        Router.updateNested(window.currentStopId, route.shortName, currentPatternIndex);
+                    } else {
+                        Router.updateRoute(route.shortName, currentPatternIndex);
                     }
-                    const currentHour = new Date().getHours();
-                    let html = '<div class="route-full-schedule">';
-                    Object.keys(grouped).sort((a, b) => parseInt(a) - parseInt(b)).forEach(hour => {
-                        const isCurrentHour = parseInt(hour) === currentHour;
-                        html += `
-                            <div class="schedule-hour-row${isCurrentHour ? ' current-hour' : ''}">
-                                <div class="hour-label">${hour}:</div>
-                                <div class="minutes-list">${grouped[hour].join(' ')}</div>
-                            </div>`;
-                    });
-                    html += '</div>';
-                    routeBodyEl.innerHTML = html;
-                }).catch(err => {
-                    console.warn('[Schedule] Failed to load full schedule', err);
-                    routeBodyEl.innerHTML = '<div class="empty">Failed to load schedule</div>';
-                });
-            }
-        } else {
-            routeBodyEl.innerHTML = '';
-        }
-
-
-        if (requestId !== lastRouteUpdateId) return; // Stale check before heavy map ops
-
-
-        const patternSuffix = currentPattern.patternSuffix;
-
-        // 2. Fetch Polylines (Current & Ghost)
-        const allSuffixes = patterns.map(p => p.patternSuffix).join(',');
-        const polylineData = await api.fetchRoutePolylineV3(route.id, allSuffixes, { strategy: 'cache-first' });
-        if (!polylineData) {
-            console.warn('[Route] No polyline data available (offline?)');
-            return;
-        }
-        if (requestId !== lastRouteUpdateId) return; // Stale check
-
-        // Plot Ghost Route (Other patterns)
-        patterns.forEach(p => {
-            if (p.patternSuffix !== patternSuffix) {
-                const ghostEntry = polylineData[p.patternSuffix];
-                let ghostCoords = null;
-
-                if (Array.isArray(ghostEntry)) {
-                    ghostCoords = ghostEntry;
-                } else if (ghostEntry && ghostEntry.encodedValue) {
-                    ghostCoords = api.decodePolyline(ghostEntry.encodedValue);
-                }
-
-                if (ghostCoords) {
-                    // Check if source/layer already exists to prevent dupes/errors if re-running
-                    const ghostId = `route-ghost-${p.patternSuffix}`;
-                    if (!map.getSource(ghostId)) {
-                        map.addSource(ghostId, {
-                            type: 'geojson',
-                            data: {
-                                type: 'Feature',
-                                geometry: { type: 'LineString', coordinates: ghostCoords }
-                            }
-                        });
-                        map.addLayer({
-                            id: ghostId,
-                            type: 'line',
-                            source: ghostId,
-                            layout: { 'line-join': 'round', 'line-cap': 'round' },
-                            paint: {
-                                'line-color': getRouteDisplayColor(route),
-                                'line-width': 4,
-                                'line-opacity': 0.3, // 30% opacity for ghost route
-                                'line-emissive-strength': 1
-                            }
-                        }, 'stops-layer'); // Below stops
-                    }
-                }
-            }
-        });
-
-        // Plot Current Route
-        const currEntry = polylineData[patternSuffix];
-        let coordinates = null;
-
-        if (Array.isArray(currEntry)) {
-            coordinates = currEntry;
-        } else if (currEntry && currEntry.encodedValue) {
-            coordinates = api.decodePolyline(currEntry.encodedValue);
-        }
-
-        if (coordinates) {
-            if (map.getSource('route')) {
-                map.getSource('route').setData({
-                    type: 'Feature',
-                    geometry: { type: 'LineString', coordinates: coordinates }
-                });
-            } else {
-                map.addSource('route', {
-                    type: 'geojson',
-                    data: {
-                        type: 'Feature',
-                        geometry: { type: 'LineString', coordinates: coordinates }
-                    }
-                });
-            }
-
-            // Map View: Center on stop if coming from deep link, fit route if standalone, otherwise gentle zoom
-            if (options.fitToRoute && coordinates.length > 0) {
-                // Standalone route deep link: fit the entire route in view
-                const bounds = new mapboxgl.LngLatBounds();
-                coordinates.forEach(coord => bounds.extend(coord));
-
-                // Get panel height for bottom padding, capped
-                const panel = document.getElementById('route-info');
-                const rawPanelHeight = panel ? panel.offsetHeight : 200;
-                const maxPadding = Math.min(window.innerHeight * 0.35, 250);
-                const panelHeight = Math.min(rawPanelHeight, maxPadding);
-
-                console.log(`[DeepLink Route] Fitting route bounds. Panel: ${rawPanelHeight}px, capped to: ${panelHeight}px`);
-
-                // Temporarily restore original methods if overridden
-                const origMethods = window._originalMapMethods;
-                if (origMethods) {
-                    map.flyTo = origMethods.flyTo;
-                    map.jumpTo = origMethods.jumpTo;
-                    map.easeTo = origMethods.easeTo;
-                }
-
-                map.fitBounds(bounds, {
-                    padding: {
-                        top: 80,
-                        bottom: panelHeight + 40,
-                        left: 40,
-                        right: 40
-                    },
-                    maxZoom: 15,
-                    duration: 1200
-                });
-
-                // Re-apply no-op overrides
-                if (origMethods) {
-                    map.flyTo = () => map;
-                    map.jumpTo = () => map;
-                    map.easeTo = () => map;
-                }
-            } else if (options.centerOnStop && options.centerOnStop.lat && options.centerOnStop.lon) {
-                // Deep link from stop: fly to the stop location at route-appropriate zoom
-                const offsetY = -(window.innerHeight * 0.1);
-                map.flyTo({
-                    center: [options.centerOnStop.lon, options.centerOnStop.lat],
-                    zoom: 14, // Route-appropriate zoom (slightly zoomed out from stop's default 16)
-                    offset: [0, offsetY],
-                    duration: 1500
-                });
-            } else if (map.getZoom() > 14.5) {
-                // Normal click: Gentle Zoom Out (No Panning)
-                map.easeTo({ zoom: 14, duration: 800 });
-            }
-            // else: Do nothing (preserve center and zoom)
-        }
-
-        // 3. Fetch Stops for "Bumps" / Beads
-        const stopsData = await api.fetchRouteStopsV3(route.id, patternSuffix, { strategy: 'cache-first' });
-        if (requestId !== lastRouteUpdateId) return; // Stale check
-
-        const stopsGeoJSON = {
-            type: 'FeatureCollection',
-            features: stopsData.map(stop => {
-                // Apply Merges & Overrides
-                const sId = String(stop.id);
-                const normId = redirectMap.get(sId) || sId;
-                // Look up in allStops to get overridden coordinates
-                const existingStop = allStops.find(s => s.id === normId);
-                const lat = existingStop ? existingStop.lat : stop.lat;
-                const lon = existingStop ? existingStop.lon : stop.lon;
-
-                return {
-                    type: 'Feature',
-                    geometry: { type: 'Point', coordinates: [lon, lat] },
-                    properties: { name: stop.name }
                 };
-            })
-        };
-
-        map.addSource('route-stops', { type: 'geojson', data: stopsGeoJSON });
-
-        // Route Line Layer (Bold, Top)
-        map.addLayer({
-            id: 'route',
-            type: 'line',
-            source: 'route',
-            layout: {
-                'line-join': 'round',
-                'line-cap': 'round'
-            },
-            paint: {
-                'line-color': getRouteDisplayColor(route),
-                'line-width': 12, // Extra Bolder line
-                'line-opacity': 0.8,
-                'line-emissive-strength': 1
+            } else {
+                switchBtn.classList.add('hidden');
             }
-        }); // Removing beforeId to place on top
 
-        // Route Stops (White "Beads")
-        map.addLayer({
-            id: 'route-stops',
-            type: 'circle',
-            source: 'route-stops',
-            paint: {
-                'circle-color': '#ffffff', // White
-                'circle-radius': 3, // Small
-                'circle-stroke-width': 0,
-                'circle-opacity': 1,
-                'circle-emissive-strength': 1
-            }
-        });
+            // --- FULL SCHEDULE DISPLAY ---
+            const routeBodyEl = document.getElementById('route-info-body');
+            if (options.fromStopId) {
+                const hasStop = currentPatternStops && currentPatternStops.some(s => {
+                    const sId = String(s.id);
+                    if (sId === String(options.fromStopId)) return true;
+                    const normalize = id => String(id).replace(/^[rR]/, '').replace(/^\d+:/, '');
+                    return normalize(sId) === normalize(options.fromStopId);
+                });
 
-        // 4. Start Live Bus Tracking
-        if (route.id) {
-            const liveColor = getRouteDisplayColor(route);
-            updateLiveBuses(route.id, patternSuffix, liveColor);
-            busUpdateInterval = setInterval(() => updateLiveBuses(route.id, patternSuffix, liveColor), 5000);
-        }
-
-        // Force Stop Highlight to Top and reapply data if needed
-        // (Race condition fix: highlight may have been set before style was ready)
-        if (options.fromStopId) {
-            const highlightStop = allStops.find(s => String(s.id) === String(options.fromStopId));
-            if (highlightStop && highlightStop.lon && highlightStop.lat) {
-                // Ensure source exists
-                if (!map.getSource('selected-stop')) {
-                    map.addSource('selected-stop', {
-                        type: 'geojson',
-                        data: { type: 'FeatureCollection', features: [] }
-                    });
-                }
-                // Ensure layer exists
-                if (!map.getLayer('stops-highlight')) {
-                    map.addLayer({
-                        id: 'stops-highlight',
-                        type: 'symbol',
-                        source: 'selected-stop',
-                        layout: {
-                            'icon-image': [
-                                'case',
-                                ['>', ['get', 'rotation'], 0], 'stop-selected-icon',
-                                'stop-icon'
-                            ],
-                            'icon-size': [
-                                'case',
-                                ['==', ['get', 'mode'], 'SUBWAY'], 1.5,
-                                1.2
-                            ],
-                            'icon-allow-overlap': true,
-                            'icon-ignore-placement': true,
-                            'icon-rotate': ['coalesce', ['get', 'rotation'], 0],
-                            'icon-rotation-alignment': 'map'
-                        },
-                        paint: {
-                            'icon-opacity': 1
+                if (!hasStop) {
+                    routeBodyEl.innerHTML = `
+                        <div class="empty warning">
+                            <div class="icon">⚠️</div>
+                            <div>The selected stop is in the other direction.</div>
+                            <div class="sub">Switch direction to view schedule.</div>
+                        </div>`;
+                } else {
+                    if (isOptimistic) routeBodyEl.innerHTML = '<div class="loading">Loading schedule...</div>';
+                    arrivals.getFullScheduleGrouped(route.shortName, options.fromStopId, route.id, currentPattern.patternSuffix, { strategy }).then(grouped => {
+                        if (requestId !== lastRouteUpdateId) return;
+                        if (!grouped || Object.keys(grouped).length === 0) {
+                            routeBodyEl.innerHTML = '<div class="empty">No schedule data available</div>';
+                            return;
+                        }
+                        const currentHour = new Date().getHours();
+                        let html = '<div class="route-full-schedule">';
+                        Object.keys(grouped).sort((a, b) => parseInt(a) - parseInt(b)).forEach(hour => {
+                            const isCurrentHour = parseInt(hour) === currentHour;
+                            html += `
+                                <div class="schedule-hour-row${isCurrentHour ? ' current-hour' : ''}">
+                                    <div class="hour-label">${hour}:</div>
+                                    <div class="minutes-list">${grouped[hour].join(' ')}</div>
+                                </div>`;
+                        });
+                        html += '</div>';
+                        routeBodyEl.innerHTML = html;
+                    }).catch(err => {
+                        if (!isOptimistic) {
+                            console.warn('[Schedule] Failed to load full schedule', err);
+                            routeBodyEl.innerHTML = '<div class="empty">Failed to load schedule</div>';
                         }
                     });
                 }
-                // Set the highlight feature data
-                map.getSource('selected-stop').setData({
-                    type: 'FeatureCollection',
-                    features: [{
-                        type: 'Feature',
-                        geometry: { type: 'Point', coordinates: [highlightStop.lon, highlightStop.lat] },
-                        properties: highlightStop
-                    }]
+            } else {
+                routeBodyEl.innerHTML = '';
+            }
+
+            if (requestId !== lastRouteUpdateId) return false;
+
+            const patternSuffix = currentPattern.patternSuffix;
+
+            // 2. Fetch Polylines (Current & Ghost)
+            const allSuffixes = processedPatterns.map(p => p.patternSuffix).join(',');
+            const polylineData = await api.fetchRoutePolylineV3(route.id, allSuffixes, { strategy });
+            if (!polylineData || requestId !== lastRouteUpdateId) return false;
+
+            // Plot Ghost Route
+            processedPatterns.forEach(p => {
+                if (p.patternSuffix !== patternSuffix) {
+                    const ghostEntry = polylineData[p.patternSuffix];
+                    let ghostCoords = null;
+                    if (Array.isArray(ghostEntry)) ghostCoords = ghostEntry;
+                    else if (ghostEntry && ghostEntry.encodedValue) ghostCoords = api.decodePolyline(ghostEntry.encodedValue);
+
+                    if (ghostCoords) {
+                        const ghostId = `route-ghost-${p.patternSuffix}`;
+                        if (!map.getSource(ghostId)) {
+                            map.addSource(ghostId, {
+                                type: 'geojson',
+                                data: { type: 'Feature', geometry: { type: 'LineString', coordinates: ghostCoords } }
+                            });
+                            map.addLayer({
+                                id: ghostId, type: 'line', source: ghostId,
+                                layout: { 'line-join': 'round', 'line-cap': 'round' },
+                                paint: { 'line-color': getRouteDisplayColor(route), 'line-width': 4, 'line-opacity': 0.3, 'line-emissive-strength': 1 }
+                            }, 'stops-layer');
+                        }
+                    }
+                }
+            });
+
+            // Plot Current Route
+            const currEntry = polylineData[patternSuffix];
+            let coordinates = null;
+            if (Array.isArray(currEntry)) coordinates = currEntry;
+            else if (currEntry && currEntry.encodedValue) coordinates = api.decodePolyline(currEntry.encodedValue);
+
+            if (coordinates) {
+                if (map.getSource('route')) {
+                    map.getSource('route').setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coordinates } });
+                } else {
+                    map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coordinates } } });
+                }
+
+                if (!isOptimistic || !window._routeBoundsFit) {
+                    if (options.fitToRoute && coordinates.length > 0) {
+                        const bounds = new mapboxgl.LngLatBounds();
+                        coordinates.forEach(coord => bounds.extend(coord));
+                        const panel = document.getElementById('route-info');
+                        const rawPanelHeight = panel ? panel.offsetHeight : 200;
+                        const maxPadding = Math.min(window.innerHeight * 0.35, 250);
+                        const panelHeight = Math.min(rawPanelHeight, maxPadding);
+                        const origMethods = window._originalMapMethods;
+                        if (origMethods) { map.flyTo = origMethods.flyTo; map.jumpTo = origMethods.jumpTo; map.easeTo = origMethods.easeTo; }
+                        map.fitBounds(bounds, { padding: { top: 80, bottom: panelHeight + 40, left: 40, right: 40 }, maxZoom: 15, duration: 1200 });
+                        if (origMethods) { map.flyTo = () => map; map.jumpTo = () => map; map.easeTo = () => map; }
+                        window._routeBoundsFit = true;
+                    } else if (options.centerOnStop && options.centerOnStop.lat && options.centerOnStop.lon) {
+                        const offsetY = -(window.innerHeight * 0.1);
+                        map.flyTo({ center: [options.centerOnStop.lon, options.centerOnStop.lat], zoom: 14, offset: [0, offsetY], duration: 1500 });
+                        window._routeBoundsFit = true;
+                    } else if (map.getZoom() > 14.5) {
+                        map.easeTo({ zoom: 14, duration: 800 });
+                    }
+                }
+            }
+
+            // 3. Fetch Stops for "Bumps"
+            const stopsData = await api.fetchRouteStopsV3(route.id, patternSuffix, { strategy });
+            if (requestId !== lastRouteUpdateId) return false;
+
+            const stopsGeoJSON = {
+                type: 'FeatureCollection',
+                features: stopsData.map(stop => {
+                    const sId = String(stop.id);
+                    const normId = redirectMap.get(sId) || sId;
+                    const existingStop = allStops.find(s => s.id === normId);
+                    const lat = existingStop ? existingStop.lat : stop.lat;
+                    const lon = existingStop ? existingStop.lon : stop.lon;
+                    return { type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: { name: stop.name } };
+                })
+            };
+
+            if (map.getSource('route-stops')) {
+                map.getSource('route-stops').setData(stopsGeoJSON);
+            } else {
+                map.addSource('route-stops', { type: 'geojson', data: stopsGeoJSON });
+            }
+
+            // Layers
+            if (!map.getLayer('route')) {
+                map.addLayer({
+                    id: 'route', type: 'line', source: 'route', layout: { 'line-join': 'round', 'line-cap': 'round' },
+                    paint: { 'line-color': getRouteDisplayColor(route), 'line-width': 12, 'line-opacity': 0.8, 'line-emissive-strength': 1 }
                 });
             }
-        }
+            if (!map.getLayer('route-stops')) {
+                map.addLayer({
+                    id: 'route-stops', type: 'circle', source: 'route-stops',
+                    paint: { 'circle-color': '#ffffff', 'circle-radius': 3, 'circle-stroke-width': 0, 'circle-opacity': 1, 'circle-emissive-strength': 1 }
+                });
+            }
+
+            // 4. Start Live Bus Tracking (Only in Phase 2)
+            if (!isOptimistic && route.id) {
+                const liveColor = getRouteDisplayColor(route);
+                updateLiveBuses(route.id, patternSuffix, liveColor);
+                busUpdateInterval = setInterval(() => updateLiveBuses(route.id, patternSuffix, liveColor), 5000);
+            }
+
+            // 5. Highlight Stop
+            if (options.fromStopId) {
+                const highlightStop = allStops.find(s => String(s.id) === String(options.fromStopId));
+                if (highlightStop && highlightStop.lon && highlightStop.lat) {
+                    if (!map.getSource('selected-stop')) {
+                        map.addSource('selected-stop', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                    }
+                    map.getSource('selected-stop').setData({
+                        type: 'FeatureCollection',
+                        features: [{
+                            type: 'Feature',
+                            geometry: { type: 'Point', coordinates: [highlightStop.lon, highlightStop.lat] },
+                            properties: { rotation: highlightStop.rotation || 0, mode: route.mode }
+                        }]
+                    });
+                    if (!map.getLayer('stops-highlight')) {
+                        map.addLayer({
+                            id: 'stops-highlight', type: 'symbol', source: 'selected-stop', slot: 'top',
+                            layout: { 'icon-image': ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], 'stop-selected-icon', 'stop-icon'], 'icon-size': ['case', ['==', ['get', 'mode'], 'SUBWAY'], 1.5, 1.2], 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-rotate': ['coalesce', ['get', 'rotation'], 0], 'icon-rotation-alignment': 'map' },
+                            paint: { 'icon-opacity': 1, 'icon-emissive-strength': 1 }
+                        });
+                    }
+                    map.moveLayer('stops-highlight');
+                }
+            } else if (map.getSource('selected-stop')) {
+                map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
+            }
+
+            return true;
+        };
+
+        // Execution of Phases
+        window._routeBoundsFit = false; // Internal flag to prevent double-fit
+
+        // Phase 1: Optimistic (Silent if fails)
+        const hitCache = await renderPhase(true);
+        if (requestId !== lastRouteUpdateId) return;
+
+        // Phase 2: Live
+        await renderPhase(false);
 
         // Move highlight layer to top
         if (map.getLayer('stops-highlight')) {
@@ -2903,7 +2847,8 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                 // Do NOT assign to map.
             } else {
                 // Fallback (e.g. existing map but not selected? Should be covered by GC)
-                color = RouteFilterColorManager.pathColors.get(signature) || '#888888';
+                const entry = RouteFilterColorManager.pathColors.get(signature);
+                color = entry ? entry.color : '#888888';
             }
 
             const selectedPatternStops = group.stops.map(s => [s.lon, s.lat]);
@@ -3063,12 +3008,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
     });
 
     // Garbage Collect Unused Colors (Global)
-    for (const [sig, col] of RouteFilterColorManager.pathColors.entries()) {
-        if (!allActiveSignatures.has(sig)) {
-            console.log('[ColorManager] GC Deleting signature:', sig, 'Color:', col);
-            RouteFilterColorManager.pathColors.delete(sig);
-        }
-    }
+    RouteFilterColorManager.gc(allActiveSignatures);
 
     // Update Source
     const source = map.getSource('filter-connection');
@@ -3151,12 +3091,13 @@ async function loadRoutesConfig() {
 }
 
 function applyRouteOverrides() {
-    // Route overrides are now applied server-side in Convex (transit:getRoutes query).
-    // This function is kept for backwards compatibility but disabled.
-    return;
+    if (!window.routesConfig?.routeOverrides) {
+        // console.log('[Config] No local route overrides found.');
+        return;
+    }
+    console.log('[Config] Applying Route Overrides...', Object.keys(window.routesConfig.routeOverrides).length);
 
-    // --- LEGACY CODE (disabled) ---
-    console.log('[Config] Applying Route Overrides...', window.routesConfig?.routeOverrides ? Object.keys(window.routesConfig.routeOverrides).length : 0);
+    // --- LEGACY CODE (ENABLED) ---
 
     // Detect locale loosely or assume EN/KA based on something? 
     // Ideally we want to patch the object with the *correct* locale string.

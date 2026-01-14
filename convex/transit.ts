@@ -377,36 +377,89 @@ export const getRoutes = query({
         // Fetching 300 rows is instant.
         const overrides = await ctx.db.query("overrides").collect();
         const overrideMap = new Map(overrides.map(o => [o.routeId, o]));
+        const convexTimestamp = Date.now();
+        console.log(`[getRoutes] Time: ${convexTimestamp}, Overrides: ${overrides.length}`);
 
-        return routes.map(r => {
+        const results = routes.map(r => {
             const routeData = { ...r.data };
-            const ov = overrideMap.get(r.routeId);
+
+            // Robust lookup: try with and without '1:'/'2:' prefixes
+            const lookupIds = [r.routeId];
+            const strippedId = r.routeId.replace(/^[12]:/, '');
+
+            lookupIds.push(strippedId);
+            lookupIds.push(`1:${strippedId}`);
+            lookupIds.push(`2:${strippedId}`);
+
+            // Handle Rustavi 'r' prefix variants (might be r123 or just 123 in override)
+            if (strippedId.startsWith('r')) {
+                const noR = strippedId.slice(1);
+                lookupIds.push(noR);
+                lookupIds.push(`1:${noR}`);
+                lookupIds.push(`2:${noR}`);
+            }
+
+            let ov = null;
+            const uniqueLookups = [...new Set(lookupIds)];
+            for (const id of uniqueLookups) {
+                const found = overrideMap.get(id);
+                if (found) {
+                    ov = found;
+                    break;
+                }
+            }
 
             if (ov) {
+                // console.log(`[getRoutes] Matched override for ${r.routeId} using ${ov.routeId}`);
+                console.log(`[getRoutes] Matched override for ${r.routeId} using ${ov.routeId}`);
+                // Apply immediate top-level overrides
                 if (ov.shortName_override) routeData.shortName = ov.shortName_override;
                 if (ov.isLoop !== undefined) routeData.isLoop = ov.isLoop;
-                if (ov.invertDirection !== undefined) routeData.invertDirection = ov.invertDirection; // Used by frontend?
+                if (ov.invertDirection !== undefined) routeData.invertDirection = ov.invertDirection;
 
-                // Locales
-                if (locale === 'en') {
-                    if (ov.longName_en_override) routeData.longName = ov.longName_en_override;
-                    // Split override longName if needed? Existing logic handles '-' splits usually.
+                // Locale-specific longName overrides
+                if (locale === 'en' && ov.longName_en_override) routeData.longName = ov.longName_en_override;
+                if (locale === 'ka' && ov.longName_ka_override) routeData.longName = ov.longName_ka_override;
 
-                    // Destinations
-                    // TTC API structure usually: destination: string, or sometimes split fields? 
-                    // The raw data usually has `longName`, `shortName`. 
-                    // Destinations are often derived or in `routeDetails`.
-                    // But `routes` list has basic info.
-                    // Let's assume we just patch what matches.
-                } else if (locale === 'ka') {
-                    if (ov.longName_ka_override) routeData.longName = ov.longName_ka_override;
-                }
-
-                // Pass everything else to be safe?
-                // routeData._overrides = ov; 
+                // Format the _overrides object for the frontend (specifically getPatternHeadsign)
+                routeData._overrides = {
+                    isLoop: ov.isLoop,
+                    invertDirection: ov.invertDirection,
+                    destinations: [
+                        {
+                            headsign: {
+                                en: ov.dest0_en_override || ov.dest0_en,
+                                ka: ov.dest0_ka_override || ov.dest0_ka,
+                                ru: ov.dest0_ru_override || ov.dest0_ru
+                            }
+                        },
+                        {
+                            headsign: {
+                                en: ov.dest1_en_override || ov.dest1_en,
+                                ka: ov.dest1_ka_override || ov.dest1_ka,
+                                ru: ov.dest1_ru_override || ov.dest1_ru
+                            }
+                        }
+                    ]
+                };
+            } else {
+                routeData._debug = {
+                    lookupIds: uniqueLookups,
+                    totalOverridesFetched: overrides.length
+                };
             }
             return routeData;
         });
+
+        return {
+            routes: results,
+            _convex_meta: {
+                timestamp: convexTimestamp,
+                totalOverrides: overrides.length,
+                sourceId,
+                locale
+            }
+        };
     }
 });
 
@@ -419,11 +472,28 @@ export const getRouteDetails = query({
         routeId: v.string()
     },
     handler: async (ctx, { sourceId, locale, routeId }) => {
-        // 1. Details
-        const detailsDoc = await ctx.db
-            .query("routeDetails")
-            .withIndex("by_source_routeId_locale", q => q.eq("source", sourceId).eq("routeId", routeId).eq("locale", locale))
-            .first();
+        // Robust lookup: try multiple ID variations
+        const lookupIds = [routeId];
+        const strippedId = routeId.replace(/^[12]:/, '');
+        lookupIds.push(strippedId);
+        lookupIds.push(`1:${strippedId}`);
+        lookupIds.push(`2:${strippedId}`);
+
+        if (strippedId.startsWith('r')) {
+            const noR = strippedId.slice(1);
+            lookupIds.push(noR);
+            lookupIds.push(`1:${noR}`);
+            lookupIds.push(`2:${noR}`);
+        }
+
+        let detailsDoc = null;
+        for (const id of [...new Set(lookupIds)]) {
+            detailsDoc = await ctx.db
+                .query("routeDetails")
+                .withIndex("by_source_routeId_locale", q => q.eq("source", sourceId).eq("routeId", id).eq("locale", locale))
+                .first();
+            if (detailsDoc) break;
+        }
 
         if (!detailsDoc) return null;
 
@@ -468,10 +538,59 @@ export const getRouteDetails = query({
         // `hydrateRouteDetails` doesn't seem to fetch schedules/polylines.
         // It fetches `stops-of-patterns`.
 
+        // Fetch override
+        const overrideLookupIds = [routeId];
+        overrideLookupIds.push(strippedId);
+        overrideLookupIds.push(`1:${strippedId}`);
+        overrideLookupIds.push(`2:${strippedId}`);
+
+        if (strippedId.startsWith('r')) {
+            const innerNoR = strippedId.slice(1);
+            overrideLookupIds.push(innerNoR);
+            overrideLookupIds.push(`1:${innerNoR}`);
+            overrideLookupIds.push(`2:${innerNoR}`);
+        }
+
+        let override = null;
+        for (const id of [...new Set(overrideLookupIds)]) {
+            override = await ctx.db
+                .query("overrides")
+                .withIndex("by_routeId", q => q.eq("routeId", id))
+                .first();
+            if (override) break;
+        }
+
+        const formattedOverrides = override ? {
+            isLoop: override.isLoop,
+            invertDirection: override.invertDirection,
+            destinations: [
+                {
+                    headsign: {
+                        en: override.dest0_en_override || override.dest0_en,
+                        ka: override.dest0_ka_override || override.dest0_ka,
+                        ru: override.dest0_ru_override || override.dest0_ru
+                    }
+                },
+                {
+                    headsign: {
+                        en: override.dest1_en_override || override.dest1_en,
+                        ka: override.dest1_ka_override || override.dest1_ka,
+                        ru: override.dest1_ru_override || override.dest1_ru
+                    }
+                }
+            ]
+        } : null;
+
         return {
             ...details,
+            _overrides: formattedOverrides,
             _schedules: schedules.map(s => ({ suffix: s.suffix, data: s.data })),
-            _polylines: polylineDocs.map(p => ({ suffix: p.suffix, data: p.data }))
+            _polylines: polylineDocs.map(p => ({ suffix: p.suffix, data: p.data })),
+            _convex_meta: {
+                timestamp: Date.now(),
+                overrideIdMatched: override ? override.routeId : null,
+                lookupIdsTried: [...new Set(overrideLookupIds)]
+            }
         };
     }
 });
@@ -513,10 +632,18 @@ export const updateOverride = mutation({
     },
     handler: async (ctx, { routeId, updates }) => {
         // Find existing override
-        const existing = await ctx.db
-            .query("overrides")
-            .withIndex("by_routeId", q => q.eq("routeId", routeId))
-            .first();
+        const lookupIds = [routeId];
+        if (!routeId.startsWith('1:') && !routeId.startsWith('2:')) lookupIds.push(`1:${routeId}`);
+        if (routeId.startsWith('1:') || routeId.startsWith('2:')) lookupIds.push(routeId.slice(2));
+
+        let existing = null;
+        for (const id of lookupIds) {
+            existing = await ctx.db
+                .query("overrides")
+                .withIndex("by_routeId", q => q.eq("routeId", id))
+                .first();
+            if (existing) break;
+        }
 
         if (existing) {
             // Patch existing
@@ -541,10 +668,28 @@ export const getOverride = query({
         routeId: v.string()
     },
     handler: async (ctx, { routeId }) => {
-        const override = await ctx.db
-            .query("overrides")
-            .withIndex("by_routeId", q => q.eq("routeId", routeId))
-            .first();
+        // Robust lookup
+        const lookupIds = [routeId];
+        const strippedId = routeId.replace(/^[12]:/, '');
+        lookupIds.push(strippedId);
+        lookupIds.push(`1:${strippedId}`);
+        lookupIds.push(`2:${strippedId}`);
+
+        if (strippedId.startsWith('r')) {
+            const noR = strippedId.slice(1);
+            lookupIds.push(noR);
+            lookupIds.push(`1:${noR}`);
+            lookupIds.push(`2:${noR}`);
+        }
+
+        let override = null;
+        for (const id of [...new Set(lookupIds)]) {
+            override = await ctx.db
+                .query("overrides")
+                .withIndex("by_routeId", q => q.eq("routeId", id))
+                .first();
+            if (override) break;
+        }
 
         return override || null;
     }

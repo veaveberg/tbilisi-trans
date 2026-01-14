@@ -366,7 +366,7 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
 /**
  * Get schedule for a specific route at a stop
  */
-export async function getV3Schedule(routeShortName, stopId, explicitRouteId = null, explicitSuffix = null) {
+export async function getV3Schedule(routeShortName, stopId, explicitRouteId = null, explicitSuffix = null, options = {}) {
     let routeId = explicitRouteId;
     if (!routeId) {
         if (!v3RoutesMap) await fetchV3Routes();
@@ -383,9 +383,9 @@ export async function getV3Schedule(routeShortName, stopId, explicitRouteId = nu
         deps.mergeSourcesMap.get(stopId).forEach(s => stopIds.push(s));
     }
 
-    const result = await api.fetchScheduleForStop(routeId, stopIds, explicitSuffix);
+    const result = await api.fetchScheduleForStop(routeId, stopIds, explicitSuffix, options);
     if (!result) {
-        console.warn(`[V3 Debug] No schedule returned from API for ${routeId}`);
+        // console.warn(`[V3 Debug] No schedule returned from API for ${routeId}`);
         return null;
     }
 
@@ -397,7 +397,7 @@ export async function getV3Schedule(routeShortName, stopId, explicitRouteId = nu
  * Get full schedule grouped by hour for a specific route at a stop
  * @returns {Promise<Object|null>} Map of hour -> array of minutes
  */
-export async function getFullScheduleGrouped(routeShortName, stopId, explicitRouteId = null, explicitSuffix = null) {
+export async function getFullScheduleGrouped(routeShortName, stopId, explicitRouteId = null, explicitSuffix = null, options = {}) {
     let routeId = explicitRouteId;
     if (!routeId) {
         if (!v3RoutesMap) await fetchV3Routes();
@@ -411,7 +411,7 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
         deps.mergeSourcesMap.get(stopId).forEach(s => stopIds.push(s));
     }
 
-    const result = await api.fetchScheduleForStop(routeId, stopIds, explicitSuffix);
+    const result = await api.fetchScheduleForStop(routeId, stopIds, explicitSuffix, options);
     if (!result || !result.schedule) return null;
 
     const { schedule } = result;
@@ -462,6 +462,43 @@ export function getV3ScheduleSync(routeShortName, stopId) {
 }
 
 // === ARRIVALS FETCHING ===
+
+/**
+ * Quick fetch of scheduled arrivals from static cache
+ */
+export async function fetchArrivalsOptimistic(stopId) {
+    const routeIds = api.getRoutesForStopStatic(stopId);
+    if (!routeIds || routeIds.length === 0) return [];
+
+    const allRoutes = deps.allRoutes() || [];
+
+    const schedulePromises = routeIds.map(async (rid) => {
+        const r = allRoutes.find(route => route.id === rid);
+        if (!r) return null;
+
+        const sched = await getV3Schedule(r.shortName, stopId, rid, null, { strategy: 'cache-only' });
+        if (!sched || !sched.nextArrivals || sched.nextArrivals.length === 0) return null;
+
+        return sched.nextArrivals.map(arr => ({
+            shortName: r.shortName,
+            id: r.id,
+            displayShortName: r.customShortName || r.shortName,
+            scheduledArrivalMinutes: getMinutesFromNow(arr.time),
+            headsign: arr.headsign || sched.headsign || r.longName,
+            realtime: false,
+            _source: r._source,
+            patternSuffix: arr.patternSuffix
+        }));
+    });
+
+    const results = await Promise.all(schedulePromises);
+    const flattened = results.flat().filter(Boolean);
+
+    // Sort by time
+    flattened.sort((a, b) => a.scheduledArrivalMinutes - b.scheduledArrivalMinutes);
+
+    return flattened;
+}
 
 /**
  * Fetch arrivals for a stop (including equivalent/merged stops)
@@ -827,13 +864,15 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
             let overrideHeadsign = null;
             if (freshRoute._overrides && freshRoute._overrides.destinations) {
-                // Skip defaulting to Dir 0
+                // Try to find a sensible direction index if not provided
+                const dirIdx = item.directionIndex !== undefined ? item.directionIndex : 0;
+                overrideHeadsign = deps.getPatternHeadsign(freshRoute, dirIdx, null);
             }
 
             if (overrideHeadsign) {
                 headsign = overrideHeadsign;
             } else if (freshRoute._overrides && freshRoute._overrides.longName) {
-                const lng = 'en'; // fallback
+                const lng = new URLSearchParams(window.location.search).get('locale') || 'en';
                 headsign = freshRoute._overrides.longName[lng] || freshRoute._overrides.longName.en || freshRoute._overrides.longName.ka || r.longName;
             } else if (item.headsign) {
                 headsign = item.headsign;
