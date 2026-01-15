@@ -251,20 +251,21 @@ html.show-heading-indicator .mapboxgl-user-location-heading {
     /* Override default arrow to a cone of light */
     width: 120px !important;
     height: 120px !important;
-    /* Use margin-based centering to allow Mapbox rotation transform to work */
+    /* Use margin-based centering */
     position: absolute !important;
     top: 50% !important;
     left: 50% !important;
     margin-top: -60px !important;
     margin-left: -60px !important;
-    /* Don't override transform - let Mapbox apply rotation */
-    background: conic-gradient(from 180deg,
-            transparent 0deg,
-            transparent 120deg,
-            rgba(100, 149, 237, 0.45) 150deg,
-            rgba(100, 149, 237, 0.5) 180deg,
-            rgba(100, 149, 237, 0.45) 210deg,
-            transparent 240deg,
+    /* Apply rotation to the element itself and override Mapbox's internal transform */
+    transition: transform 0.1s linear;
+    transform: rotate(var(--indicator-rotation, 0deg)) !important;
+    /* Use static gradient for the shape, centered at 0deg (Top) */
+    background: conic-gradient(from 330deg,
+            rgba(100, 149, 237, 0.45) 0deg,
+            rgba(100, 149, 237, 0.5) 30deg,
+            rgba(100, 149, 237, 0.45) 60deg,
+            transparent 60deg,
             transparent 360deg) !important;
     border: none !important;
     border-radius: 50% !important;

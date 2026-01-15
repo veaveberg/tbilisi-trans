@@ -24,6 +24,8 @@ let isPitching = false;
 let isReCentering = false;
 let isOrientationTrackingStarted = false;
 let latestHeading = null;
+let lastIndicatorRotation = null;
+let cumulativeIndicatorRotation = 0;
 let isHeadingSupported = false;
 let isWaitingForFirstLocation = false;
 let isAutoShowingMarker = false;
@@ -35,7 +37,7 @@ const geolocate = new mapboxgl.GeolocateControl({
         timeout: 15000
     },
     trackUserLocation: true,
-    showUserHeading: true,
+    showUserHeading: false, // Handle manually to prevent conflicts
     showAccuracyCircle: true
 });
 
@@ -73,6 +75,61 @@ function checkHeadingSupport() {
         ('ontouchstart' in window || 'ondeviceorientationabsolute' in window || 'ondeviceorientation' in window);
 }
 
+// Helper to parse rotation from a transform string (matrix or rotate)
+function getRotationFromTransform(transform) {
+    if (!transform || transform === 'none') return 0;
+
+    // Handle matrix(a, b, c, d, tx, ty)
+    if (transform.startsWith('matrix')) {
+        const values = transform.match(/matrix\(([^)]+)\)/);
+        if (values && values[1]) {
+            const [a, b] = values[1].split(',').map(parseFloat);
+            return Math.round(Math.atan2(b, a) * (180 / Math.PI));
+        }
+    }
+    // Handle rotate(deg)
+    else if (transform.includes('rotate')) {
+        const match = transform.match(/rotate\(([^d]+)deg\)/);
+        if (match && match[1]) return parseFloat(match[1]);
+    }
+    return 0;
+}
+
+function updateHeadingIndicator(map) {
+    if (latestHeading === null) return;
+
+    const indicator = document.querySelector('.mapboxgl-user-location-heading');
+    const marker = document.querySelector('.mapboxgl-user-location-marker');
+
+    if (!indicator && marker) {
+        const newIndicator = document.createElement('div');
+        newIndicator.className = 'mapboxgl-user-location-heading';
+        marker.appendChild(newIndicator);
+    }
+
+    const currentIndicator = indicator || document.querySelector('.mapboxgl-user-location-heading');
+    if (currentIndicator) {
+        // Mapbox keeps the parent marker "North Up" (rotated by -bearing).
+        // To point to our heading, we just need to apply the absolute heading relative to North.
+        // Visual Result = -Bearing (Parent) + Heading (Child) = Heading - Bearing (Correct Screen Angle).
+        const targetRotation = latestHeading;
+
+        if (lastIndicatorRotation === null) {
+            lastIndicatorRotation = targetRotation;
+            cumulativeIndicatorRotation = targetRotation;
+        } else {
+            let delta = targetRotation - lastIndicatorRotation;
+            while (delta > 180) delta -= 360;
+            while (delta < -180) delta += 360;
+            cumulativeIndicatorRotation += delta;
+            lastIndicatorRotation = targetRotation;
+        }
+
+        document.documentElement.style.setProperty('--indicator-rotation', `${cumulativeIndicatorRotation}deg`);
+        // No parent modification needed.
+    }
+}
+
 function updateLocationIcon(btn) {
     if (!btn) return;
 
@@ -95,30 +152,53 @@ function updateLocationIcon(btn) {
 function startPersistentOrientationTracking(map) {
     if (isOrientationTrackingStarted) return;
 
+    let headingFired = false;
+    let initialHeading = null;
+
     const onOrientation = (e) => {
+        // Prioritize webkitCompassHeading (iOS), then absolute alpha (standard)
         let heading = e.webkitCompassHeading;
         if (heading === undefined || heading === null) {
-            if (e.absolute) heading = 360 - e.alpha;
+            // Check if absolute or if it's a deviceorientationabsolute event
+            if (e.absolute === true && e.alpha !== null) {
+                heading = 360 - e.alpha;
+            }
         }
 
         if (heading === undefined || heading === null) return;
-        latestHeading = heading;
 
-        if (!document.documentElement.classList.contains('show-heading-indicator')) {
-            document.documentElement.classList.add('show-heading-indicator');
+        // Strict firing: wait for a change if the initial value is exactly 0
+        if (!headingFired) {
+            if (initialHeading === null) initialHeading = heading;
+            // Fire if it's not exactly 0, or if it has moved from the initial value
+            if (heading !== 0 || Math.abs(heading - (initialHeading || 0)) > 1) {
+                headingFired = true;
+                document.documentElement.classList.add('show-heading-indicator');
+                // Force an immediate sync update when first showing
+                lastIndicatorRotation = null;
+            }
         }
 
+        latestHeading = heading;
+        updateHeadingIndicator(map);
+
+        // Map movement updates
         const now = Date.now();
-        if (!onOrientation.lastUpdate || now - onOrientation.lastUpdate > 100) {
+        if (!onOrientation.lastUpdate || now - onOrientation.lastUpdate > 50) {
             onOrientation.lastUpdate = now;
             if (currentLocationState === LOCATION_STATES.HEADING && !isUserRotating && !isUserInteracting && !isDragging && !isPitching && !isReCentering) {
+                // Use smooth easeTo for Heading mode to provide natural tactile feedback
                 map.easeTo({ bearing: heading, duration: 150, easing: (t) => t });
             }
         }
     };
 
-    window.addEventListener('deviceorientation', onOrientation);
-    window.addEventListener('deviceorientationabsolute', onOrientation);
+    // Use absolute orientation if available, fallback to standard
+    if ('ondeviceorientationabsolute' in window) {
+        window.addEventListener('deviceorientationabsolute', onOrientation);
+    } else {
+        window.addEventListener('deviceorientation', onOrientation);
+    }
     isOrientationTrackingStarted = true;
 }
 
@@ -215,23 +295,6 @@ export function setupGeolocation(map) {
 
                 const enableHeadingIndicator = () => {
                     startPersistentOrientationTracking(map);
-                    let hasRealCompass = false;
-                    const probeHandler = (e) => {
-                        const hasAlpha = e.alpha !== null && e.alpha !== undefined;
-                        const hasHeading = e.webkitCompassHeading !== null && e.webkitCompassHeading !== undefined;
-                        if (hasAlpha || hasHeading) {
-                            hasRealCompass = true;
-                            document.documentElement.classList.add('show-heading-indicator');
-                            window.removeEventListener('deviceorientation', probeHandler);
-                            window.removeEventListener('deviceorientationabsolute', probeHandler);
-                        }
-                    };
-                    window.addEventListener('deviceorientation', probeHandler);
-                    window.addEventListener('deviceorientationabsolute', probeHandler);
-                    setTimeout(() => {
-                        window.removeEventListener('deviceorientation', probeHandler);
-                        window.removeEventListener('deviceorientationabsolute', probeHandler);
-                    }, 1000);
                 };
 
                 if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -244,32 +307,26 @@ export function setupGeolocation(map) {
                 // To Heading
                 const attemptHeadingTransition = () => {
                     startPersistentOrientationTracking(map);
-                    let probeReceived = false;
-                    const probeHandler = (e) => {
-                        const hasAlpha = e.alpha !== null && e.alpha !== undefined;
-                        const hasHeading = e.webkitCompassHeading !== null && e.webkitCompassHeading !== undefined;
-                        if (hasAlpha || hasHeading) {
-                            probeReceived = true;
-                            cleanup();
+                    const checkHeading = () => {
+                        if (latestHeading !== null) {
                             isHeadingSupported = true;
-                            geolocate.options.showUserHeading = true;
+                            // Note: we keep geolocate.options.showUserHeading false 
+                            // because we handle the element ourselves.
                             currentLocationState = LOCATION_STATES.HEADING;
                             updateLocationIcon(locateBtn);
+                        } else {
+                            setTimeout(checkHeading, 100);
                         }
                     };
-                    const cleanup = () => {
-                        window.removeEventListener('deviceorientation', probeHandler);
-                        window.removeEventListener('deviceorientationabsolute', probeHandler);
-                    };
-                    window.addEventListener('deviceorientation', probeHandler);
-                    window.addEventListener('deviceorientationabsolute', probeHandler);
-                    setTimeout(() => {
-                        if (!probeReceived) {
-                            cleanup();
+
+                    let timeout = setTimeout(() => {
+                        if (currentLocationState !== LOCATION_STATES.HEADING) {
                             isHeadingSupported = false;
                             map.easeTo({ center: [lastUserCoords.lng, lastUserCoords.lat], duration: 500 });
                         }
-                    }, 1000);
+                    }, 1500);
+
+                    checkHeading();
                 };
 
                 if (checkHeadingSupport()) {
@@ -298,12 +355,23 @@ export function setupGeolocation(map) {
 
     // Mini Compass
     if (miniCompass) {
+        let lastBearing = map.getBearing();
+        let cumulativeRotation = lastBearing;
+
         map.on('rotate', () => {
             const bearing = map.getBearing();
+
+            // Calculate shortest path delta
+            let delta = bearing - lastBearing;
+            if (delta > 180) delta -= 360;
+            if (delta < -180) delta += 360;
+            cumulativeRotation += delta;
+            lastBearing = bearing;
+
             if (Math.abs(bearing) > 0.1) {
                 miniCompass.classList.remove('hidden');
                 if (compassIcon) {
-                    compassIcon.style.transform = `rotate(${-bearing}deg)`;
+                    compassIcon.style.transform = `rotate(${-cumulativeRotation}deg)`;
                 }
             } else {
                 miniCompass.classList.add('hidden');
@@ -317,6 +385,13 @@ export function setupGeolocation(map) {
             }
         });
     }
+
+    map.on('move', () => updateHeadingIndicator(map));
+    map.on('rotate', () => updateHeadingIndicator(map));
+    map.on('pitch', () => updateHeadingIndicator(map));
+
+    // Initialize bearing immediately
+    updateHeadingIndicator(map);
 
     // Interruption Logic
     let interactionStartCenter = null;
@@ -490,6 +565,7 @@ export function setupGeolocation(map) {
                 // For now, let's just trigger it without the method override complexity if acceptable,
                 // OR fully implement it.
                 // Let's rely on standard trigger for now to avoid complexity in this artifact creation.
+                startPersistentOrientationTracking(map);
                 geolocate.trigger();
             }
         }).catch(() => { });
