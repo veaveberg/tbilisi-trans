@@ -1135,7 +1135,13 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     // --- PHASE 1: Optimistic Render (Static/Cached) ---
     try {
         // Fetch routes from static index and schedule in parallel
-        const staticIds = api.getRoutesForStopStatic(stop.id);
+        const equivalentIds = getEquivalentStops(stop.id, false);
+        const staticIdsSet = new Set();
+        equivalentIds.forEach(id => {
+            const rids = api.getRoutesForStopStatic(id);
+            rids.forEach(rid => staticIdsSet.add(rid));
+        });
+        const staticIds = Array.from(staticIdsSet);
         const optimisticArrivalsPromise = arrivals.fetchArrivalsOptimistic(stop.id);
 
         // Reset state for new stop
@@ -1178,8 +1184,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
 
     // --- PHASE 2: Live Fetch (Network) ---
     try {
-        const subIds = mergeSourcesMap.get(stop.id) || [];
-        const idsAndParent = [stop.id, ...subIds];
+        const idsAndParent = getEquivalentStops(stop.id, false);
         const routePromises = idsAndParent.map(id => {
             if (hydratedStops.has(id)) {
                 return Promise.resolve(stopToRoutesMap.get(id) || []);

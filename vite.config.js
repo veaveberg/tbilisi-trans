@@ -329,17 +329,29 @@ export default defineConfig({
                 secure: false, // Accept self-signed or picky certs if needed
                 headers: {
                     'Referer': 'https://transit.ttc.com.ge/',
-                    'Origin': 'https://transit.ttc.com.ge'
+                    'Origin': 'https://transit.ttc.com.ge',
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'x-api-key': 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f',
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'en-US,en;q=0.9',
                 },
+                xfwd: false, // Don't add X-Forwarded-* headers
                 configure: (proxy, _options) => {
                     proxy.on('error', (err, _req, _res) => {
                         console.log('proxy error', err);
                     });
                     proxy.on('proxyReq', (proxyReq, req, _res) => {
-                        console.log('Sending Request to the Target:', req.method, req.url);
+                        // console.log('Sending Request to the Target:', req.method, req.url);
+                        // Clean up headers that might trigger Cloudflare WAF
+                        proxyReq.removeHeader('cookie');
+                        proxyReq.removeHeader('sec-ch-ua');
+                        proxyReq.removeHeader('sec-ch-ua-mobile');
+                        proxyReq.removeHeader('sec-ch-ua-platform');
                     });
                     proxy.on('proxyRes', (proxyRes, req, _res) => {
-                        console.log('Received Response from the Target:', proxyRes.statusCode, req.url);
+                        if (proxyRes.statusCode === 520) {
+                            console.log('Received 520 Response from the Target:', req.url);
+                        }
                     });
                 }
             },
@@ -350,7 +362,20 @@ export default defineConfig({
                 rewrite: (path) => path.replace(/^\/rustavi-proxy/, ''),
                 headers: {
                     'Referer': 'https://rustavi-transit.azrycloud.com/',
-                    'Origin': 'https://rustavi-transit.azrycloud.com'
+                    'Origin': 'https://rustavi-transit.azrycloud.com',
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'x-api-key': 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f',
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                },
+                xfwd: false,
+                configure: (proxy, _options) => {
+                    proxy.on('proxyReq', (proxyReq, req, _res) => {
+                        proxyReq.removeHeader('cookie');
+                        proxyReq.removeHeader('sec-ch-ua');
+                        proxyReq.removeHeader('sec-ch-ua-mobile');
+                        proxyReq.removeHeader('sec-ch-ua-platform');
+                    });
                 }
             }
         }

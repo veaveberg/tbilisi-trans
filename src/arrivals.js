@@ -476,7 +476,23 @@ export function getV3ScheduleSync(routeShortName, stopId) {
  * Quick fetch of scheduled arrivals from static cache
  */
 export async function fetchArrivalsOptimistic(stopId) {
-    const routeIds = api.getRoutesForStopStatic(stopId);
+    const equivalentIds = deps.getEquivalentStops ?
+        deps.getEquivalentStops(stopId, false) : [stopId];
+
+    const idsToCheck = new Set();
+    equivalentIds.forEach(eqId => {
+        idsToCheck.add(eqId);
+        const subIds = deps.mergeSourcesMap?.get(eqId) || [];
+        subIds.forEach(sId => idsToCheck.add(sId));
+    });
+
+    const routeIdsSet = new Set();
+    Array.from(idsToCheck).forEach(id => {
+        const rids = api.getRoutesForStopStatic(id);
+        rids.forEach(rid => routeIdsSet.add(rid));
+    });
+
+    const routeIds = Array.from(routeIdsSet);
     if (!routeIds || routeIds.length === 0) return [];
 
     const allRoutes = deps.allRoutes() || [];
