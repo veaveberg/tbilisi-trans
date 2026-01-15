@@ -751,7 +751,12 @@ export function restoreApiId(id, source) {
     // 3. Re-add primary internal prefix
     if (source.stripPrefixes && Array.isArray(source.stripPrefixes) && source.stripPrefixes.length > 0) {
         const primaryPrefix = source.stripPrefixes[0];
-        if (!apiId.startsWith(primaryPrefix)) {
+
+        // Defensive: If this ID starts with a known prefix of ANOTHER source, don't add ours
+        // This avoids things like "1:r123"
+        const isOtherSource = sources.some(s => s.id !== source.id && s.prefix && (apiId === s.prefix || apiId.startsWith(s.prefix)));
+
+        if (!apiId.startsWith(primaryPrefix) && !isOtherSource) {
             apiId = primaryPrefix + apiId;
         }
     } else if (source.stripPrefix) {
@@ -1598,12 +1603,22 @@ export async function fetchArrivalsForStopIds(ids) {
                 return taggedArrivals;
             }
 
+            // Source Detection Logic:
+            // Find the best source to try first based on ID prefix
+            let bestSource = defaultSource;
+            for (const s of sources) {
+                if (s.prefix && (id === s.prefix || id.startsWith(s.prefix))) {
+                    bestSource = s;
+                    break;
+                }
+            }
+
             try {
-                return await tryFetch(defaultSource);
+                return await tryFetch(bestSource);
             } catch (e) {
                 // Try others
                 for (const source of sources) {
-                    if (source.id === defaultSource.id) continue;
+                    if (source.id === bestSource.id) continue;
                     try { return await tryFetch(source); } catch (ee) { }
                 }
                 throw e;
