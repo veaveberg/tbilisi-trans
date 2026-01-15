@@ -241,6 +241,7 @@ export function preloadStaticRoutesDetails() {
         }));
 
         console.log(`[API] Preload complete. Indexed ${staticRouteDetails.size} routes and ${staticStopToRoutes.size} stops.`);
+        window.dispatchEvent(new CustomEvent('static-routes-loaded')); // Trigger UI update if needed
         if (staticRouteDetails.size > 0) {
             const sampleKey = Array.from(staticRouteDetails.keys())[0];
             console.log(`[API] Sample Route ID in index: ${sampleKey}`);
@@ -264,6 +265,24 @@ export function getRoutesForStopStatic(stopId) {
     if (!routeIds) return [];
 
     return Array.from(routeIds);
+}
+
+/**
+ * Get cached static route details by ID (e.g. 1:123 or 123)
+ */
+export function getStaticRouteDetails(routeId) {
+    if (!routeId) return null;
+    // Try provided ID
+    if (staticRouteDetails.has(String(routeId))) return staticRouteDetails.get(String(routeId));
+
+    // Try finding normalized
+    // If routeId is 'R835' but map has '1:R835' or vice versa
+    for (const key of staticRouteDetails.keys()) {
+        const normKey = key.replace(/^\d+:/, '').replace(/^r/, '');
+        const normId = String(routeId).replace(/^\d+:/, '').replace(/^r/, '');
+        if (normKey === normId) return staticRouteDetails.get(key);
+    }
+    return null;
 }
 
 const pendingCacheRequests = new Map();

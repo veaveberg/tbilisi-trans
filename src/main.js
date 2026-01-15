@@ -1278,15 +1278,6 @@ function getRouteDisplayColor(route) {
 function getPatternHeadsign(route, directionIndex, defaultHeadsign) {
     if (!route) return defaultHeadsign;
 
-    // DEBUG logs
-    console.log(`[HeadsignDebug] Route ${route.shortName} (${route.id}) Index ${directionIndex}`);
-    console.log(`[HeadsignDebug] Route object has _overrides:`, !!route._overrides);
-
-    if (route.shortName === '497') {
-        const global497 = allRoutes.find(r => r.shortName === '497');
-        console.log(`[HeadsignDebug] Global 497 found:`, !!global497);
-        if (global497) console.log(`[HeadsignDebug] Global 497 has _overrides:`, !!global497._overrides);
-    }
     // Priority: 1. Match by full ID 2. Match by normalized ID 3. Match by shortName
     const norm = (id) => String(id || '').replace(/^\d+:/, '').replace(/^[rR]/, '');
     const matchedRoute = allRoutes.find(r => String(r.id) === String(route.id)) ||

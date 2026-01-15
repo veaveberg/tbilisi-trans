@@ -4,6 +4,7 @@
  */
 
 import * as api from './api.js';
+import { getStaticRouteDetails } from './api.js';
 import { db } from './db.js';
 import { simplifyNumber, shouldShowRoute } from './settings.js';
 import { loadIntervalData, getIntervalDescription } from './intervals.js';
@@ -55,6 +56,14 @@ export function initArrivals(dependencies) {
     deps = { ...deps, ...dependencies };
     // Load interval pattern data for schedule descriptions
     loadIntervalData().catch(e => console.warn('Failed to load interval data:', e));
+
+    // Listen for static data preload to refresh arrivals (fixes direction logic on first load)
+    window.addEventListener('static-routes-loaded', () => {
+        // console.log('[Arrivals] Static data loaded, refreshing view to apply direction fix...');
+        if (window.currentStopId && window.lastArrivals) {
+            renderArrivals(window.lastArrivals, window.currentStopId);
+        }
+    });
 }
 
 // === UTILITY FUNCTIONS ===
@@ -711,16 +720,151 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             directionIndex = directionIndex === 0 ? 1 : 0;
         }
 
+        // --- DIRECTION FIX LOGIC (Static Check) ---
+        // Check if this stop serves only ONE direction for this route
+        const staticDetails = getStaticRouteDetails(matchedRouteForColor ? matchedRouteForColor.id : (a.routeId || a.id));
+        if (staticDetails && staticDetails._stopsOfPatterns && stopId) {
+            // Find stop entry
+            const stopEntry = staticDetails._stopsOfPatterns.find(s => {
+                const sId = String(s.stop.id || s.stop); // Handle object or string
+                // Normalization for comparison
+                const n1 = normalizeRouteId(sId);
+                const n2 = normalizeRouteId(stopId);
+                return sId === stopId || n1 === n2;
+            });
+
+            if (stopEntry && stopEntry.patternSuffixes && stopEntry.patternSuffixes.length === 1) {
+                // If stop is EXCLUSIVE to one pattern, trust that pattern's direction
+                const uniqueSuffix = stopEntry.patternSuffixes[0];
+                const fixedPart = uniqueSuffix.split(':')[0];
+                const fixedIdx = parseInt(fixedPart) || 0;
+
+                // Only override if different (and respect invertDirection which is applied AFTER raw parsing)
+                // If invertDirection is true, we want the FINAL displayed direction to match the static logic.
+                // Static Logic says: This stop is suffix X (Direction Y). 
+                // Invert Logic says: Flip whatever Y is.
+                // So we set the raw index to Y, then let the invert logic below (already applied? wait, we applied invert above).
+                // Let's re-evaluate.
+
+                // We derived `directionIndex` from `a.patternSuffix` (LIVE data).
+                // We want to verify `directionIndex` against STATIC data.
+
+                // Static says "This stop uses pattern 1:01".
+                // So Static Raw Direction = 1.
+                // If Invert is Active, Final Direction = 0.
+
+                // Current logic:
+                // 1. Parse Live Suffix -> Live Raw Dir
+                // 2. Apply Invert -> Live Final Dir
+
+                // Correct Fix Logic:
+                // 1. Get Static Raw Dir (from uniqueSuffix)
+                // 2. Trust it absolutely. If the user says "invert is broken", we shouldn't flip this 
+                //    authoritative static finding based on a potentially bad flag.
+                //    The static suffix (e.g. "1:01") literally defines the pattern the bus is on.
+
+                let staticRawDir = fixedIdx;
+
+                // --- SEMANTIC MATCHING START ---
+                // Try to find which Direction Index (0 or 1) actually matches the Static Pattern's Headsign in the Overrides.
+                // This bypasses "InvertDirection" flags by looking at the actual text content.
+                let semanticDir = -1;
+                const patternDef = staticDetails.patterns.find(p => p.patternSuffix === uniqueSuffix);
+                const staticHeadsign = patternDef ? patternDef.headsign : null;
+                const overrides = matchedRouteForColor?._overrides;
+
+                if (staticHeadsign && overrides && overrides.destinations) {
+                    // Helper to extract text
+                    const getText = (d) => {
+                        if (!d || !d.headsign) return '';
+                        if (typeof d.headsign === 'string') return d.headsign;
+                        return d.headsign.en || d.headsign.ka || '';
+                    };
+
+                    const d0 = getText(overrides.destinations[0]);
+                    const d1 = getText(overrides.destinations[1]);
+
+                    // Simple fuzzy include check or exact match
+                    const clean = s => String(s || '').toLowerCase().trim();
+                    const target = clean(staticHeadsign);
+
+                    // Verify d0 is not empty before matching
+                    if (d0 && (clean(d0) === target || clean(d0).includes(target) || target.includes(clean(d0)))) {
+                        semanticDir = 0;
+                        a._verifiedHeadsign = d0; // Capture text
+                    } else if (d1 && (clean(d1) === target || clean(d1).includes(target) || target.includes(clean(d1)))) {
+                        semanticDir = 1;
+                        a._verifiedHeadsign = d1; // Capture text
+                    }
+
+                    // Debug Semantic Match for problem routes
+                    if (['305', '306', '311', '378', '541'].includes(a.shortName)) {
+                        console.log(`[Semantic Debug] ${a.shortName}:`);
+                        console.log(`   Target: "${target}"`);
+                        console.log(`   d0: "${clean(d0)}" (Match? ${semanticDir === 0})`);
+                        console.log(`   d1: "${clean(d1)}" (Match? ${semanticDir === 1})`);
+                    }
+                }
+
+                if (semanticDir !== -1) {
+                    staticRawDir = semanticDir; // Authoritative match found
+                    // console.log(`[Direction Auto] ${a.shortName}: Mapped Pattern ${uniqueSuffix} ("${staticHeadsign}") -> Index ${semanticDir} via Overrides`);
+                } else if (invertDirection) {
+                    staticRawDir = staticRawDir === 0 ? 1 : 0;
+                }
+                // --- SEMANTIC MATCHING END ---
+
+                const liveRaw = invertDirection ? (directionIndex === 0 ? 1 : 0) : directionIndex;
+
+                if (directionIndex !== staticRawDir) {
+                    console.log(`[Direction Fix] ${a.shortName} at ${stopId}:`);
+                    console.log(`   Live Suffix: ${a.patternSuffix} -> Live Index: ${directionIndex}`);
+                    console.log(`   Static Suffix: ${uniqueSuffix} ("${staticHeadsign || '?'}") -> Auto-Detected: ${semanticDir !== -1 ? semanticDir : 'N/A'}`);
+                    console.log(`   Final Decision: ${staticRawDir}`);
+
+                    directionIndex = staticRawDir;
+                    a._fixedDirection = true;
+                } else {
+                    // Always log for problem routes to see what's happening
+                    const problemRoutes = ['305', '306', '311', '378', '541'];
+                    if (problemRoutes.includes(a.shortName)) {
+                        console.log(`[Direction Debug] ${a.shortName} at ${stopId}:`);
+                        console.log(`   InvertDirection: ${invertDirection}`);
+                        console.log(`   Static Raw ${fixedIdx} -> Final ${staticRawDir}`);
+                        console.log(`   Live Raw ${liveRaw} -> Final ${directionIndex}`);
+                        console.log(`   Result: NO FIX (Values Match)`);
+                    } else if (Math.random() < 0.01) {
+                        console.log(`[Direction Info] ${a.shortName} at ${stopId}: Match (Live ${a.patternSuffix} == Static ${uniqueSuffix})`);
+                    }
+                }
+            } else if (stopEntry && stopEntry.patternSuffixes) {
+                // Log why skipped if it's a problematic one (like 305 at 810?)
+                if (a.shortName === '305' || a.shortName === '306') {
+                    console.log(`[Direction Skip] ${a.shortName} at ${stopId}: Multiple Suffixes [${stopEntry.patternSuffixes.join(', ')}]`);
+                }
+            } else if (!stopEntry) {
+                if (a.shortName === '305' || a.shortName === '306') {
+                    const routeId = matchedRouteForColor ? matchedRouteForColor.id : (a.routeId || a.id);
+                    console.log(`[Direction Skip] ${a.shortName} at ${stopId}: Stop not found in static details for Route ${routeId}`);
+                }
+            }
+        }
+
         // Debug Rustavi routes
         if (a.id && /^1:R\d/.test(a.id) && !window._rustaviHeadsignDebugDone) {
             console.log('[Rustavi Debug] Arrival:', { id: a.id, shortName: a.shortName, headsign: a.headsign, patternSuffix: a.patternSuffix });
             console.log('[Rustavi Debug] Matched route:', matchedRouteForColor?.id, 'Has overrides:', !!matchedRouteForColor?._overrides);
-            console.log('[Rustavi Debug] Destinations:', matchedRouteForColor?._overrides?.destinations);
-            console.log('[Rustavi Debug] Direction index:', directionIndex);
             window._rustaviHeadsignDebugDone = true;
         }
 
-        const displayHeadsign = deps.getPatternHeadsign(matchedRouteForColor, directionIndex, a.headsign);
+        // Check 541/810 specific
+        if (String(a.shortName) === '541') {
+            const res = a._verifiedHeadsign || deps.getPatternHeadsign(matchedRouteForColor, directionIndex, a.headsign); // Use verified if available
+            console.log(`[Headsign Check] 541 at ${stopId}: Index ${directionIndex} -> "${res}" (Forced: ${!!a._verifiedHeadsign})`);
+            // console.log(`[Headsign Check] Overrides present?`, !!matchedRouteForColor?._overrides);
+        }
+
+        const displayHeadsign = a._verifiedHeadsign || deps.getPatternHeadsign(matchedRouteForColor, directionIndex, a.headsign);
 
         // Group Key: ShortName + Direction Index (or Headsign if fuzzy)
         // We use DirectionIndex as primary differentiator for grouped rows.
