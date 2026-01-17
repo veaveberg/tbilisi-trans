@@ -21,7 +21,8 @@ const saveStopsPlugin = () => ({
 
             const dir = path.dirname(filePath);
             const backupDir = path.join(dir, 'backups');
-            const basename = path.basename(filePath, '.csv');
+            const ext = path.extname(filePath);
+            const basename = path.basename(filePath, ext);
 
             // Create backup directory if it doesn't exist
             if (!fs.existsSync(backupDir)) {
@@ -30,13 +31,13 @@ const saveStopsPlugin = () => ({
 
             // Create timestamped backup
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            const backupPath = path.join(backupDir, `${basename}_${timestamp}.csv`);
+            const backupPath = path.join(backupDir, `${basename}_${timestamp}${ext}`);
             fs.copyFileSync(filePath, backupPath);
             console.log(`[Backup] Created: ${path.basename(backupPath)}`);
 
             // Clean up old backups (keep only the last N)
             const backups = fs.readdirSync(backupDir)
-                .filter(f => f.startsWith(basename) && f.endsWith('.csv'))
+                .filter(f => f.startsWith(basename) && f.endsWith(ext))
                 .sort()
                 .reverse();
 
@@ -244,6 +245,36 @@ const saveStopsPlugin = () => ({
                         res.end('Saved');
                     } catch (e) {
                         console.error('[Middleware] Failed to update route override:', e);
+                        res.statusCode = 500;
+                        res.end('Error: ' + e.message);
+                    }
+                });
+            } else {
+                next();
+            }
+        });
+
+        // Metro Segments Save Middleware
+        server.middlewares.use('/api/save-metro-segments', async (req, res, next) => {
+            console.log('[Middleware] Received request:', req.method, req.url);
+            if (req.method === 'POST') {
+                let body = '';
+                req.on('data', chunk => body += chunk);
+                req.on('end', async () => {
+                    try {
+                        const segments = JSON.parse(body);
+                        const segmentsPath = path.resolve(__dirname, 'public/data/metro_segments.json');
+
+                        // Create backup before saving
+                        createBackup(segmentsPath);
+
+                        console.log(`[Middleware] Saving ${Object.keys(segments).length} metro segments to public/data/metro_segments.json`);
+                        fs.writeFileSync(segmentsPath, JSON.stringify(segments, null, 2));
+
+                        res.statusCode = 200;
+                        res.end('Saved');
+                    } catch (e) {
+                        console.error('[Middleware] Failed to save metro segments:', e);
                         res.statusCode = 500;
                         res.end('Error: ' + e.message);
                     }

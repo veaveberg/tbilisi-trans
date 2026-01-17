@@ -2,7 +2,8 @@
 .arrivals-list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
+    padding-top: 8px !important;
 }
 
 .arrival-item {
@@ -16,8 +17,10 @@
     border-left: 4px solid var(--primary);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
     cursor: pointer;
-    transition: background 0.2s;
+    transition: background 0.2s, transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.4s ease;
     flex-shrink: 0;
+    position: relative;
+    will-change: transform, opacity;
 }
 
 @media (hover: hover) {
@@ -140,8 +143,7 @@ body.dark-mode .led-text.scheduled-time {
 
 /* All Routes Container (wrapper around tiles) */
 .all-routes-container {
-    margin-top: 0;
-    margin-bottom: 8px;
+    margin: 0;
 }
 
 /* Route Tiles */
@@ -337,7 +339,7 @@ body.dark-mode .route-info-number {
     width: 100%;
     background: none;
     border: none;
-    padding: 0 20px 0 20px;
+    padding: 2px 20px 20px 20px;
     cursor: pointer;
     text-align: left;
     transition: all 0.2s ease;

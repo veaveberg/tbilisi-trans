@@ -52,7 +52,7 @@
 }
 
 .panel.sheet-half {
-    transform: translateY(calc(100% - 42vh)) translateZ(0);
+    transform: translateY(calc(100% - 48.3vh)) translateZ(0);
 }
 
 .panel.sheet-full {
@@ -88,6 +88,47 @@
     border-radius: 4px;
     margin: 12px auto 8px auto;
     flex-shrink: 0;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.drag-handle.loading {
+    width: 64px;
+    background-color: var(--bg-secondary);
+}
+
+.drag-handle.loading::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -60%;
+    width: 40%;
+    height: 100%;
+    background: var(--text-main);
+    border-radius: 4px;
+    animation: arc-loading 1.2s infinite ease-in-out;
+    box-shadow: 0 0 4px var(--border-light);
+}
+
+.loading-status-text {
+    position: absolute;
+    left: 50%;
+    top: 24px;
+    transform: translateX(-50%);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+.loading-status-text.visible {
+    opacity: 0.8;
 }
 
 .panel .panel-body {
@@ -131,7 +172,22 @@
     transition: none;
 }
 
-/* Fade at bottom - Fixed to the panel visible area */
+@keyframes arc-loading {
+    0% {
+        left: -60%;
+        width: 20%;
+    }
+
+    40% {
+        width: 40%;
+    }
+
+    100% {
+        left: 100%;
+        width: 20%;
+    }
+}
+
 .panel::after {
     content: '';
     position: absolute;

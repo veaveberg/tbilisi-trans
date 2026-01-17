@@ -52,7 +52,7 @@ export function setSheetState(panel, state) {
     const panelH = panel.offsetHeight || (screenH * 0.92);
     let targetY = 0;
 
-    if (state === 'half') targetY = screenH * (1 - 0.42);
+    if (state === 'half') targetY = screenH * (1 - 0.483);
     else if (state === 'peek') targetY = screenH * (1 - 0.25);
     else if (state === 'collapsed') targetY = screenH - 80;
     else if (state === 'full') targetY = 0;
@@ -107,7 +107,7 @@ export const snapSheet = (panel, delta, velocity) => {
 
     // Thresholds
     const TRIGGER_VELOCITY = 0.3;
-    const HALF_SHEET_Y = screenH * 0.6; // Assuming 40vh height (1 - 0.4)
+    const HALF_SHEET_Y = screenH * 0.52; // Based on 48.3vh height (1 - 0.483)
 
     let targetState = 'half';
 

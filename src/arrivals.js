@@ -207,7 +207,9 @@ export async function fetchV3Routes() {
  */
 export function parseSchedule(schedule, potentialIds, patternSuffix = null, routeShortName = null) {
     if (!schedule || !Array.isArray(schedule)) {
-        console.warn(`[V3 Debug] Invalid schedule format`, schedule);
+        if (schedule !== null && schedule !== undefined) {
+            console.warn(`[V3 Debug] Invalid schedule format`, schedule);
+        }
         return null;
     }
 
@@ -254,9 +256,9 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
                         const [h, m] = t.split(':').map(Number);
                         const mins = h * 60 + m;
                         allDepartures.push({
-                            time: `${h}:${String(m).padStart(2, '0')}`,
+                            time: `${h % 24}:${String(m).padStart(2, '0')}`,
                             minutes: mins,
-                            hour: h,
+                            hour: h % 24,
                             progress: idx / daySchedule.stops.length, // approximate
                             patternSuffix: patternSuffix
                         });
@@ -349,14 +351,11 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
 
             // Filter for future (or very recent past if we want to be generous? No, strictly future for "Next")
             const futureDepartures = allDepartures.filter(d => d.minutes > curMinutes);
-
             if (futureDepartures.length > 0) {
                 nextTimes = futureDepartures.slice(0, 3); // Take next 3
             } else {
-                // Try tomorrow? (Reuse logic roughly or just look at first departures of current day schedule effectively acting as tomorrow if schedule is same)
-                // For simplified "Day View", usually if no future deps today, we can say "Done for today".
-                // But typically we look at tomorrow. 
-                // Let's just return empty next for now to avoid complexity, but we HAVE first/last.
+                // If today is finished, show the first arrivals of the next cycle (effectively tomorrow)
+                nextTimes = allDepartures.slice(0, 3);
             }
         }
         const result = {
@@ -449,7 +448,7 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
         if (stop.arrivalTimes) {
             stop.arrivalTimes.split(',').forEach(t => {
                 const [h, m] = t.split(':');
-                const hour = h.padStart(2, '0');
+                const hour = String(parseInt(h) % 24).padStart(2, '0');
                 const mins = m.padStart(2, '0');
                 if (!grouped[hour]) grouped[hour] = [];
                 if (!grouped[hour].includes(mins)) grouped[hour].push(mins);
@@ -539,7 +538,13 @@ export async function fetchArrivals(stopId) {
         subIds.forEach(sId => idsToCheck.add(sId));
     });
 
-    let combined = await api.fetchArrivalsForStopIds(Array.from(idsToCheck));
+    updateArrivalsLoadingState(true);
+    let combined;
+    try {
+        combined = await api.fetchArrivalsForStopIds(Array.from(idsToCheck));
+    } finally {
+        updateArrivalsLoadingState(false);
+    }
 
     // Group by route, prefer live over scheduled
     const arrivalsByRoute = new Map();
@@ -585,12 +590,29 @@ export async function fetchArrivals(stopId) {
     return unique;
 }
 
-// === RENDER ARRIVALS ===
+// === RENDER ARRIVALS
 export function renderArrivals(arrivalsData, currentStopId = null) {
     const listEl = document.getElementById('arrivals-list');
-    listEl.innerHTML = '';
+    if (!listEl) return;
 
     const stopId = currentStopId || window.currentStopId;
+
+    // --- CROSS-STOP PROTECTION ---
+    // If this render is for a stop that is no longer the current one, ignore it.
+    // This prevents async results from previous stops from overwriting the current UI.
+    if (stopId && window.currentStopId && String(stopId) !== String(window.currentStopId)) {
+        return;
+    }
+
+    // --- STOP CHANGE DETECTION ---
+    // If we've switched stops, we MUST clear the list immediately to avoid
+    // showing old stop's arrivals and to prevent ID collisions.
+    if (String(window._lastRenderedStopId) !== String(stopId)) {
+        listEl.innerHTML = '';
+        window._lastRenderedStopId = String(stopId);
+    }
+
+
 
     // --- STALENESS CHECK ---
     // Check if data is stale based on earliest arrival time
@@ -621,25 +643,41 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         console.log(`[Stale Check] Data is ${Math.round(dataAge)}s old, threshold ${staleThreshold}s for ${earliestMins}' arrival. Refreshing...`);
         window.arrivalsRefreshing = true;
 
+        // Show visible feedback for background refresh (at least one sequence)
+        updateArrivalsLoadingState(true);
+        const minDelay = new Promise(resolve => setTimeout(resolve, 1200));
+
         // Trigger async refresh
-        fetchArrivals(stopId).then(freshArrivals => {
+        Promise.all([fetchArrivals(stopId), minDelay]).then(([freshArrivals]) => {
             window.arrivalsDataTimestamp = Date.now();
             window.lastArrivals = freshArrivals;
-            window.arrivalsRefreshing = false;
             renderArrivals(freshArrivals, stopId);
         }).catch(err => {
             console.warn('[Stale Check] Refresh failed:', err.message);
+        }).finally(() => {
             window.arrivalsRefreshing = false;
+            updateArrivalsLoadingState(false);
         });
 
         // Still render current data while refreshing (don't return, just continue)
     }
 
-    // 0. Prepend All Routes (Chips)
+    // --- RENDER LOGIC ---
+
+    // 0. Ensure All Routes (Chips)
     if (window.lastRoutes) {
         const tiles = deps.renderAllRoutes(window.lastRoutes, arrivalsData);
-        if (tiles) listEl.appendChild(tiles);
+        let chipsContainer = listEl.querySelector('.all-routes-container');
+        if (!chipsContainer && tiles) {
+            // Chips should be at the very top
+            listEl.insertBefore(tiles, listEl.firstChild);
+        } else if (tiles) {
+            if (chipsContainer !== tiles) chipsContainer.replaceWith(tiles);
+        } else if (chipsContainer && !tiles) {
+            chipsContainer.remove();
+        }
     }
+
 
     // 1. Identify "Missing" Routes
     let extraRoutes = [];
@@ -958,20 +996,63 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         return nameA.localeCompare(nameB, undefined, { numeric: true });
     });
 
-    if (renderList.length === 0) {
-        const div = document.createElement('div');
-        div.className = 'empty';
-        div.textContent = deps.filterManager.state.active ? 'No arrivals for selected destination' : 'No upcoming arrivals';
-        listEl.appendChild(div);
-        return;
+    // -- FLIP ANIMATION START --
+    // 1. Record positions of existing items
+    const oldRects = new Map();
+    listEl.querySelectorAll('.arrival-item').forEach(el => {
+        oldRects.set(el.id, el.getBoundingClientRect());
+    });
+
+    const activeIds = new Set();
+
+    const emptyId = 'arrivals-empty-msg';
+    const isActuallyLoading = window.arrivalsLoading;
+
+    if (renderList.length === 0 && !isActuallyLoading) {
+        activeIds.add(emptyId);
+        let emptyDiv = document.getElementById(emptyId);
+        if (!emptyDiv) {
+            emptyDiv = document.createElement('div');
+            emptyDiv.id = emptyId;
+            emptyDiv.className = 'empty';
+            emptyDiv.style.opacity = '0';
+            // Use setTimeout to ensure it's in the DOM before animating
+            setTimeout(() => { if (emptyDiv) emptyDiv.style.opacity = '1'; }, 10);
+        }
+        const msg = (deps.filterManager && deps.filterManager.state.active) ? 'No arrivals for selected destination' : 'No upcoming arrivals';
+        if (emptyDiv.textContent !== msg) emptyDiv.textContent = msg;
+
+        // Position it
+        const chips = listEl.querySelector('.all-routes-container');
+        if (chips) {
+            if (chips.nextSibling !== emptyDiv) chips.after(emptyDiv);
+        } else if (listEl.firstChild !== emptyDiv) {
+            listEl.insertBefore(emptyDiv, listEl.firstChild);
+        }
+    } else {
+        const existingEmpty = document.getElementById(emptyId);
+        if (existingEmpty) existingEmpty.remove();
     }
 
-    // 5. Render Unified List
-    renderList.forEach(item => {
-        const div = document.createElement('div');
-        div.className = 'arrival-item'; // Unified class
-        div.style.borderLeftColor = item.color;
+    // 2. Diff and Render
+    renderList.forEach((item, index) => {
+        const routeId = item.data.id;
+        const dirIdx = item.directionIndex !== undefined ? item.directionIndex : 0;
+        const stableId = `route-${routeId}-${dirIdx}`;
+        activeIds.add(stableId);
+
+        let div = document.getElementById(stableId);
+        const isNew = !div;
+
+        if (isNew) {
+            div = document.createElement('div');
+            div.id = stableId;
+            div.className = 'arrival-item';
+            div.style.opacity = '0'; // Start invisible
+        }
+
         div.setAttribute('data-minutes', item.minutes);
+        div.style.borderLeftColor = item.color;
 
         // -- Data Prep --
         let routeShortName, headsign, timeDisplay, isScheduled, needsDisclaimer, routeIdForClick;
@@ -980,51 +1061,34 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         if (item.type === 'live') {
             const a = item.data;
             routeShortName = a.displayShortName || a.shortName;
-            headsign = item.headsign; // Pre-calculated
+            headsign = item.headsign;
             isScheduled = !a.realtime;
-            routeIdForClick = a.id; // Use specific ID if available
+            routeIdForClick = a.id;
 
-            // Time Display Logic
             const rawMins = item.minutes;
             if (rawMins === 999 || rawMins === null || rawMins === undefined) {
                 timeDisplay = '--:--';
             } else if (isScheduled) {
-                // Scheduled times always show h:mm format
                 timeDisplay = formatScheduledTime(rawMins);
             } else {
-                // Live/realtime shows minutes
                 timeDisplay = `${rawMins}'`;
             }
             if (isScheduled && timeDisplay !== '--:--' && !timeDisplay.includes('˚')) {
                 timeDisplay += '˚';
             }
-
             needsDisclaimer = isScheduled;
-
-            // Resolve proper route object for overrides if possible (re-using logic from prep)
-            // Simplified: we already calculated displayShortName in loop if we could.
-            // But we need routeObj for click handler.
         } else {
-            // Scheduled
             const r = item.data;
             routeShortName = r.customShortName || r.shortName;
 
-            // Heuristic Naming: Match LoopUtils logic
-            // User Feedback: Don't parse non-loop routes if headsign is available.
-            // Priority: Override > API Headsign > Parsed Destination (Heuristic) > Full LongName
-
-            // 0. CHECK OVERRIDES
-            // Resolve fresh route object from allRoutes to ensure we have the latest _overrides
-            // Fuzzy match ID just in case
             const freshRoute = deps.allRoutes().find(route =>
                 String(route.id) === String(r.id) ||
-                String(route.id) === `1:${r.id} ` ||
-                `1:${route.id} ` === String(r.id)
+                String(route.id) === `1:${r.id}` ||
+                `1:${route.id}` === String(r.id)
             ) || r;
 
             let overrideHeadsign = null;
             if (freshRoute._overrides && freshRoute._overrides.destinations) {
-                // Try to find a sensible direction index if not provided
                 const dirIdx = item.directionIndex !== undefined ? item.directionIndex : 0;
                 overrideHeadsign = deps.getPatternHeadsign(freshRoute, dirIdx, null);
             }
@@ -1048,30 +1112,26 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             isScheduled = true;
             needsDisclaimer = true;
             timeDisplay = item.timeDisplay || '--:--';
-            // Scheduled times always show h:mm format (no minutes override)
-
             routeIdForClick = r.id;
         }
 
-        // -- Fallbacks --
         if (!headsign || headsign === 'undefined') {
             headsign = 'Destination Unknown';
         }
 
-        // -- HTML Generation (Unified) --
         const scheduledClass = isScheduled ? 'scheduled-time' : '';
-
-        // Special ID for async update
         const timeElId = `time-${item.data.shortName}-${stopId}`;
         const timeElAttr = `id="${timeElId}"`;
-
-        // -- Bottom Bar Content --
-        // Default content (will be replaced by async schedule fetch)
-        let bottomContent = '&nbsp;';
         const bottomBarId = `bottom-${item.data.shortName}-${stopId}`;
         const bottomBarAttr = `id="${bottomBarId}"`;
 
-        // Render - Two-column layout: left (info) + right (time spanning both rows)
+        let bottomContent = '&nbsp;';
+        // Preserve bottom content if already exists
+        const existingBottom = div.querySelector('.arrival-card-bottom');
+        if (existingBottom && existingBottom.innerHTML.trim() !== '&nbsp;') {
+            bottomContent = existingBottom.innerHTML;
+        }
+
         const innerContent = `
             <div class="arrival-card-left">
                 <div class="arrival-card-top">
@@ -1089,31 +1149,43 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             </div>
         `;
 
-        div.innerHTML = innerContent;
+        if (div.innerHTML !== innerContent) {
+            div.innerHTML = innerContent;
+        }
 
-        // -- Click Handlers --
-        let routeObj = deps.allRoutes().find(r => r.id === routeIdForClick);
-        if (!routeObj && routeIdForClick) {
-            // Try normalized ID match (handles 1:R835 vs rR835)
-            routeObj = deps.allRoutes().find(r => normalizeRouteId(r.id) === normalizeRouteId(routeIdForClick));
-        }
-        if (!routeObj && item.data.shortName) {
-            routeObj = deps.allRoutes().find(r => r.shortName === item.data.shortName);
-        }
+        // Click handler (refresh every time to ensure latest closure)
+        let routeObj = deps.allRoutes().find(r => r.id === routeIdForClick) ||
+            deps.allRoutes().find(r => normalizeRouteId(r.id) === normalizeRouteId(routeIdForClick)) ||
+            deps.allRoutes().find(r => r.shortName === item.data.shortName);
 
         if (routeObj) {
-            div.addEventListener('click', () => {
+            div.onclick = () => {
                 deps.showRouteOnMap(routeObj, true, {
                     preserveBounds: true,
                     fromStopId: stopId,
                     targetHeadsign: headsign,
                     initialDirectionIndex: item.directionIndex
                 });
-            });
+            };
         }
 
-        // Append to list
-        listEl.appendChild(div);
+        // Insert at correct position
+        // Order: Chips (0 or 1) -> Cards
+        const chips = listEl.querySelector('.all-routes-container');
+        let offset = 0;
+        if (chips) offset++;
+
+        const targetIndex = index + offset;
+        const currentItems = Array.from(listEl.children);
+        if (currentItems[targetIndex] !== div) {
+            listEl.insertBefore(div, currentItems[targetIndex] || null);
+        }
+
+        if (isNew) {
+            requestAnimationFrame(() => {
+                div.style.opacity = '1';
+            });
+        }
 
         // -- Async Fetch Hook for Schedule Info (First/Last) --
         // We do this for BOTH live and scheduled items to get the first/last info
@@ -1178,63 +1250,146 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         }
     });
 
-    // Initial Sort
-    sortArrivalsList();
+    // Remove obsolete items
+    listEl.querySelectorAll('.arrival-item').forEach(el => {
+        if (!activeIds.has(el.id)) {
+            el.style.opacity = '0';
+            el.style.transform = 'scale(0.95)';
+            setTimeout(() => el.remove(), 400);
+        }
+    });
 
-    // --- COUNTDOWN TIMER ---
-    // Update displayed times every 10 seconds based on elapsed time since fetch
-    if (window.arrivalsCountdownTimer) {
-        clearInterval(window.arrivalsCountdownTimer);
-    }
+    // 3. FLIP Play
+    requestAnimationFrame(() => {
+        listEl.querySelectorAll('.arrival-item').forEach(el => {
+            const oldRect = oldRects.get(el.id);
+            if (!oldRect) return;
 
-    window.arrivalsCountdownTimer = setInterval(() => {
-        const fetchTime = window.arrivalsDataTimestamp || Date.now();
-        const elapsedMinutes = (Date.now() - fetchTime) / 60000;
+            const newRect = el.getBoundingClientRect();
+            const dy = oldRect.top - newRect.top;
+            const dx = oldRect.left - newRect.left;
 
-        const arrivalItems = document.querySelectorAll('.arrival-item');
-        let needsResort = false;
+            if (dy !== 0 || dx !== 0) {
+                el.style.transition = 'none';
+                el.style.transform = `translate(${dx}px, ${dy}px)`;
 
-        arrivalItems.forEach(item => {
-            const originalMinutes = parseInt(item.getAttribute('data-minutes-original') || item.getAttribute('data-minutes') || '9999');
-
-            // Store original if not already stored
-            if (!item.hasAttribute('data-minutes-original')) {
-                item.setAttribute('data-minutes-original', originalMinutes);
-            }
-
-            // Calculate adjusted minutes (rounded down at X:30)
-            const adjustedRaw = originalMinutes - elapsedMinutes;
-            const adjustedMinutes = Math.max(0, Math.round(adjustedRaw));
-
-            // Only update if changed
-            const currentMinutes = parseInt(item.getAttribute('data-minutes') || '9999');
-            if (adjustedMinutes !== currentMinutes && adjustedMinutes >= 0) {
-                item.setAttribute('data-minutes', adjustedMinutes);
-
-                // Update primary time display
-                const timeEl = item.querySelector('.led-text');
-                if (timeEl) {
-                    const isScheduledItem = timeEl.classList.contains('scheduled-time');
-                    // Only update to minutes format for live (non-scheduled) arrivals
-                    if (adjustedMinutes < 30 && !isScheduledItem) {
-                        timeEl.textContent = `${adjustedMinutes}'`;
-                    }
-
-                    // Add urgent fading animation for ≤2 min live arrivals (not scheduled)
-                    if (adjustedMinutes <= 2 && !isScheduledItem) {
-                        timeEl.classList.add('urgent-arrival');
-                    } else {
-                        timeEl.classList.remove('urgent-arrival');
-                    }
-                }
-
-                needsResort = true;
+                requestAnimationFrame(() => {
+                    el.style.transition = '';
+                    el.style.transform = '';
+                });
             }
         });
+    });
 
-        if (needsResort) {
-            sortArrivalsList();
-        }
-    }, 10000); // Update every 10 seconds
 }
+
+// Initial Sort
+sortArrivalsList();
+
+// --- COUNTDOWN TIMER ---
+// Update displayed times every 10 seconds based on elapsed time since fetch
+if (window.arrivalsCountdownTimer) {
+    clearInterval(window.arrivalsCountdownTimer);
+}
+
+window.arrivalsCountdownTimer = setInterval(() => {
+    const fetchTime = window.arrivalsDataTimestamp || Date.now();
+    const elapsedMinutes = (Date.now() - fetchTime) / 60000;
+
+    const arrivalItems = document.querySelectorAll('.arrival-item');
+    let needsResort = false;
+
+    arrivalItems.forEach(item => {
+        const originalMinutes = parseInt(item.getAttribute('data-minutes-original') || item.getAttribute('data-minutes') || '9999');
+
+        // Store original if not already stored
+        if (!item.hasAttribute('data-minutes-original')) {
+            item.setAttribute('data-minutes-original', originalMinutes);
+        }
+
+        // Calculate adjusted minutes (rounded down at X:30)
+        const adjustedRaw = originalMinutes - elapsedMinutes;
+        const adjustedMinutes = Math.max(0, Math.round(adjustedRaw));
+
+        // Only update if changed
+        const currentMinutes = parseInt(item.getAttribute('data-minutes') || '9999');
+        if (adjustedMinutes !== currentMinutes && adjustedMinutes >= 0) {
+            item.setAttribute('data-minutes', adjustedMinutes);
+
+            // Update primary time display
+            const timeEl = item.querySelector('.led-text');
+            if (timeEl) {
+                const isScheduledItem = timeEl.classList.contains('scheduled-time');
+                // Only update to minutes format for live (non-scheduled) arrivals
+                if (adjustedMinutes < 30 && !isScheduledItem) {
+                    timeEl.textContent = `${adjustedMinutes}'`;
+                }
+
+                // Add urgent fading animation for ≤2 min live arrivals (not scheduled)
+                if (adjustedMinutes <= 2 && !isScheduledItem) {
+                    timeEl.classList.add('urgent-arrival');
+                } else {
+                    timeEl.classList.remove('urgent-arrival');
+                }
+            }
+
+            needsResort = true;
+        }
+    });
+
+    if (needsResort) {
+        sortArrivalsList();
+    }
+}, 10000); // Update every 10 seconds
+// --- LOADING INDICATOR HELPERS ---
+
+let loadingStatusTimeout = null;
+window._arrivalsLoadingCount = 0;
+
+export function updateArrivalsLoadingState(visible) {
+    if (visible) window._arrivalsLoadingCount++;
+    else window._arrivalsLoadingCount = Math.max(0, window._arrivalsLoadingCount - 1);
+
+    const isCurrentlyLoading = window._arrivalsLoadingCount > 0;
+    window.arrivalsLoading = isCurrentlyLoading;
+
+    const handles = document.querySelectorAll('.drag-handle');
+
+    if (isCurrentlyLoading) {
+        handles.forEach(h => h.classList.add('loading'));
+
+        // Show "Refreshing..." after 1.5s
+        if (loadingStatusTimeout) clearTimeout(loadingStatusTimeout);
+        loadingStatusTimeout = setTimeout(() => {
+            if (window.arrivalsLoading) {
+                handles.forEach(h => {
+                    let status = h.parentElement.querySelector('.loading-status-text');
+                    if (!status) {
+                        status = document.createElement('div');
+                        status.className = 'loading-status-text';
+                        status.textContent = 'Refreshing...';
+                        h.after(status);
+                    }
+                    setTimeout(() => status.classList.add('visible'), 10);
+                });
+            }
+        }, 1500);
+    } else {
+        if (loadingStatusTimeout) clearTimeout(loadingStatusTimeout);
+        handles.forEach(h => {
+            h.classList.remove('loading');
+            const status = h.parentElement.querySelector('.loading-status-text');
+            if (status) {
+                status.classList.remove('visible');
+                // Remove after fade
+                setTimeout(() => {
+                    if (!window.arrivalsLoading && status.parentElement) {
+                        status.remove();
+                    }
+                }, 300);
+            }
+        });
+    }
+}
+
 
