@@ -301,10 +301,28 @@ export default defineConfig({
                 globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'], // Cache everything
                 runtimeCaching: [
                     {
-                        urlPattern: ({ url }) => url.pathname.startsWith('/pis-gateway/api/'),
+                        // Real-time data: Network Only (do not cache)
+                        urlPattern: ({ url }) =>
+                            url.pathname.includes('/arrival-times') ||
+                            url.pathname.includes('/positions'),
+                        handler: 'NetworkOnly',
+                        options: {
+                            cacheName: 'api-realtime-v1',
+                            expiration: {
+                                maxEntries: 10,
+                                maxAgeSeconds: 10 // Very short just in case
+                            }
+                        }
+                    },
+                    {
+                        // Static/Structural API data: Cache aggressively
+                        urlPattern: ({ url }) =>
+                            url.pathname.startsWith('/pis-gateway/api/') &&
+                            !url.pathname.includes('/arrival-times') &&
+                            !url.pathname.includes('/positions'),
                         handler: 'StaleWhileRevalidate',
                         options: {
-                            cacheName: 'api-cache-v2',
+                            cacheName: 'api-static-v2',
                             expiration: {
                                 maxEntries: 100,
                                 maxAgeSeconds: 60 * 60 * 24 * 30 // 30 Days
@@ -380,8 +398,8 @@ export default defineConfig({
                         proxyReq.removeHeader('sec-ch-ua-platform');
                     });
                     proxy.on('proxyRes', (proxyRes, req, _res) => {
-                        if (proxyRes.statusCode === 520) {
-                            console.log('Received 520 Response from the Target:', req.url);
+                        if (proxyRes.statusCode !== 200) {
+                            console.log(`[Proxy] Response: ${proxyRes.statusCode} ${proxyRes.statusMessage} for ${req.url}`);
                         }
                     });
                 }
