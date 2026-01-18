@@ -1,0 +1,10 @@
+{
+  "appId": "ge.ttc.transit",
+  "appName": "Tbilisi Transit",
+  "webDir": "dist",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

@@ -75,17 +75,37 @@ export const RouteGeometry = {
      * @param {String} [longName] 
      * @returns {Array}
      */
-    generateVirtualPatterns: (originalPattern, stops, longName) => {
+    generateVirtualPatterns: (originalPattern, stops, longName, forcedSplitStopId = null) => {
         // Default: 50/50 Fallback
         let splitIndex = Math.ceil(stops.length * 0.5);
         let startIndex = Math.floor(stops.length * 0.5);
 
         let splitStop = null;
 
-        // Smart Split: Find the stop matching the Headsign (Destination)
+        if (forcedSplitStopId) {
+            console.log(`[VirtualPattern] Forced Split Requested: ${forcedSplitStopId} (Type: ${typeof forcedSplitStopId})`);
+            // Priority 1: Forced Split Stop ID from Overrides
+            for (let i = 0; i < stops.length; i++) {
+                const sId = String(stops[i].id || stops[i].stopId);
+                // Robust check (handle "1:123" vs "123")
+                if (sId === String(forcedSplitStopId) || sId.endsWith(`:${forcedSplitStopId}`)) {
+                    console.log(`[VirtualPattern] MATCH FOUND at index ${i}: ${sId}`);
+                    splitIndex = i + 1;
+                    startIndex = i;
+                    splitStop = stops[i];
+                    break;
+                }
+            }
+            if (!splitStop) {
+                console.warn(`[VirtualPattern] Forced split stop ${forcedSplitStopId} NOT found in stops list.`);
+                console.warn(`[VirtualPattern] Available Stops:`, stops.map(s => `"${s.id || s.stopId}" (${s.name})`).join(', '));
+            }
+        }
+
+        // Priority 2: Smart Split based on Headsign (if no forced split found/provided)
         const targetName = originalPattern.headsign;
 
-        if (targetName) {
+        if (!splitStop && targetName) {
             // Scan for destination stop (middle 60% search window)
             const searchStart = Math.floor(stops.length * 0.2);
             const searchEnd = Math.floor(stops.length * 0.8);
@@ -118,7 +138,7 @@ export const RouteGeometry = {
             _virtual: true,
             _slice: [0, splitIndex],
             stops: stops.slice(0, splitIndex), // Slice stops immediately
-            _splitPoint: splitStop ? { lat: splitStop.lat, lon: splitStop.lon } : null
+            _splitPoint: splitStop ? { lat: splitStop.lat, lon: splitStop.lon, id: splitStop.id || splitStop.stopId } : null
         };
 
         // Part 1
@@ -129,7 +149,7 @@ export const RouteGeometry = {
             _virtual: true,
             _slice: [startIndex, stops.length],
             stops: stops.slice(startIndex), // Slice stops immediately
-            _splitPoint: splitStop ? { lat: splitStop.lat, lon: splitStop.lon } : null
+            _splitPoint: splitStop ? { lat: splitStop.lat, lon: splitStop.lon, id: splitStop.id || splitStop.stopId } : null
         };
 
         return [p0, p1];
@@ -199,6 +219,7 @@ export const RouteGeometry = {
                 }
 
                 if (closestIndex !== -1) {
+                    console.log(`[SlicePolyline] Split closest index: ${closestIndex}, dist: ${minDist.toFixed(7)}`);
                     splitIndex = closestIndex + 1;
                     startIndex = closestIndex;
                 }
@@ -427,7 +448,9 @@ export const RouteGeometry = {
         pattern._fetchingPolyline = true;
 
         try {
-            const data = await api.fetchRoutePolylineV3(route.id, pattern.suffix, options);
+            console.log(`[RouteGeometry] Fetching poly for ${route.id} ${pattern.suffix}. SplitPoint:`, pattern._splitPoint);
+            const fetchOptions = { ...options, splitPoint: pattern._splitPoint };
+            const data = await api.fetchRoutePolylineV3(route.id, pattern.suffix, fetchOptions);
 
             let entry = data[pattern.suffix];
             let encoded = null;

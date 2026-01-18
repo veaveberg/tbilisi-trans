@@ -1264,10 +1264,17 @@ export async function fetchRouteDetailsV3(routeId, options = {}) {
                     }
 
                     if (stops && RouteGeometry.isLoop(stops, route.shortName)) {
+                        let forcedId = null;
+                        if (data._overrides) {
+                            forcedId = data._overrides.terminusStopId_override ||
+                                data._overrides.terminusStopId ||
+                                data._overrides.virtualTerminusStopId;
+                        }
                         const virtualPatterns = RouteGeometry.generateVirtualPatterns(
                             originalPattern,
                             stops,
-                            route.longName
+                            route.longName,
+                            forcedId
                         );
                         route.patterns = virtualPatterns;
                         v3Cache.patterns.set(route.id, virtualPatterns);
@@ -1497,15 +1504,23 @@ export async function fetchRoutePolylineV3(routeId, patternSuffixes, options = {
 
                     const fullPolylinePoints = decodePolyline(fullPolylineEncoded);
 
-                    // Look for split point in cache
+                    // Look for split point: explicit option > cache
                     let splitPoint = null;
-                    if (cachedPatterns) {
+                    if (options.splitPoint) {
+                        splitPoint = options.splitPoint;
+                        console.log(`[API] Using explicit split point for ${virtual}:`, splitPoint);
+                    } else if (cachedPatterns) {
                         const p = cachedPatterns.find(pat => pat.patternSuffix === virtual);
-                        if (p && p._splitPoint) splitPoint = p._splitPoint;
+                        if (p && p._splitPoint) {
+                            splitPoint = p._splitPoint;
+                            console.log(`[API] Using cached split point for ${virtual}:`, splitPoint.id);
+                        }
                     }
 
                     // Slice using simple geometry midpoint (no stops needed currently)
-                    polylineData[virtual] = RouteGeometry.slicePolyline(fullPolylinePoints, virtual, splitPoint);
+                    const sliced = RouteGeometry.slicePolyline(fullPolylinePoints, virtual, splitPoint);
+                    console.log(`[API] Sliced ${virtual}: ${sliced ? sliced.length : 'null'} points (Original: ${fullPolylinePoints.length})`);
+                    polylineData[virtual] = sliced;
                 } catch (e) {
                     console.warn(`[API] Polyline slice failed for ${virtual}`, e);
                     polylineData[virtual] = polylineData[real]; // Fallback to full (encoded string)

@@ -438,9 +438,9 @@ body.dark-mode .edit-restore-btn img {
     opacity: 0.55;
     padding: 0 8px 1px 8px;
     /* Aligned with input text (8px) */
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    white-space: normal;
     user-select: text;
     -webkit-user-select: text;
     display: block;

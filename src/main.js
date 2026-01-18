@@ -2032,13 +2032,29 @@ async function updateRouteView(route, options = {}) {
             for (const p of patterns) {
                 const stops = await api.fetchRouteStopsV3(route.id, p.patternSuffix, { strategy });
                 if (RouteGeometry.isLoop(stops, route.shortName)) {
-                    const virtuals = RouteGeometry.generateVirtualPatterns(p, stops, route.longName);
+                    let forcedId = null;
+
+                    // Use fresh overrides from details if available, otherwise fallback to route object
+                    const activeOverrides = routeDetails._overrides || route._overrides;
+
+                    // Sync overrides to route object for consistency
+                    if (routeDetails._overrides) {
+                        route._overrides = routeDetails._overrides;
+                    }
+
+                    if (activeOverrides) {
+                        forcedId = activeOverrides.terminusStopId_override ||
+                            activeOverrides.terminusStopId ||
+                            activeOverrides.virtualTerminusStopId;
+                    }
+                    const virtuals = RouteGeometry.generateVirtualPatterns(p, stops, route.longName, forcedId);
                     processedPatterns.push(...virtuals);
                 } else {
                     processedPatterns.push(p);
                 }
             }
             routeDetails.patterns = processedPatterns;
+            route.patterns = processedPatterns;
             // ---------------------------
 
             // Auto-Direction Logic:
@@ -2350,7 +2366,7 @@ async function updateRouteView(route, options = {}) {
         currentRoute = null;
         window.currentRoute = null;
         // Try to go back if there's history
-        if (historyStack.length > 0) {
+        if (window.historyStack && window.historyStack.length > 0) {
             goBack();
         }
     }

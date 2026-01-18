@@ -1,4 +1,10 @@
 import mapboxgl from 'mapbox-gl';
+import { Geolocation } from '@capacitor/geolocation';
+
+import iconLocationOff from '/public/location.svg';
+import iconLocationFollow from '/public/location.fill.svg';
+import iconLocationHeading from '/public/location.north.line.fill.svg';
+import iconLocationSlashed from '/public/location.slash.svg';
 
 export const LOCATION_STATES = {
     OFF: 'OFF',
@@ -7,10 +13,10 @@ export const LOCATION_STATES = {
 };
 
 const LOCATION_ICONS = {
-    OFF: `<img src="/tbilisi-trans/location.svg" width="24" height="24">`,
-    FOLLOW: `<img src="/tbilisi-trans/location.fill.svg" width="24" height="24">`,
-    HEADING: `<img src="/tbilisi-trans/location.north.line.fill.svg" width="24" height="24">`,
-    SLASHED: `<img src="/tbilisi-trans/location.slash.svg" width="24" height="24">`
+    OFF: `<img src="${iconLocationOff}" width="24" height="24">`,
+    FOLLOW: `<img src="${iconLocationFollow}" width="24" height="24">`,
+    HEADING: `<img src="${iconLocationHeading}" width="24" height="24">`,
+    SLASHED: `<img src="${iconLocationSlashed}" width="24" height="24">`
 };
 
 // Internal State
@@ -30,6 +36,65 @@ let isHeadingSupported = false;
 let isWaitingForFirstLocation = false;
 let isAutoShowingMarker = false;
 
+const isCapacitor = typeof window !== 'undefined' && window.Capacitor;
+
+// Wrapper to make Capacitor Geolocation look like navigator.geolocation for Mapbox
+const capacitorGeolocation = {
+    getCurrentPosition: async (success, error, options) => {
+        try {
+            const position = await Geolocation.getCurrentPosition({
+                enableHighAccuracy: options?.enableHighAccuracy || false,
+                timeout: options?.timeout || 10000,
+                maximumAge: options?.maximumAge || 0
+            });
+            success({
+                coords: {
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    accuracy: position.coords.accuracy,
+                    heading: position.coords.heading,
+                    speed: position.coords.speed,
+                    altitude: position.coords.altitude,
+                    altitudeAccuracy: position.coords.altitudeAccuracy
+                },
+                timestamp: position.timestamp
+            });
+        } catch (err) {
+            if (error) error(err);
+        }
+    },
+    watchPosition: (success, error, options) => {
+        const id = Geolocation.watchPosition({
+            enableHighAccuracy: options?.enableHighAccuracy || true,
+            timeout: options?.timeout || 10000,
+            maximumAge: options?.maximumAge || 0
+        }, (position, err) => {
+            if (err) {
+                if (error) error(err);
+                return;
+            }
+            if (position) {
+                success({
+                    coords: {
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                        accuracy: position.coords.accuracy,
+                        heading: position.coords.heading,
+                        speed: position.coords.speed,
+                        altitude: position.coords.altitude,
+                        altitudeAccuracy: position.coords.altitudeAccuracy
+                    },
+                    timestamp: position.timestamp
+                });
+            }
+        });
+        return id; // Return promise/id string
+    },
+    clearWatch: (id) => {
+        Geolocation.clearWatch({ id });
+    }
+};
+
 // Geolocate Control
 const geolocate = new mapboxgl.GeolocateControl({
     positionOptions: {
@@ -38,7 +103,9 @@ const geolocate = new mapboxgl.GeolocateControl({
     },
     trackUserLocation: true,
     showUserHeading: false, // Handle manually to prevent conflicts
-    showAccuracyCircle: true
+    showAccuracyCircle: true,
+    // CRITICAL: Inject the Native Wrapper if in Capacitor
+    geolocation: isCapacitor ? capacitorGeolocation : navigator.geolocation
 });
 
 // Defensive fix 

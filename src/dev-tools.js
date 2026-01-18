@@ -1,5 +1,6 @@
 
 import mapboxgl from 'mapbox-gl';
+import { RouteGeometry } from './route-geometry.js';
 
 // --- State ---
 let isEditing = false;
@@ -237,6 +238,7 @@ async function startEditingRoute(routeId) {
         const { convex, restoreApiId, sources } = await import('./api.js');
         const source = sources.find(s => s.id === sourceId) || sources[0];
         const dbRouteId = restoreApiId(stableId, source);
+        routeEditState.dbRouteId = dbRouteId;
 
         const override = await convex.query("transit:getOverride", { routeId: dbRouteId });
 
@@ -270,6 +272,7 @@ async function startEditingRoute(routeId) {
                 dest1EnOverride: override.dest1_en_override,
                 dest1KaOverride: override.dest1_ka_override,
                 dest1RuOverride: override.dest1_ru_override,
+                virtualTerminusStopId: override.virtualTerminusStopId,
             };
             // Clean undefined values
             Object.keys(convexOverrides).forEach(k => {
@@ -303,7 +306,7 @@ async function startEditingRoute(routeId) {
     // --- Debug Info ---
     const debugId = document.getElementById('route-edit-debug-id');
     const debugShort = document.getElementById('route-edit-debug-short');
-    if (debugId) debugId.textContent = routeId;
+    if (debugId) debugId.textContent = routeEditState.dbRouteId || routeId;
     if (debugShort) debugShort.textContent = routeObj.shortName || '-';
 
     // --- Inline Original Values ---
@@ -398,7 +401,17 @@ async function startEditingRoute(routeId) {
     }
 
 
-    setVal('route-edit-terminus', convexOverrides.terminusStopIdOverride || convexOverrides.terminusStopId || '');
+    // Auto-Terminus Calculation (Split Loops)
+    let autoTerminusId = '';
+    if (routeObj.patterns) {
+        const virtualPattern = routeObj.patterns.find(p => p._virtual && p._splitPoint && p._splitPoint.id);
+        if (virtualPattern) {
+            autoTerminusId = virtualPattern._splitPoint.id;
+        }
+    }
+    routeEditState.autoTerminusId = autoTerminusId;
+
+    setVal('route-edit-terminus', convexOverrides.terminusStopIdOverride || convexOverrides.terminusStopId || convexOverrides.virtualTerminusStopId || autoTerminusId);
 
     const terminusNameEl = document.getElementById('route-edit-terminus-name');
     if (terminusNameEl) {
@@ -463,6 +476,9 @@ async function saveRouteOverrides() {
         }
         if (editedOverrides.terminusStopIdOverride !== undefined) {
             updates.terminusStopId_override = editedOverrides.terminusStopIdOverride;
+        }
+        if (routeEditState.autoTerminusId) {
+            updates.virtualTerminusStopId = routeEditState.autoTerminusId;
         }
         if (editedOverrides.longNameEnOverride !== undefined) {
             updates.longName_en_override = editedOverrides.longNameEnOverride;
@@ -1717,4 +1733,87 @@ async function saveAllRoutesChanges() {
     }
 
 }
+
+export async function populateAllVirtualTermini() {
+    console.log('[DevTools] Starting batch population of virtual termini...');
+    const allRoutes = _dataProvider.getAllRoutes();
+    const { convex, fetchRouteStopsV3, fetchRouteDetailsV3, restoreApiId, sources } = await import('./api.js');
+
+    let processed = 0;
+    let loopsFound = 0;
+    let saved = 0;
+
+    for (const route of allRoutes) {
+        processed++;
+        const routeId = route.id;
+
+        // If patterns are missing, fetch details to load them
+        let routeWithPatterns = route;
+        if (!route.patterns || route.patterns.length === 0) {
+            try {
+                // console.log(`[Batch] Loading details for ${route.shortName}...`);
+                const details = await fetchRouteDetailsV3(routeId);
+                if (details) routeWithPatterns = details;
+            } catch (e) {
+                console.warn(`[Batch] Failed to load details for ${route.shortName}:`, e.message);
+            }
+        }
+
+        let patterns = routeWithPatterns.patterns;
+        if (!patterns || patterns.length === 0) {
+            // console.log(`[Batch] ${route.shortName}: No patterns found.`);
+            continue;
+        }
+
+        let autoTerminusId = '';
+
+        // Case 1: Already split loop
+        const virtualPattern = patterns.find(p => p._virtual && p._splitPoint && p._splitPoint.id);
+        if (virtualPattern) {
+            autoTerminusId = virtualPattern._splitPoint.id;
+        }
+        // Case 2: Unsplit loop (identified by having 1 pattern that is a loop)
+        else if (patterns.length === 1) {
+            try {
+                const stops = await fetchRouteStopsV3(routeId, patterns[0].patternSuffix);
+                if (RouteGeometry.isLoop(stops, routeWithPatterns.shortName)) {
+                    console.log(`[Batch] ${routeWithPatterns.shortName} identified as loop.`);
+                    const virtuals = RouteGeometry.generateVirtualPatterns(patterns[0], stops, routeWithPatterns.longName);
+                    if (virtuals && virtuals.length > 0 && virtuals[0]._splitPoint) {
+                        autoTerminusId = virtuals[0]._splitPoint.id;
+                        console.log(`[Batch] Generated virtual terminus for ${routeWithPatterns.shortName}: ${autoTerminusId}`);
+                    }
+                }
+            } catch (e) {
+                console.warn(`[Batch] Error processing ${routeWithPatterns.shortName}:`, e.message);
+            }
+        }
+
+        if (autoTerminusId) {
+            loopsFound++;
+            try {
+                let sourceId = routeWithPatterns._source || 'tbilisi';
+                if (String(routeId).startsWith('r') && String(routeId).length > 1 && String(routeId)[1] === 'R') {
+                    sourceId = 'rustavi';
+                }
+                const source = sources.find(s => s.id === sourceId) || sources[0];
+                const dbRouteId = restoreApiId(String(routeId), source);
+
+                await convex.mutation("transit:updateOverride", {
+                    routeId: dbRouteId,
+                    updates: { virtualTerminusStopId: autoTerminusId }
+                });
+                saved++;
+                console.log(`[Batch] Saved virtual terminus ${autoTerminusId} for route ${routeWithPatterns.shortName}`);
+            } catch (e) {
+                console.error(`[Batch] Error saving ${routeWithPatterns.shortName}:`, e.message);
+            }
+        }
+    }
+
+    console.log(`[Batch] Complete. Processed: ${processed}, Loops found: ${loopsFound}, Updated: ${saved}`);
+    return { processed, loopsFound, saved };
+}
+
+window.populateAllVirtualTermini = populateAllVirtualTermini;
 

@@ -238,7 +238,12 @@ export function setupHoverHandlers(context) {
     map.on('mousemove', (e) => {
         if (window.ignoreMapClicks || window.isPickModeActive) return;
 
-        const features = map.queryRenderedFeatures(e.point);
+        let features = [];
+        try {
+            features = map.queryRenderedFeatures(e.point);
+        } catch (err) {
+            // Ignore style mismatch errors during loading
+        }
         const hasClickableFeature = features.some(f => {
             const layerId = f.layer ? f.layer.id : '';
             const isTransport = ALL_STOP_LAYERS.includes(layerId) ||

@@ -62,19 +62,30 @@ export default defineSchema({
         longName_en_override: v.optional(v.string()),
         longName_ka: v.optional(v.string()),
         longName_ka_override: v.optional(v.string()),
+        longName_ru: v.optional(v.string()),
         longName_ru_override: v.optional(v.string()),
+
 
         dest0_en: v.optional(v.string()),
         dest0_en_override: v.optional(v.string()),
         dest0_ka: v.optional(v.string()),
         dest0_ka_override: v.optional(v.string()),
+        dest0_ru: v.optional(v.string()),
         dest0_ru_override: v.optional(v.string()),
+
 
         dest1_en: v.optional(v.string()),
         dest1_en_override: v.optional(v.string()),
         dest1_ka: v.optional(v.string()),
         dest1_ka_override: v.optional(v.string()),
+        dest1_ru: v.optional(v.string()),
         dest1_ru_override: v.optional(v.string()),
+
+
+        terminusStopId: v.optional(v.string()),
+        terminusStopName: v.optional(v.string()),
+        terminusStopId_override: v.optional(v.string()),
+        virtualTerminusStopId: v.optional(v.string()),
 
         invertDirection: v.optional(v.boolean()),
     })

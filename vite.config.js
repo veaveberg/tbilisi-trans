@@ -354,7 +354,7 @@ export default defineConfig({
             }
         })
     ],
-    base: '/tbilisi-trans/', // For GitHub Pages
+    base: process.env.VITE_BASE_URL || '/tbilisi-trans/', // Defaults to GH Pages, override for Capacitor
     server: {
         watch: {
             // Ignore the JSON/CSV data files to avoid infinite reload loops when script updates them

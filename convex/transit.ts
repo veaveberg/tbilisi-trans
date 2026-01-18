@@ -1,4 +1,4 @@
-import { action, mutation, query, internalMutation, internalQuery } from "./_generated/server";
+import { action, mutation, query, internalMutation, internalQuery, internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { internal, api } from "./_generated/api";
 
@@ -55,13 +55,13 @@ async function fetchWithRetry(url: string, options: any, retries = 3) {
 // --- Mutations ---
 
 // Clear and replace stops for a source/locale
-export const saveStops = mutation({
+export const saveStops = internalMutation({
     args: {
         sourceId: v.string(),
         locale: v.string(),
         stops: v.array(v.any())
     },
-    handler: async (ctx, { sourceId, locale, stops }) => {
+    handler: async (ctx, { sourceId, locale, stops }): Promise<void> => {
         for (const stop of stops) {
             const stopId = stop.id.toString();
 
@@ -84,13 +84,13 @@ export const saveStops = mutation({
     }
 });
 
-export const saveRoutes = mutation({
+export const saveRoutes = internalMutation({
     args: {
         sourceId: v.string(),
         locale: v.string(),
         routes: v.array(v.any())
     },
-    handler: async (ctx, { sourceId, locale, routes }) => {
+    handler: async (ctx, { sourceId, locale, routes }): Promise<void> => {
         for (const route of routes) {
             const routeId = route.id.toString();
             const existing = await ctx.db
@@ -112,7 +112,7 @@ export const saveRoutes = mutation({
     }
 });
 
-export const saveRouteDetails = mutation({
+export const saveRouteDetails = internalMutation({
     args: {
         sourceId: v.string(),
         locale: v.string(),
@@ -121,7 +121,7 @@ export const saveRouteDetails = mutation({
         schedules: v.array(v.object({ key: v.string(), suffix: v.string(), data: v.any() })),
         polylines: v.array(v.object({ key: v.string(), suffix: v.string(), data: v.any() }))
     },
-    handler: async (ctx, { sourceId, locale, routeId, details, schedules, polylines }) => {
+    handler: async (ctx, { sourceId, locale, routeId, details, schedules, polylines }): Promise<void> => {
         const NOW = Date.now();
 
         // 1. Details
@@ -178,7 +178,7 @@ export const saveRouteDetails = mutation({
 
 export const saveOverrides = mutation({
     args: { overrides: v.array(v.any()) },
-    handler: async (ctx, { overrides }) => {
+    handler: async (ctx, { overrides }): Promise<void> => {
         for (const ov of overrides) {
             const routeId = ov.id; // CSV uses 'id'
             if (!routeId) continue;
@@ -201,11 +201,12 @@ export const saveOverrides = mutation({
     }
 });
 
+
 // --- Actions ---
 
-export const fetchMasterData = action({
+export const fetchMasterData = internalAction({
     args: { sourceId: v.string() },
-    handler: async (ctx, { sourceId }) => {
+    handler: async (ctx, { sourceId }): Promise<void> => {
         const config = SOURCES[sourceId as keyof typeof SOURCES];
         if (!config) throw new Error("Invalid source");
 
@@ -238,12 +239,12 @@ export const fetchMasterData = action({
 });
 
 // Used to fetch details for a Specific List of routes (batching handled by caller)
-export const fetchRouteDetailsBatch = action({
+export const fetchRouteDetailsBatch = internalAction({
     args: {
         sourceId: v.string(),
         routeIds: v.array(v.string())
     },
-    handler: async (ctx, { sourceId, routeIds }) => {
+    handler: async (ctx, { sourceId, routeIds }): Promise<void> => {
         const config = SOURCES[sourceId as keyof typeof SOURCES];
         if (!config) throw new Error("Invalid source");
 
@@ -335,13 +336,13 @@ export const getRouteIds = internalQuery({
 
 export const syncSource = action({
     args: { sourceId: v.string() },
-    handler: async (ctx, { sourceId }) => {
+    handler: async (ctx, { sourceId }): Promise<{ status: string, totalRoutes: number, batches: number }> => {
         // 1. Fetch Lists
         console.log(`Fetch master with ${sourceId}`)
         await ctx.runAction(internal.transit.fetchMasterData, { sourceId });
 
         // 2. Get Route IDs
-        const routeIds = await ctx.runQuery(internal.transit.getRouteIds, { sourceId, locale: 'en' });
+        const routeIds: string[] = await ctx.runQuery(internal.transit.getRouteIds, { sourceId, locale: 'en' });
         console.log(`Syncing details for ${routeIds.length} routes...`);
 
         // 3. Batch and Schedule
@@ -366,7 +367,7 @@ export const getRoutes = query({
         sourceId: v.string(),
         locale: v.string()
     },
-    handler: async (ctx, { sourceId, locale }) => {
+    handler: async (ctx, { sourceId, locale }): Promise<any> => {
         const routes = await ctx.db
             .query("routes")
             .withIndex("by_source_locale", q => q.eq("source", sourceId).eq("locale", locale))
@@ -440,7 +441,10 @@ export const getRoutes = query({
                                 ru: ov.dest1_ru_override || ov.dest1_ru
                             }
                         }
-                    ]
+                    ],
+                    terminusStopId: ov.terminusStopId,
+                    terminusStopId_override: ov.terminusStopId_override,
+                    virtualTerminusStopId: ov.virtualTerminusStopId
                 };
             } else {
                 routeData._debug = {
@@ -471,7 +475,7 @@ export const getRouteDetails = query({
         locale: v.string(),
         routeId: v.string()
     },
-    handler: async (ctx, { sourceId, locale, routeId }) => {
+    handler: async (ctx, { sourceId, locale, routeId }): Promise<any> => {
         // Robust lookup: try multiple ID variations
         const lookupIds = [routeId];
         const strippedId = routeId.replace(/^[12]:/, '');
@@ -578,7 +582,10 @@ export const getRouteDetails = query({
                         ru: override.dest1_ru_override || override.dest1_ru
                     }
                 }
-            ]
+            ],
+            terminusStopId: override.terminusStopId,
+            terminusStopId_override: override.terminusStopId_override,
+            virtualTerminusStopId: override.virtualTerminusStopId
         } : null;
 
         return {
@@ -628,9 +635,12 @@ export const updateOverride = mutation({
             dest1_ka_override: v.optional(v.string()),
             dest1_ru_override: v.optional(v.string()),
             terminusStopId_override: v.optional(v.string()),
+            terminusStopId: v.optional(v.string()),
+            terminusStopName: v.optional(v.string()),
+            virtualTerminusStopId: v.optional(v.string()),
         })
     },
-    handler: async (ctx, { routeId, updates }) => {
+    handler: async (ctx, { routeId, updates }): Promise<{ success: boolean, routeId: string } | { status: string, id: any }> => {
         // Find existing override
         const lookupIds = [routeId];
         if (!routeId.startsWith('1:') && !routeId.startsWith('2:')) lookupIds.push(`1:${routeId}`);
@@ -667,7 +677,7 @@ export const getOverride = query({
     args: {
         routeId: v.string()
     },
-    handler: async (ctx, { routeId }) => {
+    handler: async (ctx, { routeId }): Promise<any> => {
         // Robust lookup
         const lookupIds = [routeId];
         const strippedId = routeId.replace(/^[12]:/, '');
