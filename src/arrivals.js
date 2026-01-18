@@ -59,7 +59,9 @@ export function initArrivals(dependencies) {
 
     // Listen for static data preload to refresh arrivals (fixes direction logic on first load)
     window.addEventListener('static-routes-loaded', () => {
-        // console.log('[Arrivals] Static data loaded, refreshing view to apply direction fix...');
+        // Skip if arrivals are actively loading (controller is handling it)
+        if (window.arrivalsLoading) return;
+
         if (window.currentStopId && window.lastArrivals) {
             renderArrivals(window.lastArrivals, window.currentStopId);
         }
@@ -545,8 +547,57 @@ export async function getV3Schedule(routeShortName, stopId, explicitRouteId = nu
 }
 
 /**
+ * Format day label from fromDay-toDay (e.g., "MONDAY-FRIDAY" -> "Mon-Fri")
+ */
+function formatDayLabel(fromDay, toDay) {
+    const dayAbbr = {
+        'MONDAY': 'Mon', 'TUESDAY': 'Tue', 'WEDNESDAY': 'Wed',
+        'THURSDAY': 'Thu', 'FRIDAY': 'Fri', 'SATURDAY': 'Sat', 'SUNDAY': 'Sun'
+    };
+    const from = dayAbbr[fromDay] || fromDay;
+    const to = dayAbbr[toDay] || toDay;
+    return from === to ? from : `${from}-${to}`;
+}
+
+/**
+ * Get schedule entries metadata for tab UI
+ * @param {Array} schedule - Raw schedule array from API
+ * @returns {Array} Array of { label, index, isToday }
+ */
+export function getScheduleEntries(schedule) {
+    if (!schedule || !Array.isArray(schedule)) return [];
+
+    const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
+    const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+    const todayName = dayNames[new Date().getDay()];
+    const todayIdx = dayNames.indexOf(todayName);
+
+    return schedule.map((entry, index) => {
+        let isToday = entry.serviceDates?.includes(tbilisiNow) || false;
+        if (!isToday && entry.fromDay && entry.toDay) {
+            const fIdx = dayNames.indexOf(entry.fromDay);
+            const tIdx = dayNames.indexOf(entry.toDay);
+            if (fIdx !== -1 && tIdx !== -1) {
+                if (fIdx <= tIdx) isToday = todayIdx >= fIdx && todayIdx <= tIdx;
+                else isToday = todayIdx >= fIdx || todayIdx <= tIdx;
+            }
+        }
+        return {
+            label: formatDayLabel(entry.fromDay, entry.toDay),
+            index,
+            isToday
+        };
+    });
+}
+
+/**
  * Get full schedule grouped by hour for a specific route at a stop
- * @returns {Promise<Object|null>} Map of hour -> array of minutes
+ * @param {string} routeShortName
+ * @param {string} stopId
+ * @param {string|null} explicitRouteId
+ * @param {string|null} explicitSuffix
+ * @param {Object} options - { strategy, scheduleIndex }
+ * @returns {Promise<Object|null>} { grouped: Map of hour -> minutes, entries: tab metadata, activeIndex }
  */
 export async function getFullScheduleGrouped(routeShortName, stopId, explicitRouteId = null, explicitSuffix = null, options = {}) {
     let routeId = explicitRouteId;
@@ -566,9 +617,98 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
     if (!result || !result.schedule) return null;
 
     const { schedule } = result;
+    // Determine today's info for isToday check
     const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
-    let daySchedule = schedule.find(s => s.serviceDates.includes(tbilisiNow));
-    if (!daySchedule && schedule.length > 0) daySchedule = schedule[0];
+    const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+    const todayName = dayNames[new Date().getDay()];
+    const todayIdx = dayNames.indexOf(todayName);
+
+    // Build entries for tabs
+    const entries = schedule.map((entry, index) => {
+        const label = formatDayLabel(entry.fromDay, entry.toDay);
+
+        // Calculate isToday
+        let isToday = entry.serviceDates?.includes(tbilisiNow) || false;
+        if (!isToday && entry.fromDay && entry.toDay) {
+            const fIdx = dayNames.indexOf(entry.fromDay);
+            const tIdx = dayNames.indexOf(entry.toDay);
+            if (fIdx !== -1 && tIdx !== -1) {
+                if (fIdx <= tIdx) isToday = todayIdx >= fIdx && todayIdx <= tIdx;
+                else isToday = todayIdx >= fIdx || todayIdx <= tIdx;
+            }
+        }
+
+        // Calculate summary (First - Last, Interval)
+        let summaryTimes = '';
+        const matchedStops = entry.stops?.filter((s, idx) => {
+            const isTerminus = idx === entry.stops.length - 1;
+            if (isTerminus) return false;
+            const sId = String(s.id);
+            const normalize = (id) => String(id).replace(/^\d+:/, '').replace(/^[rR]/, '');
+            return stopIds.some(pid => {
+                const pIdStr = String(pid);
+                return pIdStr === sId || normalize(pIdStr) === normalize(sId) || (s.code && normalize(s.code) === normalize(pIdStr));
+            });
+        }) || [];
+
+        if (matchedStops.length > 0) {
+            const allTimes = [];
+            matchedStops.forEach(s => {
+                if (s.arrivalTimes) allTimes.push(...s.arrivalTimes.split(','));
+            });
+            if (allTimes.length > 0) {
+                const toMins = t => {
+                    let [h, m] = t.split(':').map(Number);
+                    if (h < 4) h += 24;
+                    return h * 60 + m;
+                };
+                allTimes.sort((a, b) => toMins(a) - toMins(b));
+                const first = allTimes[0];
+                const last = allTimes[allTimes.length - 1];
+
+                const formatTime = (t) => {
+                    if (!t) return '';
+                    const [h, m] = t.split(':');
+                    if (parseInt(h) >= 24) return `${parseInt(h) - 24}:${m}`;
+                    return t;
+                };
+                summaryTimes = `${formatTime(first)} – ${formatTime(last)}`;
+            }
+        }
+
+        let summaryInterval = getIntervalDescription(routeId);
+        // Fallback for Metro Line 2 (V3 ID check or shortName if available)
+        if (!summaryInterval && routeShortName === '2') {
+            summaryInterval = "every 5', after 21:00 — every 10'";
+        }
+
+        return { label, index, isToday, summaryTimes, summaryInterval };
+    });
+
+    // Determine which schedule to use
+    let activeIndex = options.scheduleIndex;
+    if (activeIndex === undefined || activeIndex === null || isNaN(activeIndex)) {
+        // Default to today's schedule
+        const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+        const todayName = dayNames[new Date().getDay()];
+        const todayIdx = dayNames.indexOf(todayName);
+
+        activeIndex = schedule.findIndex(s => {
+            if (s.serviceDates?.includes(tbilisiNow)) return true;
+            if (s.fromDay && s.toDay) {
+                const fIdx = dayNames.indexOf(s.fromDay);
+                const tIdx = dayNames.indexOf(s.toDay);
+                if (fIdx !== -1 && tIdx !== -1) {
+                    if (fIdx <= tIdx) return todayIdx >= fIdx && todayIdx <= tIdx;
+                    return todayIdx >= fIdx || todayIdx <= tIdx;
+                }
+            }
+            return false;
+        });
+        if (activeIndex === -1 && schedule.length > 0) activeIndex = 0;
+    }
+
+    const daySchedule = schedule[activeIndex];
     if (!daySchedule || !daySchedule.stops) return null;
 
     const matchedStops = daySchedule.stops.filter((s, idx) => {
@@ -604,7 +744,7 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
         grouped[hour].sort((a, b) => parseInt(a) - parseInt(b));
     });
 
-    return grouped;
+    return { grouped, entries, activeIndex };
 }
 
 // Legacy sync version (returns null)
@@ -681,13 +821,8 @@ export async function fetchArrivals(stopId) {
         subIds.forEach(sId => idsToCheck.add(sId));
     });
 
-    updateArrivalsLoadingState(true);
-    let combined;
-    try {
-        combined = await api.fetchArrivalsForStopIds(Array.from(idsToCheck));
-    } finally {
-        updateArrivalsLoadingState(false);
-    }
+    // Note: Loading state is managed by ArrivalsController
+    const combined = await api.fetchArrivalsForStopIds(Array.from(idsToCheck));
 
     // Group by route, prefer live over scheduled
     const arrivalsByRoute = new Map();
@@ -709,12 +844,10 @@ export async function fetchArrivals(stopId) {
         }
     });
 
-    combined = filtered;
-
     // Deduplicate
     const unique = [];
     const seen = new Set();
-    combined.forEach(a => {
+    filtered.forEach(a => {
         const time = a.realtimeArrivalMinutes !== undefined ? a.realtimeArrivalMinutes : a.scheduledArrivalMinutes;
         const key = `${a.shortName}_${time}_${a.headsign}`;
         if (!seen.has(key)) {
@@ -756,54 +889,10 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     }
 
 
+    // NOTE: Staleness-based refresh is now handled by ArrivalsController
+    // renderArrivals is now a pure render function - no fetching
 
-    // --- STALENESS CHECK ---
-    // Check if data is stale based on earliest arrival time
-    const fetchTimestamp = window.arrivalsDataTimestamp || 0;
-    const now = Date.now();
-    const dataAge = (now - fetchTimestamp) / 1000; // seconds
 
-    // Find earliest arrival to determine staleness threshold
-    let earliestMins = 9999;
-    if (arrivalsData && arrivalsData.length > 0) {
-        for (const a of arrivalsData) {
-            const mins = a.realtimeArrivalMinutes ?? a.scheduledArrivalMinutes ?? 9999;
-            if (mins < earliestMins) earliestMins = mins;
-        }
-    }
-
-    // Tiered staleness: <10min → 15s, <90min → 1min, >90min → 10min
-    let staleThreshold = 600; // 10 min default
-    if (earliestMins < 10) {
-        staleThreshold = 15;
-    } else if (earliestMins < 90) {
-        staleThreshold = 60;
-    }
-
-    const isStale = dataAge > staleThreshold;
-
-    if (isStale && stopId && !window.arrivalsRefreshing) {
-        console.log(`[Stale Check] Data is ${Math.round(dataAge)}s old, threshold ${staleThreshold}s for ${earliestMins}' arrival. Refreshing...`);
-        window.arrivalsRefreshing = true;
-
-        // Show visible feedback for background refresh (at least one sequence)
-        updateArrivalsLoadingState(true);
-        const minDelay = new Promise(resolve => setTimeout(resolve, 1200));
-
-        // Trigger async refresh
-        Promise.all([fetchArrivals(stopId), minDelay]).then(([freshArrivals]) => {
-            window.arrivalsDataTimestamp = Date.now();
-            window.lastArrivals = freshArrivals;
-            renderArrivals(freshArrivals, stopId);
-        }).catch(err => {
-            console.warn('[Stale Check] Refresh failed:', err.message);
-        }).finally(() => {
-            window.arrivalsRefreshing = false;
-            updateArrivalsLoadingState(false);
-        });
-
-        // Still render current data while refreshing (don't return, just continue)
-    }
 
     // --- RENDER LOGIC ---
 

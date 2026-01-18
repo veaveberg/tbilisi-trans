@@ -121,7 +121,8 @@ body.dark-mode .arrival-item .led-text {
 }
 
 /* Target led-text specifically since that's what we use now */
-.led-text.scheduled-time {
+.led-text.scheduled-time,
+.arrival-item .led-text.scheduled-time {
     color: #9ca3af !important;
     /* Force gray */
     text-shadow: none !important;
@@ -129,12 +130,9 @@ body.dark-mode .arrival-item .led-text {
     font-weight: 500;
 }
 
-/* Ensure dark mode also gets gray */
-body.dark-mode .led-text.scheduled-time {
-    color: #6b7280 !important;
-    /* Darker gray for dark mode? Or lighter? */
-    /* actually #9ca3af is decent for dark mode too (light gray). #6b7280 is darker. */
-    /* Let's use a nice slate gray for both or adapt. */
+/* Ensure dark mode also gets gray - must override metro.css orange */
+body.dark-mode .led-text.scheduled-time,
+body.dark-mode .arrival-item .led-text.scheduled-time {
     color: #9ca3af !important;
     text-shadow: none !important;
 }
@@ -450,11 +448,20 @@ body.dark-mode .filter-toggle-row.active .filter-text {
 }
 
 /* --- Full Schedule Grouping --- */
+.schedule-from-label {
+    padding: 0;
+    margin-bottom: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    opacity: 0.8;
+}
+
 .route-full-schedule {
-    padding: 12px 20px 24px 20px;
+    padding: 12px 0 24px 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
 }
 
 .schedule-hour-row {
@@ -485,9 +492,9 @@ body.dark-mode .filter-toggle-row.active .filter-text {
 /* Current hour highlight */
 .schedule-hour-row.current-hour {
     background: var(--primary-light);
-    margin: 0 -12px;
-    padding: 6px 12px;
-    border-radius: 8px;
+    margin: 0 -10px;
+    padding: 8px 10px;
+    border-radius: 10px;
 }
 
 .schedule-hour-row.current-hour .hour-label {
@@ -497,4 +504,94 @@ body.dark-mode .filter-toggle-row.active .filter-text {
 
 .schedule-hour-row.current-hour .minutes-list {
     font-weight: 700;
+}
+
+/* --- Schedule Day Tabs --- */
+.schedule-day-tabs {
+    display: flex;
+    gap: 10px;
+    padding: 12px 0;
+    width: 100%;
+    box-sizing: border-box;
+    flex-shrink: 0;
+}
+
+.schedule-day-tabs::-webkit-scrollbar {
+    display: none;
+    /* Hide for Chrome/Safari */
+}
+
+.schedule-day-tab {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    padding: 8px 12px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    flex: 1 1 0%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 1px;
+    min-width: 0;
+}
+
+.schedule-day-tab .tab-label {
+    font-size: 0.95rem;
+    line-height: 1.1;
+    margin-bottom: 2px;
+}
+
+.schedule-day-tab .tab-summary {
+    font-size: 0.65rem;
+    font-weight: 500;
+    opacity: 0.8;
+    line-height: 1.2;
+}
+
+.schedule-day-tab .summary-line {
+    max-width: 100%;
+    word-wrap: break-word;
+}
+
+.schedule-day-tab:active {
+    transform: scale(0.95);
+}
+
+.schedule-day-tab.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+}
+
+/* Today indicator (dot or underline) */
+.schedule-day-tab.is-today::after {
+    content: '';
+    display: block;
+    width: 4px;
+    height: 4px;
+    background: var(--primary);
+    border-radius: 50%;
+    margin: 4px auto 0;
+}
+
+.schedule-day-tab.active.is-today::after {
+    background: white;
+}
+
+body.dark-mode .schedule-day-tab {
+    background: var(--bg-secondary);
+    border-color: var(--border-light);
+    color: var(--text-secondary);
+}
+
+body.dark-mode .schedule-day-tab.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
 }

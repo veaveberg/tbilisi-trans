@@ -283,6 +283,36 @@ const saveStopsPlugin = () => ({
                 next();
             }
         });
+
+        // Metro Midpoints Save Middleware (intermediate bezier control points)
+        server.middlewares.use('/api/save-metro-midpoints', async (req, res, next) => {
+            console.log('[Middleware] Received request:', req.method, req.url);
+            if (req.method === 'POST') {
+                let body = '';
+                req.on('data', chunk => body += chunk);
+                req.on('end', async () => {
+                    try {
+                        const midpoints = JSON.parse(body);
+                        const midpointsPath = path.resolve(__dirname, 'public/data/metro_midpoints.json');
+
+                        // Create backup before saving
+                        createBackup(midpointsPath);
+
+                        console.log(`[Middleware] Saving ${Object.keys(midpoints).length} metro midpoint connections to public/data/metro_midpoints.json`);
+                        fs.writeFileSync(midpointsPath, JSON.stringify(midpoints, null, 2));
+
+                        res.statusCode = 200;
+                        res.end('Saved');
+                    } catch (e) {
+                        console.error('[Middleware] Failed to save metro midpoints:', e);
+                        res.statusCode = 500;
+                        res.end('Error: ' + e.message);
+                    }
+                });
+            } else {
+                next();
+            }
+        });
     }
 });
 
@@ -363,7 +393,8 @@ export default defineConfig({
                 '**/public/data/stops_overrides_tbilisi.csv',
                 '**/public/data/stops_overrides_rustavi.csv',
                 '**/public/data/stops_overrides.csv',
-                '**/public/data/routes_overrides.csv'
+                '**/public/data/routes_overrides.csv',
+                '**/public/data/metro_midpoints.json'
             ]
         },
         host: true, // Allow LAN access

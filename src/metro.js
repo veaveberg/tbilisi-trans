@@ -1,8 +1,12 @@
 import * as api from './api.js';
 import * as turf from '@turf/turf';
-import { getSegmentForStop, generateSegmentGeometry, generateConnectionGeometry, LINE_1_IDS, LINE_2_IDS } from './metro-utils.js';
+import { getSegmentForStop, generateSegmentGeometry, generateConnectionGeometry, getConnectionKey, LINE_1_IDS, LINE_2_IDS } from './metro-utils.js';
+import { getIntervalDescription } from './intervals.js';
+import { simplifyNumber } from './settings.js';
 
 let metroTicker = null;
+let _cachedSegments = null;
+let _isFetchingSchematic = false;
 
 export function startMetroTicker() {
     if (metroTicker) return;
@@ -72,7 +76,8 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
     allRoutes,
     stopToRoutesMap,
     setSheetState,
-    updateBackButtons
+    updateBackButtons,
+    showRouteOnMap
 }) {
     panel.classList.add('metro-mode');
     // Ensure ticker starts
@@ -144,7 +149,7 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
             // Sort Routes: Line 1 (Red) first, then Line 2 (Green)
             metroRoutes.sort((a, b) => (parseInt(a.shortName) || 0) - (parseInt(b.shortName) || 0));
 
-            let arrivalHTML = '';
+            const arrivalItems = [];
 
             const dayOfWeek = new Date().getDay(); // 0 = Sunday, 6 = Saturday
             const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
@@ -208,8 +213,8 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                             }
 
                             // Build UI
-                            let headsign = pattern.headsign || "Unknown Direction";
-                            headsign = headsign.replace(/ [12]$/, '').trim();
+                            const rawHeadsign = pattern.headsign || "Unknown Direction";
+                            let headsign = rawHeadsign.replace(/ [12]$/, '').trim();
 
                             const currentStopName = cleanMetroName(stop.name).replace(/[12]$/, '');
                             if (headsign === currentStopName || headsign.includes(currentStopName) || currentStopName.includes(headsign)) {
@@ -225,14 +230,33 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                 return t;
                             };
 
-                            arrivalHTML += `
-                                <div class="arrival-item metro-consolidated-item" style="border-left-color: #${route.color || 'ef4444'}">
-                                    <div class="metro-card-top">
-                                        <div class="route-info">
-                                            <div class="route-number" style="color: #${route.color || 'ef4444'}">${route.shortName}</div>
+                            let intervalDesc = getIntervalDescription(route.id);
+                            // Fallback for Metro Line 2 if missing from route_intervals.json
+                            if (!intervalDesc && route.shortName === '2') {
+                                intervalDesc = "every 5', after 21:00 — every 10'";
+                            }
+
+                            let bottomHTML = `<span class="schedule-times">${formatTime(firstTrain)} – ${formatTime(lastTrain)}</span>`;
+                            if (intervalDesc) {
+                                bottomHTML += `,<span class="interval-desc">&nbsp;${intervalDesc}</span>`;
+                            }
+
+                            arrivalItems.push(`
+                                <div class="arrival-item metro-consolidated-item" 
+                                     style="border-left-color: #${route.color || 'ef4444'}; cursor: pointer;"
+                                     data-route-id="${route.id}"
+                                     data-headsign="${rawHeadsign}">
+                                    <div class="arrival-card-left">
+                                        <div class="arrival-card-top">
+                                            <div class="route-number" style="color: #${route.color || 'ef4444'}">${simplifyNumber(route.shortName)}</div>
                                             <div class="destination">${headsign}</div>
                                         </div>
-                                <div class="next-arrival">
+                                        <div class="arrival-card-bottom">
+                                            ${bottomHTML}
+                                        </div>
+                                    </div>
+                                    <div class="arrival-card-right">
+                                        <div class="next-arrival">
                                              ${upcoming.length > 0
                                     ? (() => {
                                         const targets = upcoming.map(u => {
@@ -248,7 +272,6 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                         const currentTarget = targets.shift();
                                         const nextTargets = targets.length > 0 ? `data-next-targets="${targets.join(',')}"` : '';
 
-                                        const mm = String(upcoming[0].diff).padStart(2, '0');
                                         return `<div class="time-container">
                                                     <div class="led-text scheduled-time metro-countdown" data-target="${currentTarget}" ${nextTargets}>88:88</div>
                                                     <div class="scheduled-disclaimer">Scheduled</div>
@@ -258,23 +281,16 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                 }
                                         </div>
                                     </div>
-                                    <div class="metro-card-bottom">
-                                        <div class="first-last-row">
-                                            <span>First: <b>${formatTime(firstTrain)}</b></span>
-                                            <span class="separator">•</span>
-                                            <span>Last: <b>${formatTime(lastTrain)}</b></span>
-                                        </div>
-                                    </div>
-                                    ${(headsign === 'Varketili' || (route.shortName === '1' && headsign.includes('Varketili'))) ? `
-                                    <div class="metro-hours-badge warning" style="margin: 0 16px 16px 16px; width: calc(100% - 32px);">
-                                        <span class="icon">⚠️</span>
-                                        <div style="display: flex; flex-direction: column;">
-                                             <span style="font-weight: 500; font-size: 0.85em; line-height: 1.3;">In mornings 6:00–7:00 and evenings 23:00–0:00 trains terminate at Samgori. Between Samgori and Varketili use replacement bus 174</span>
-                                        </div>
-                                    </div>
-                                    ` : ''}
                                 </div>
-                             `;
+                                ${(headsign === 'Varketili' || (route.shortName === '1' && headsign.includes('Varketili'))) ? `
+                                <div class="metro-hours-badge warning" style="margin: -8px 16px 16px 16px; width: calc(100% - 32px);">
+                                    <span class="icon">⚠️</span>
+                                    <div style="display: flex; flex-direction: column;">
+                                         <span style="font-weight: 500; font-size: 0.85em; line-height: 1.3;">In mornings 6:00–7:00 and evenings 23:00–0:00 trains terminate at Samgori. Between Samgori and Varketili use replacement bus 174</span>
+                                    </div>
+                                </div>
+                                ` : ''}
+                            `);
                         });
                     });
 
@@ -283,8 +299,28 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                 }
             }
 
-            if (arrivalHTML) {
-                listEl.innerHTML = arrivalHTML;
+            if (arrivalItems.length > 0) {
+                listEl.innerHTML = arrivalItems.join(''); // Set all items at once
+
+                // Attach click handlers to the newly added items
+                const items = listEl.querySelectorAll('.arrival-item.metro-consolidated-item');
+                items.forEach(item => {
+                    item.onclick = () => {
+                        const routeId = item.dataset.routeId;
+                        const headsign = item.dataset.headsign;
+                        const targetRoute = metroRoutes.find(r => r.id === routeId);
+
+                        if (showRouteOnMap && targetRoute) {
+                            showRouteOnMap(targetRoute, true, {
+                                fromStopId: stop.id,
+                                targetHeadsign: headsign,
+                                fitToRoute: false,
+                                preserveBounds: true
+                            });
+                            setSheetState(panel, 'collapsed'); // Collapse the sheet after showing route
+                        }
+                    };
+                });
             } else {
                 listEl.innerHTML = '<div class="empty">No schedules found.</div>';
             }
@@ -470,7 +506,7 @@ export function generateMetroLines(metroFeatures) {
 }
 
 
-let _isFetchingSchematic = false;
+
 
 export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLineCoords }) {
     // 1. Fetch & Render Schematic Metro Lines
@@ -496,19 +532,99 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
         }
     };
 
-    if (!map.getSource('metro-schematic-source')) {
+    // Helper: Snap stations using segments
+    const snapStationsToSegments = (segments, featuresRef) => {
+        // Explicit mapping from station display names to segment IDs
+        const STATION_TO_SEGMENT_ID = {
+            // Line 1 (Red) - Varketili to Akhmeteli Theatre (16 to 1)
+            'Varketili': 'metro_1_16',
+            'Samgori': 'metro_1_15',
+            'Isani': 'metro_1_14',
+            '300 Aragveli': 'metro_1_13',
+            'Avlabari': 'metro_1_12',
+            'Liberty Square': 'metro_1_11',
+            'Rustaveli': 'metro_1_10',
+            'Marjanishvili': 'metro_1_9',
+            'Station Square': 'metro_1_8', // Red line version
+            'Nadzaladevi': 'metro_1_7',
+            'Gotsiridze': 'metro_1_6',
+            'Didube': 'metro_1_5',
+            'Ghrmaghele': 'metro_1_4',
+            'Guramishvili': 'metro_1_3',
+            'Sarajishvili': 'metro_1_2',
+            'Akhmeteli Theatre': 'metro_1_1',
+            // Line 2 (Green) - Station Square 2 to State University (1 to 7)
+            'Station Square 2': 'metro_2_1', // Green line version (will be mapped by color)
+            'Tsereteli': 'metro_2_2',
+            'Technical University': 'metro_2_3',
+            'Medical University': 'metro_2_4',
+            'Delisi': 'metro_2_5',
+            'Vazha-Pshavela': 'metro_2_6',
+            'Vazha Pshavela': 'metro_2_6', // Alternative spelling
+            'State University': 'metro_2_7'
+        };
+
+        let snappedCount = 0;
+
+        // Mutate the original reference so that if addMetroLayers is called again (which uses this ref),
+        // it uses the snapped coordinates.
+        featuresRef.forEach(f => {
+            const name = f.properties.name;
+            const color = f.properties.color;
+            let targetId = null;
+
+            // Special handling for Station Square (exists on both lines)
+            if (name === 'Station Square' || name.includes('Station Square')) {
+                if (color === '#22c55e') { // Green line
+                    targetId = 'metro_2_1';
+                } else { // Red line
+                    targetId = 'metro_1_8';
+                }
+            } else {
+                // Use explicit mapping
+                targetId = STATION_TO_SEGMENT_ID[name];
+            }
+
+            let matchedSeg = null;
+
+            if (targetId && segments[targetId] && segments[targetId].center) {
+                matchedSeg = segments[targetId];
+            } else if (segments[f.properties.id] && segments[f.properties.id].center) {
+                // Fallback to direct ID match
+                matchedSeg = segments[f.properties.id];
+            }
+
+            if (matchedSeg) {
+                snappedCount++;
+                // Mutate in place!
+                f.geometry.coordinates = matchedSeg.center;
+                console.log(`[Metro] Snapped "${name}" -> in-place at [${matchedSeg.center[0].toFixed(4)}, ${matchedSeg.center[1].toFixed(4)}]`);
+            } else {
+                console.log(`[Metro] Failed to snap "${name}". TargetID: ${targetId}`);
+            }
+        });
+
+        console.log(`[Metro] Snapped ${snappedCount}/${featuresRef.length} stations to schematic centers.`);
+    };
+
+    if (!_cachedSegments) {
         if (_isFetchingSchematic) return; // Prevent double fetch
         _isFetchingSchematic = true;
 
         const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-        const url = `${basePath}data/metro_segments.json`;
-        console.log('[Metro] Fetching schematic segments from:', url);
+        const segmentsUrl = `${basePath}data/metro_segments.json?t=${Date.now()}`;
+        const midpointsUrl = `${basePath}data/metro_midpoints.json?t=${Date.now()}`;
+        console.log('[Metro] Fetching schematic data from:', segmentsUrl, midpointsUrl);
 
-        fetch(url)
-            .then(res => res.json())
-            .then(segments => {
+        // Fetch both segments and midpoints
+        Promise.all([
+            fetch(segmentsUrl, { cache: 'no-store' }).then(res => res.json()),
+            fetch(midpointsUrl, { cache: 'no-store' }).then(res => res.ok ? res.json() : {}).catch(() => ({}))
+        ])
+            .then(([segments, midpoints]) => {
                 _isFetchingSchematic = false;
-                console.log('[Metro] Schematic segments loaded.');
+                _cachedSegments = segments; // Cache it!
+                console.log('[Metro] Schematic segments loaded. Midpoints:', Object.keys(midpoints).length);
                 const features = [];
 
                 const lines = [
@@ -533,13 +649,17 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                             properties: { color: color, type: 'segment' }
                         });
 
-                        // 2. Add Connection to Next
+                        // 2. Add Connection to Next (with midpoints if available)
                         if (i < ids.length - 1) {
                             const nextId = ids[i + 1];
                             const nextStopObj = { id: nextId };
                             const nextSeg = getSegmentForStop(nextStopObj, segments);
 
-                            const connGeom = generateConnectionGeometry(seg, nextSeg);
+                            // Look up midpoints for this connection
+                            const connKey = getConnectionKey(id, nextId);
+                            const connMidpoints = midpoints[connKey] || [];
+
+                            const connGeom = generateConnectionGeometry(seg, nextSeg, connMidpoints);
                             if (connGeom) {
                                 features.push({
                                     type: 'Feature',
@@ -562,92 +682,93 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
 
                 addSchematicLayer();
 
-                // 3. Snap Stations to Schematic Centers
-                // Now that we have the manual geometry, we should move the station dots 
-                // to the exact center of our 100m segments.
-                let snappedCount = 0;
+                // 3. Snap Stations (First time)
+                snapStationsToSegments(segments, metroFeaturesRef);
 
-                // CRITICAL: We need to update the ACTUAL source data.
-                // metroFeaturesRef is the array passed in (likely a reference), but updating array items
-                // doesn't update mapbox source unless we call setData.
-
-                // We will create a new updated list to be safe.
-                // NOTE: metroFeaturesRef is passed as 'metroFeatures' in args
-                const updatedFeatures = metroFeaturesRef.map(f => {
-                    const name = f.properties.name;
-                    let targetId = null;
-
-                    // Clean name is typically "Station Square" etc.
-                    // RED_LINE_ORDER and GREEN_LINE_ORDER contain these names.
-
-                    if (RED_LINE_ORDER.includes(name)) {
-                        const idx = RED_LINE_ORDER.indexOf(name);
-                        // Varketili (0) -> metro_1_16
-                        targetId = `metro_1_${16 - idx}`;
-                    } else if (GREEN_LINE_ORDER.includes(name)) {
-                        // State Univ (0) -> metro_2_7
-                        const idx = GREEN_LINE_ORDER.indexOf(name);
-                        targetId = `metro_2_${7 - idx}`;
-
-                        // Special Handling for Station Square
-                        if (name === 'Station Square') {
-                            if (f.properties.color === '#22c55e') { // Green
-                                targetId = 'metro_2_1';
-                            } else {
-                                targetId = 'metro_1_8';
-                            }
-                        }
-                    }
-
-                    if (targetId && segments[targetId] && segments[targetId].center) {
-                        const matchedSeg = segments[targetId];
-                        snappedCount++;
-                        return {
-                            ...f,
-                            geometry: {
-                                ...f.geometry,
-                                coordinates: matchedSeg.center
-                            }
-                        };
-                    }
-
-                    // Fallback to direct ID match
-                    if (segments[f.properties.id]) {
-                        const matchedSeg = segments[f.properties.id];
-                        if (matchedSeg && matchedSeg.center) {
-                            return {
-                                ...f,
-                                geometry: {
-                                    ...f.geometry,
-                                    coordinates: matchedSeg.center
-                                }
-                            };
-                        }
-                    }
-
-                    return f;
-                });
-
-                console.log(`[Metro] Snapped ${snappedCount} stations to schematic centers.`);
-
-                if (map.getSource('metro-stops')) {
-                    map.getSource('metro-stops').setData({ type: 'FeatureCollection', features: updatedFeatures });
-                } else {
-                    // Should exist by now, but just in case
-                    map.addSource('metro-stops', {
-                        type: 'geojson',
-                        data: { type: 'FeatureCollection', features: updatedFeatures },
-                        promoteId: 'id'
-                    });
-                }
+                // Update the source (and force refresh layers)
+                updateMetroStopsSource(map, metroFeaturesRef);
             })
             .catch(err => {
                 _isFetchingSchematic = false;
                 console.warn('[Metro] Failed to load schematic segments:', err);
             });
     } else {
-        // Source exists, ensure layer exists
-        addSchematicLayer();
+        // Cache exists!
+        // 1. Ensure schematic layers are there
+        if (!map.getSource('metro-schematic-source')) {
+            // We have _cachedSegments but source is gone (rare, maybe style change?)
+            // We need to re-generate the schematic features.
+            // For simplicity, let's just trigger the fetch path again by clearing cache?
+            // Or better, just skipping schematic source regeneration if it's too complex to duplicate logic.
+            // But we MUST snap.
+        } else {
+            addSchematicLayer();
+        }
+
+        // 2. Snap Stations Synchronously!
+        console.log('[Metro] Using cached segments for snapping.');
+        snapStationsToSegments(_cachedSegments, metroFeaturesRef);
+        // Source update happens below in the main flow
+    }
+
+    // Helper to update source and layers (extracted from previous logic)
+    function updateMetroStopsSource(map, features) {
+        const source = map.getSource('metro-stops');
+        if (source) {
+            source.setData({ type: 'FeatureCollection', features });
+            console.log('[Metro] setData called on metro-stops source. Re-adding layer to force update.');
+
+            // Force refresh by removing and re-adding the layer
+            if (map.getLayer('metro-layer-circle')) {
+                map.removeLayer('metro-layer-circle');
+            }
+
+            map.addLayer({
+                id: 'metro-layer-circle',
+                type: 'circle',
+                source: 'metro-stops',
+                slot: 'top',
+                paint: {
+                    'circle-color': ['get', 'color'],
+                    'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 4, 16, 6],
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#ffffff',
+                    'circle-emissive-strength': 1
+                }
+            });
+
+            if (map.getLayer('metro-layer-label')) map.removeLayer('metro-layer-label');
+            map.addLayer({
+                id: 'metro-layer-label',
+                type: 'symbol',
+                source: 'metro-stops',
+                slot: 'top',
+                minzoom: 13,
+                layout: {
+                    'text-field': ['get', 'name'],
+                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                    'text-size': 12,
+                    'text-offset': [0, 1.5],
+                    'text-anchor': 'top'
+                },
+                paint: {
+                    'text-color': '#000000',
+                    'text-halo-color': '#ffffff',
+                    'text-halo-width': 2,
+                    'text-emissive-strength': 1,
+                    'text-opacity': [
+                        'interpolate',
+                        ['linear'],
+                        ['zoom'],
+                        14, ['case', ['all', ['==', ['get', 'name'], 'Station Square'], ['==', ['get', 'color'], '#22c55e']], 0, 1],
+                        15, 1
+                    ]
+                }
+            });
+        } else {
+            // Add source logic handled by main flow below...
+            // But we should probably consolidate it.
+        }
     }
 
     // 2. Metro Source & Layers (Dots - Keep these for station locations)
@@ -734,8 +855,8 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     'interpolate',
                     ['linear'],
                     ['zoom'],
-                    12, ['literal', [0, 1.1]],
-                    16, ['literal', [0, 1.6]]
+                    12, ['literal', [0, 1]],
+                    16, ['literal', [0, 1.5]]
                 ],
                 'text-anchor': 'top',
                 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
@@ -746,7 +867,14 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 'text-color': '#000000',
                 'text-halo-color': '#ffffff',
                 'text-halo-width': 2,
-                'text-emissive-strength': 1
+                'text-emissive-strength': 1,
+                'text-opacity': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    14, ['case', ['all', ['==', ['get', 'name'], 'Station Square'], ['==', ['get', 'color'], '#22c55e']], 0, 1],
+                    15, 1
+                ]
             }
         });
     }

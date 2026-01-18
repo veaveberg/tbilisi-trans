@@ -24,6 +24,7 @@ import { historyManager, addToHistory, popHistory, clearHistory, updateBackButto
 import { hydrateRouteDetails } from './fetch.js';
 import { setupEditTools, getEditState, setEditPickMode } from './dev-tools.js';
 import * as arrivals from './arrivals.js';
+import { arrivalsController } from './arrivals-controller.js';
 
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
@@ -1127,7 +1128,8 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
             allRoutes,
             stopToRoutesMap,
             setSheetState,
-            updateBackButtons
+            updateBackButtons,
+            showRouteOnMap
         });
         return;
     } else {
@@ -1144,157 +1146,74 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     setSheetState(panel, 'half');
     updateBackButtons();
 
-    // --- PHASE 1: Optimistic Render (Static/Cached) ---
-    try {
-        // Clear list and show loader immediately for the new stop
-        arrivals.updateArrivalsLoadingState(true);
-
-        const isDifferentStop = String(prevStopId) !== String(stop.id);
-        if (!isDifferentStop) {
-            // If same stop, keep showing existing data but indicate refresh is starting
-            arrivals.renderArrivals(window.lastArrivals || [], stop.id);
-        }
-
-        try {
-            // Fetch routes from static index and schedule in parallel
-            const equivalentIds = getEquivalentStops(stop.id, false);
-
-
-            const staticIdsSet = new Set();
-            equivalentIds.forEach(id => {
-                // Ensure array exists
-                if (!stopToRoutesMap.has(id)) stopToRoutesMap.set(id, []);
-                const currentList = stopToRoutesMap.get(id);
-
-                const rids = api.getRoutesForStopStatic(id);
-                rids.forEach(rid => {
-                    staticIdsSet.add(rid);
-
-                    // Pre-populate stopToRoutesMap with static routes
-                    // This ensures they appear in "Scheduled" list even if live fetch is slow/partial
-                    if (!currentList.some(r => r.id === rid)) {
-                        const r = allRoutes.find(route => route.id === rid);
-                        if (r) currentList.push(r);
-                    }
-                });
+    // --- UNIFIED ARRIVALS LOADING ---
+    // Route chips (static, instant)
+    const isDifferentStop = String(prevStopId) !== String(stop.id);
+    if (isDifferentStop) {
+        const equivalentIds = getEquivalentStops(stop.id, false);
+        const staticIdsSet = new Set();
+        equivalentIds.forEach(id => {
+            if (!stopToRoutesMap.has(id)) stopToRoutesMap.set(id, []);
+            const currentList = stopToRoutesMap.get(id);
+            const rids = api.getRoutesForStopStatic(id);
+            rids.forEach(rid => {
+                staticIdsSet.add(rid);
+                if (!currentList.some(r => r.id === rid)) {
+                    const r = allRoutes.find(route => route.id === rid);
+                    if (r) currentList.push(r);
+                }
             });
-            const staticIds = Array.from(staticIdsSet);
-            const optimisticArrivalsPromise = arrivals.fetchArrivalsOptimistic(stop.id);
-
-            // Reset state for new stop if it's different
-            if (isDifferentStop) {
-                window.lastRoutes = [];
-                window.lastArrivals = [];
-            }
-
-            // --- OPTIMISTIC RENDERS (ONLY for fresh stop selection) ---
-            // If we are just refreshing an already open stop, skip these partial renders 
-            // to avoid "downgrading" the live data with partial static indices.
-            if (isDifferentStop) {
-                // If we have static route IDs, we can at least show the chips instantly
-                if (staticIds.length > 0) {
-                    const optRoutes = [];
-                    const seen = new Set();
-                    staticIds.forEach(rid => {
-                        if (!seen.has(rid)) {
-                            seen.add(rid);
-                            const r = allRoutes.find(route => route.id === rid);
-                            if (r) optRoutes.push(r);
-                        }
-                    });
-                    window.lastRoutes = optRoutes;
-                    arrivals.renderArrivals([], stop.id);
-                }
-
-                // Once schedule is ready, re-render optimistically
-                const optimisticArrivals = await optimisticArrivalsPromise;
-                if (optimisticArrivals && optimisticArrivals.length > 0) {
-                    window.lastArrivals = optimisticArrivals;
-                    // Update lastRoutes too if arrivals found new routes (unlikely but possible)
-                    const seen = new Set(window.lastRoutes.map(r => r.id));
-                    optimisticArrivals.forEach(a => {
-                        if (!seen.has(a.id)) {
-                            seen.add(a.id);
-                            const r = allRoutes.find(route => route.id === a.id);
-                            if (r) window.lastRoutes.push(r);
-                        }
-                    });
-                    arrivals.renderArrivals(optimisticArrivals, stop.id);
-                }
-            }
-        } catch (e) {
-            console.warn('[Optimistic] Fetch failed:', e);
+        });
+        const staticIds = Array.from(staticIdsSet);
+        if (staticIds.length > 0) {
+            const optRoutes = staticIds
+                .map(rid => allRoutes.find(route => route.id === rid))
+                .filter(Boolean);
+            window.lastRoutes = optRoutes;
         }
+    }
 
-        // --- PHASE 2: Live Fetch (Network) ---
-        try {
-            const idsAndParent = getEquivalentStops(stop.id, false);
-            const routePromises = idsAndParent.map(id => {
-                if (hydratedStops.has(id)) {
-                    return Promise.resolve(stopToRoutesMap.get(id) || []);
+    // Arrivals loading via controller (handles scheduled → live with loading bar)
+    arrivalsController.selectStop(stop.id);
+
+    // Live route fetch in parallel (updates stopToRoutesMap for chips/scheduled items)
+    // This is fire-and-forget - arrivals controller handles the main data flow
+    if (isDifferentStop) {
+        const equivalentIds = getEquivalentStops(stop.id, false);
+        Promise.all(equivalentIds.map(id => {
+            if (hydratedStops.has(id)) {
+                return Promise.resolve(stopToRoutesMap.get(id) || []);
+            }
+            const isRustaviStop = /^r\d/.test(id);
+            const sourceToUse = isRustaviStop ? 'rustavi' : stop._source;
+
+            return api.fetchStopRoutes(id, sourceToUse).then(fetchedRoutes => {
+                if (fetchedRoutes && Array.isArray(fetchedRoutes)) {
+                    if (!stopToRoutesMap.has(id)) stopToRoutesMap.set(id, []);
+                    const currentList = stopToRoutesMap.get(id);
+                    fetchedRoutes.forEach(fr => {
+                        const fetchedSource = fr._source || (fr.id && String(fr.id).startsWith('r') ? 'rustavi' : 'tbilisi');
+                        let canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName) && r._source === fetchedSource);
+                        if (!canonical && fr.id) canonical = allRoutes.find(r => r.id === fr.id);
+                        if (!canonical) canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName));
+                        const routeToAdd = canonical || fr;
+                        if (!currentList.includes(routeToAdd)) currentList.push(routeToAdd);
+                    });
+                    hydratedStops.add(id);
                 }
-                // Detect source per stop ID: Rustavi stops start with 'r' followed by digits
-                const isRustaviStop = /^r\d/.test(id);
-                const sourceToUse = isRustaviStop ? 'rustavi' : stop._source;
-
-                return api.fetchStopRoutes(id, sourceToUse).then(fetchedRoutes => {
-                    if (fetchedRoutes && Array.isArray(fetchedRoutes)) {
-                        if (!stopToRoutesMap.has(id)) stopToRoutesMap.set(id, []);
-                        const currentList = stopToRoutesMap.get(id);
-
-                        fetchedRoutes.forEach(fr => {
-                            // Fix: Respect source when finding canonical route (avoids Tbilisi gondola 1,2,3 matching Rustavi bus 1,2,3)
-                            const fetchedSource = fr._source || (fr.id && String(fr.id).startsWith('r') ? 'rustavi' : 'tbilisi');
-                            let canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName) && r._source === fetchedSource);
-                            // Fallback: match by ID if available
-                            if (!canonical && fr.id) {
-                                canonical = allRoutes.find(r => r.id === fr.id);
-                            }
-                            // Final fallback: match by shortName only (original behavior)
-                            if (!canonical) {
-                                canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName));
-                            }
-                            const routeToAdd = canonical || fr;
-                            if (!currentList.includes(routeToAdd)) currentList.push(routeToAdd);
-                        });
-                        hydratedStops.add(id);
-                    }
-                    return stopToRoutesMap.get(id) || [];
-                }).catch(err => {
-                    console.warn(`[RouteFetch] Failed for ${id}:`, err);
-                    // Return existing (static) routes instead of empty array to prevent disappearance
-                    return stopToRoutesMap.get(id) || [];
-                });
+                return stopToRoutesMap.get(id) || [];
+            }).catch(err => {
+                console.warn(`[RouteFetch] Failed for ${id}:`, err);
+                return stopToRoutesMap.get(id) || [];
             });
-
-            const [results, arrivalsData] = await Promise.all([
-                Promise.all(routePromises),
-                arrivals.fetchArrivals(stop.id)
-            ]);
-
-            // Race Condition Guard: If user switched stops while fetching, discard results
-            if (window.currentStopId !== String(stop.id)) return;
-
-            const allFetchedRoutes = results.flat();
-            // Debug: check if Rustavi routes are in fetched results
-            if (stop.id === '810') {
-                console.log(`[Debug 810] Fetched ${allFetchedRoutes.length} routes. Rustavi routes: `,
-                    allFetchedRoutes.filter(r => ['20', '21', '22', '23', '24', '10'].includes(String(r.shortName))).map(r => r.shortName));
+        })).then(results => {
+            // Update lastRoutes silently - don't re-render, controller handles that
+            if (window.currentStopId === String(stop.id)) {
+                const allFetchedRoutes = results.flat();
+                stopToRoutesMap.set(stop.id, allFetchedRoutes);
+                window.lastRoutes = allFetchedRoutes;
             }
-            stopToRoutesMap.set(stop.id, allFetchedRoutes);
-            window.lastRoutes = allFetchedRoutes;
-            window.lastArrivals = arrivalsData;
-            window.arrivalsDataTimestamp = Date.now(); // Track fetch time for staleness check
-            arrivals.renderArrivals(arrivalsData, stop.id);
-        } catch (error) {
-            // If we already have optimistic data, don't show error unless it's a real failure and we have nothing
-            if (!window.lastArrivals || window.lastArrivals.length === 0) {
-                listEl.innerHTML = '<div class="error">Failed to load arrivals</div>';
-            }
-            console.error(error);
-        }
-    } finally {
-        arrivals.updateArrivalsLoadingState(false);
+        });
     }
 }
 
@@ -2166,30 +2085,87 @@ async function updateRouteView(route, options = {}) {
                         </div>`;
                 } else {
                     if (isOptimistic) routeBodyEl.innerHTML = '<div class="loading">Loading schedule...</div>';
-                    arrivals.getFullScheduleGrouped(route.shortName, options.fromStopId, route.id, currentPattern.patternSuffix, { strategy }).then(grouped => {
-                        if (requestId !== lastRouteUpdateId) return;
-                        if (!grouped || Object.keys(grouped).length === 0) {
-                            routeBodyEl.innerHTML = '<div class="empty">No schedule data available</div>';
-                            return;
-                        }
-                        const currentHour = new Date().getHours();
-                        let html = '<div class="route-full-schedule">';
-                        Object.keys(grouped).sort((a, b) => parseInt(a) - parseInt(b)).forEach(hour => {
-                            const isCurrentHour = parseInt(hour) === currentHour;
-                            html += `
-                                <div class="schedule-hour-row${isCurrentHour ? ' current-hour' : ''}">
-                                    <div class="hour-label">${hour}:</div>
-                                    <div class="minutes-list">${grouped[hour].join(' ')}</div>
-                                </div>`;
+
+                    // Helper to render schedule with tabs
+                    const renderSchedule = (scheduleIndex = null) => {
+                        arrivals.getFullScheduleGrouped(route.shortName, options.fromStopId, route.id, currentPattern.patternSuffix, { strategy, scheduleIndex }).then(result => {
+                            if (requestId !== lastRouteUpdateId) return;
+                            if (!result || !result.grouped || Object.keys(result.grouped).length === 0) {
+                                routeBodyEl.innerHTML = '<div class="empty">No schedule data available</div>';
+                                return;
+                            }
+
+                            const { grouped, entries, activeIndex } = result;
+                            const currentHour = new Date().getHours();
+
+                            // Build tabs HTML if multiple entries exist
+                            let tabsHtml = '';
+                            if (entries && entries.length > 1) {
+                                tabsHtml = '<div class="schedule-day-tabs">';
+                                entries.forEach((entry, idx) => {
+                                    const isActive = idx === activeIndex;
+                                    const isTodayClass = entry.isToday ? ' is-today' : '';
+                                    const interval = (entry.summaryInterval || '').replace(/^, /, '').trim();
+                                    tabsHtml += `
+                                        <button class="schedule-day-tab${isActive ? ' active' : ''}${isTodayClass}" data-schedule-index="${idx}">
+                                            <div class="tab-label">${entry.label}</div>
+                                            <div class="tab-summary">
+                                                <div class="summary-line">${entry.summaryTimes || ''}</div>
+                                                <div class="summary-line">${interval}</div>
+                                            </div>
+                                        </button>`;
+                                });
+                                tabsHtml += '</div>';
+                            }
+
+                            // Build schedule grid HTML
+                            let scheduleHtml = '<div class="route-full-schedule">';
+                            Object.keys(grouped).sort((a, b) => {
+                                let ha = parseInt(a);
+                                let hb = parseInt(b);
+                                if (ha < 4) ha += 24;
+                                if (hb < 4) hb += 24;
+                                return ha - hb;
+                            }).forEach(hour => {
+                                const isCurrentHour = parseInt(hour) === currentHour;
+                                scheduleHtml += `
+                                    <div class="schedule-hour-row${isCurrentHour ? ' current-hour' : ''}">
+                                        <div class="hour-label">${hour}:</div>
+                                        <div class="minutes-list">${grouped[hour].join(' ')}</div>
+                                    </div>`;
+                            });
+                            scheduleHtml += '</div>';
+
+                            // Build "From Station" label
+                            let fromLabelHtml = '';
+                            if (options.fromStopId) {
+                                const stop = allStops.find(s => String(s.id) === String(options.fromStopId));
+                                if (stop) {
+                                    const cleanName = stop.name.replace(/[12]$/, '').trim();
+                                    fromLabelHtml = `<div class="schedule-from-label">From ${cleanName}:</div>`;
+                                }
+                            }
+
+                            routeBodyEl.innerHTML = fromLabelHtml + tabsHtml + scheduleHtml;
+
+                            // Attach click handlers to tabs
+                            routeBodyEl.querySelectorAll('.schedule-day-tab').forEach(tab => {
+                                tab.addEventListener('click', (e) => {
+                                    const newIndex = parseInt(e.currentTarget.dataset.scheduleIndex);
+                                    if (newIndex !== activeIndex) {
+                                        renderSchedule(newIndex);
+                                    }
+                                });
+                            });
+                        }).catch(err => {
+                            if (!isOptimistic) {
+                                console.warn('[Schedule] Failed to load full schedule', err);
+                                routeBodyEl.innerHTML = '<div class="empty">Failed to load schedule</div>';
+                            }
                         });
-                        html += '</div>';
-                        routeBodyEl.innerHTML = html;
-                    }).catch(err => {
-                        if (!isOptimistic) {
-                            console.warn('[Schedule] Failed to load full schedule', err);
-                            routeBodyEl.innerHTML = '<div class="empty">Failed to load schedule</div>';
-                        }
-                    });
+                    };
+
+                    renderSchedule();
                 }
             } else {
                 routeBodyEl.innerHTML = '';
@@ -2259,7 +2235,7 @@ async function updateRouteView(route, options = {}) {
                         const offsetY = -(window.innerHeight * 0.1);
                         map.flyTo({ center: [options.centerOnStop.lon, options.centerOnStop.lat], zoom: 14, offset: [0, offsetY], duration: 1500 });
                         window._routeBoundsFit = true;
-                    } else if (map.getZoom() > 14.5) {
+                    } else if (map.getZoom() > 14.5 && !options.preserveBounds) {
                         map.easeTo({ zoom: 14, duration: 800 });
                     }
                 }

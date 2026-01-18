@@ -67,8 +67,10 @@ body.dark-mode .metro-hours-badge.warning {
 }
 
 .metro-consolidated-item {
-    flex-direction: column;
-    align-items: flex-start;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: stretch;
     padding: 0;
     border-radius: 12px;
     background: var(--bg-panel);
@@ -77,57 +79,57 @@ body.dark-mode .metro-hours-badge.warning {
     border-left-width: 6px;
 }
 
-.metro-card-top {
+/* Obsolete metro-card classes replaced by arrival-card-* structure */
+
+/* Specificity boost to override transit.css scheduled-time gray */
+body .panel.metro-mode .led-text,
+body .panel.metro-mode .led-text.scheduled-time,
+body.dark-mode .panel.metro-mode .led-text,
+body.dark-mode .panel.metro-mode .led-text.scheduled-time {
+    font-family: 'DSEG7 Classic', monospace !important;
+    color: #03FF78 !important;
+    text-shadow: 0 0 5px rgba(3, 255, 121, 0.26) !important;
+    font-size: 1.85rem;
+    letter-spacing: 2px;
+}
+
+.panel.metro-mode .arrival-card-top {
+    padding-top: 8px;
+    padding-bottom: 2px;
+}
+
+.panel.metro-mode .arrival-card-bottom {
+    padding-bottom: 8px;
+}
+
+.panel.metro-mode .arrival-card-right {
+    padding-right: 12px;
+    padding-left: 0;
+}
+
+.panel.metro-mode .route-number {
+    width: auto;
+    min-width: 0;
+    margin-right: 0;
+}
+
+.panel.metro-mode .arrival-card-left .destination {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1.1;
+    margin-left: 10px;
+}
+
+.arrival-card-right .next-arrival {
+    height: 100%;
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    width: 100%;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border-light);
 }
 
-.metro-card-top .route-info {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.metro-card-top .route-number {
-    font-size: 1.5rem;
-}
-
-.metro-card-top .destination {
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: var(--text-main);
-    margin: 0;
-}
-
-.metro-card-bottom {
-    width: 100%;
-    padding: 8px 16px;
-    background: var(--bg-panel);
+.status-closed {
     font-size: 0.85rem;
-    color: var(--text-secondary);
-}
-
-.first-last-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.first-last-row b {
-    color: var(--text-main);
+    color: #ef4444;
     font-weight: 600;
-}
-
-.separator {
-    color: #d1d5db;
-}
-
-.next-arrival {
-    text-align: right;
 }
 
 .next-arrival-chip {
@@ -146,14 +148,6 @@ body.dark-mode .metro-hours-badge.warning {
     font-size: 0.85rem;
     color: #ef4444;
     font-weight: 600;
-}
-
-.panel.metro-mode .led-text {
-    font-family: 'DSEG7 Classic', monospace !important;
-    color: #03FF78 !important;
-    text-shadow: 0 0 5px rgba(3, 255, 121, 0.26) !important;
-    font-size: 1.85rem;
-    letter-spacing: 2px;
 }
 
 .panel.metro-mode .scheduled-disclaimer {

@@ -1824,7 +1824,7 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
                     const apiRouteId = restoreApiId(appRouteId, sourceConfig);
                     const keys = [`${appRouteId}_${safeSuffix}`, `${apiRouteId}_${safeSuffix}`, `${routeId}_${safeSuffix}`];
                     for (const key of keys) {
-                        if (cache[key]) return cache[key];
+                        if (cache[key]) return { schedule: cache[key], patternSuffix: suffix };
                     }
                 }
             } catch (err) { }
@@ -1852,7 +1852,7 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
                             const apiRouteId = restoreApiId(appRouteId, sourceConfig);
                             const keys = [`${appRouteId}_${safeSuffix}`, `${apiRouteId}_${safeSuffix}`, `${routeId}_${safeSuffix}`];
                             for (const key of keys) {
-                                if (cache[key]) return cache[key];
+                                if (cache[key]) return { schedule: cache[key], patternSuffix: suffix };
                             }
                         }
                     } catch (err) { }
