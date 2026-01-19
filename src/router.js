@@ -1,6 +1,6 @@
 export const Router = {
     // Detect base path from vite.config/document base or default
-    base: '/tbilisi-trans/',
+    base: import.meta.env.BASE_URL,
 
     init() {
         console.log('[Router] Initializing...');

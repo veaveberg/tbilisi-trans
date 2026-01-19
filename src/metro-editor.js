@@ -7,11 +7,15 @@ let _map = null;
 let _allStops = null;
 let _segments = {};
 let _midpoints = {}; // Store midpoints between stations: { "idA__idB": [{ position, angle, handleIn, handleOut }] }
+let _exits = {}; // Store exits per station: { "metro_1_1": { stationName: "...", exits: [...] } }
 let _isEditorActive = false;
+let _exitEditMode = false; // Toggle for exit placement mode
+let _selectedExitId = null; // Currently selected exit for editing
 
 // State for Interaction
 let _selectedStopId = null;
-let _dragState = null; // { type: 'center'|'rotate'|'midpoint', startLngLat, startVal, stopId, midpointKey, midpointIndex }
+let _dragState = null; // { type: 'center'|'rotate'|'midpoint'|'exit', startLngLat, startVal, stopId, midpointKey, midpointIndex, exitId }
+let _stationPopup = null; // Popup for station actions
 
 const LAYER_ID_LINES = 'metro-editor-lines';
 const LAYER_ID_HANDLES = 'metro-editor-handles';
@@ -32,6 +36,7 @@ export async function initMetroEditor(map, allStops) {
     console.log('[MetroEditor] Initializing...');
     await loadSegments();
     await loadMidpoints();
+    await loadExits();
 
     // Add Source
     if (!map.getSource(SOURCE_ID)) {
@@ -49,6 +54,10 @@ export async function initMetroEditor(map, allStops) {
     window.saveMetroSegments = saveMetroSegments;
     window.addMidpoint = addMidpointToConnection;
     window.removeMidpoint = removeMidpointFromConnection;
+    window.toggleExitMode = toggleExitMode;
+    window.addExit = addExit;
+    window.removeExit = removeExit;
+    window.setExitLabel = setExitLabel;
 
     // Auto-enable for first time use
     toggleMetroEditor(true);
@@ -129,6 +138,7 @@ function toggleMetroEditor(forceState) {
         // Remove Layers/Handlers
         removeEditorLayers();
         removeInteractions();
+        hideStationPopup();
     }
 }
 
@@ -662,6 +672,9 @@ function setupInteractions() {
 
     // Double-click on connection line to add midpoint
     _map.on('dblclick', 'metro-editor-connections-layer', onConnectionDoubleClick);
+
+    // Click on station to show popup (Add Exit, etc)
+    _map.on('click', LAYER_ID_HANDLES, onStationClick);
 }
 
 function removeInteractions() {
@@ -670,6 +683,7 @@ function removeInteractions() {
     _map.off('mousemove', onMouseMove);
     _map.off('mouseup', onMouseUp);
     _map.off('dblclick', 'metro-editor-connections-layer', onConnectionDoubleClick);
+    _map.off('click', LAYER_ID_HANDLES, onStationClick);
 }
 
 function onConnectionDoubleClick(e) {
@@ -712,6 +726,19 @@ function onConnectionDoubleClick(e) {
         const { idA, idB } = bestConnection;
         addMidpointToConnection(idA, idB, clickPoint);
         e.preventDefault();
+    }
+}
+
+function onStationClick(e) {
+    if (_dragState) return;
+
+    const features = _map.queryRenderedFeatures(e.point, { layers: [LAYER_ID_HANDLES] });
+    if (features.length > 0) {
+        const f = features[0];
+        const type = f.properties.type;
+        if (type === 'handle_center' || type === 'segment') {
+            showStationPopup(f.properties.stopId, e.lngLat);
+        }
     }
 }
 
@@ -788,3 +815,392 @@ async function saveMetroSegments() {
         console.error('[MetroEditor] Save failed:', e);
     }
 }
+
+// --- Station Popup with Add Exit Button ---
+
+function showStationPopup(stationId, lngLat) {
+    hideStationPopup();
+
+    const stationName = getStationDisplayName(stationId);
+    const exitCount = _exits[stationId]?.exits?.length || 0;
+
+    const popupContent = document.createElement('div');
+    popupContent.className = 'metro-editor-popup';
+    popupContent.innerHTML = `
+        <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">${stationName}</div>
+        <div style="color: #666; font-size: 12px; margin-bottom: 8px;">${exitCount} exit${exitCount !== 1 ? 's' : ''}</div>
+        <button id="add-exit-btn" style="
+            background: #22c55e;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        ">
+            <span style="font-size: 16px;">+</span> Add Exit
+        </button>
+    `;
+
+    _stationPopup = new mapboxgl.Popup({
+        closeButton: true,
+        closeOnClick: false,
+        offset: 15
+    })
+        .setLngLat(lngLat)
+        .setDOMContent(popupContent)
+        .addTo(_map);
+
+    _selectedStopId = stationId;
+
+    // Add click handler for Add Exit button
+    setTimeout(() => {
+        const addBtn = document.getElementById('add-exit-btn');
+        if (addBtn) {
+            addBtn.addEventListener('click', () => {
+                console.log(`[MetroEditor] Enter exit placement mode for ${stationName}`);
+                hideStationPopup();
+                startExitPlacement(stationId, stationName);
+            });
+        }
+    }, 0);
+}
+
+function hideStationPopup() {
+    if (_stationPopup) {
+        _stationPopup.remove();
+        _stationPopup = null;
+    }
+    _selectedStopId = null;
+}
+
+function startExitPlacement(stationId, stationName) {
+    _exitEditMode = true;
+    _selectedStopId = stationId;
+    _map.getCanvas().style.cursor = 'crosshair';
+
+    console.log(`[MetroEditor] Click on map to place exit for "${stationName}". Press ESC or click elsewhere to cancel.`);
+
+    // Show instruction toast
+    showExitPlacementToast(stationName);
+
+    // One-time click handler for placing exit
+    const placeExitHandler = (e) => {
+        e.preventDefault();
+        const coords = [e.lngLat.lng, e.lngLat.lat];
+        addExit(stationId, coords);
+        endExitPlacement();
+        _map.off('click', placeExitHandler);
+    };
+
+    // ESC key to cancel
+    const escHandler = (e) => {
+        if (e.key === 'Escape') {
+            endExitPlacement();
+            _map.off('click', placeExitHandler);
+            document.removeEventListener('keydown', escHandler);
+        }
+    };
+
+    _map.once('click', placeExitHandler);
+    document.addEventListener('keydown', escHandler);
+}
+
+function endExitPlacement() {
+    _exitEditMode = false;
+    _selectedStopId = null;
+    _map.getCanvas().style.cursor = '';
+    hideExitPlacementToast();
+}
+
+function showExitPlacementToast(stationName) {
+    hideExitPlacementToast();
+    const toast = document.createElement('div');
+    toast.id = 'exit-placement-toast';
+    toast.style.cssText = `
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0,0,0,0.85);
+        color: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-size: 14px;
+        z-index: 9999;
+        pointer-events: none;
+    `;
+    toast.textContent = `Click to place exit for ${stationName}. ESC to cancel.`;
+    document.body.appendChild(toast);
+}
+
+function hideExitPlacementToast() {
+    const toast = document.getElementById('exit-placement-toast');
+    if (toast) toast.remove();
+}
+
+// --- Exit Management Functions ---
+
+
+async function loadExits() {
+    try {
+        const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+        const url = `${basePath}data/metro_exits.json?t=${Date.now()}`;
+
+        console.log('[MetroEditor] Loading exits from:', url);
+
+        const res = await fetch(url, { cache: 'no-store' });
+        if (res.ok) {
+            _exits = await res.json();
+            const totalExits = Object.values(_exits).reduce((sum, s) => sum + (s.exits?.length || 0), 0);
+            console.log(`[MetroEditor] Loaded ${Object.keys(_exits).length} stations with ${totalExits} exits`);
+        } else {
+            console.log('[MetroEditor] No existing exits found, starting fresh.');
+            _exits = {};
+        }
+    } catch (e) {
+        console.error('[MetroEditor] Failed to load exits:', e);
+        _exits = {};
+    }
+}
+
+function toggleExitMode(forceState) {
+    _exitEditMode = forceState !== undefined ? forceState : !_exitEditMode;
+    console.log('[MetroEditor] Exit edit mode:', _exitEditMode);
+
+    if (_exitEditMode) {
+        // Set up click handler for placing exits
+        _map.on('click', onExitPlacementClick);
+        _map.getCanvas().style.cursor = 'crosshair';
+        console.log('[MetroEditor] Click on map near a station to place an exit. Use setExitLabel(exitId, label) to number it.');
+    } else {
+        _map.off('click', onExitPlacementClick);
+        _map.getCanvas().style.cursor = '';
+    }
+
+    renderExits();
+}
+
+function onExitPlacementClick(e) {
+    if (!_exitEditMode) return;
+
+    const clickPoint = [e.lngLat.lng, e.lngLat.lat];
+
+    // Find nearest station
+    let nearestStation = null;
+    let nearestDist = Infinity;
+
+    Object.keys(_segments).forEach(stationId => {
+        const seg = _segments[stationId];
+        if (!seg || !seg.center) return;
+
+        const dist = turf.distance(turf.point(clickPoint), turf.point(seg.center));
+        if (dist < nearestDist) {
+            nearestDist = dist;
+            nearestStation = stationId;
+        }
+    });
+
+    // Must be within ~500m of a station
+    if (!nearestStation || nearestDist > 0.5) {
+        console.log('[MetroEditor] Click too far from any station. Get closer to place an exit.');
+        return;
+    }
+
+    // Add exit to the station
+    addExit(nearestStation, clickPoint);
+}
+
+function addExit(stationId, coords, label = '') {
+    if (!_exits[stationId]) {
+        // Look up station name from segments or use ID
+        const stationName = getStationDisplayName(stationId);
+        _exits[stationId] = {
+            stationName: stationName,
+            exits: []
+        };
+    }
+
+    const exitId = `e${Date.now()}`;
+    _exits[stationId].exits.push({
+        id: exitId,
+        coords: coords,
+        label: label
+    });
+
+    console.log(`[MetroEditor] Added exit ${exitId} to ${stationId} at [${coords[0].toFixed(6)}, ${coords[1].toFixed(6)}]`);
+
+    renderExits();
+    saveExits();
+
+    return exitId;
+}
+
+function removeExit(stationId, exitId) {
+    if (!_exits[stationId] || !_exits[stationId].exits) return;
+
+    const idx = _exits[stationId].exits.findIndex(e => e.id === exitId);
+    if (idx !== -1) {
+        _exits[stationId].exits.splice(idx, 1);
+        console.log(`[MetroEditor] Removed exit ${exitId} from ${stationId}`);
+
+        // Clean up empty stations
+        if (_exits[stationId].exits.length === 0) {
+            delete _exits[stationId];
+        }
+
+        renderExits();
+        saveExits();
+    }
+}
+
+function setExitLabel(exitId, label) {
+    for (const stationId of Object.keys(_exits)) {
+        const station = _exits[stationId];
+        if (!station.exits) continue;
+
+        const exit = station.exits.find(e => e.id === exitId);
+        if (exit) {
+            exit.label = String(label);
+            console.log(`[MetroEditor] Set exit ${exitId} label to "${label}"`);
+            renderExits();
+            saveExits();
+            return;
+        }
+    }
+    console.warn(`[MetroEditor] Exit ${exitId} not found`);
+}
+
+function getStationDisplayName(stationId) {
+    // Map station IDs to display names
+    const STATION_NAMES = {
+        'metro_1_1': 'Akhmeteli Theatre',
+        'metro_1_2': 'Sarajishvili',
+        'metro_1_3': 'Guramishvili',
+        'metro_1_4': 'Ghrmaghele',
+        'metro_1_5': 'Didube',
+        'metro_1_6': 'Gotsiridze',
+        'metro_1_7': 'Nadzaladevi',
+        'metro_1_8': 'Station Square',
+        'metro_1_9': 'Marjanishvili',
+        'metro_1_10': 'Rustaveli',
+        'metro_1_11': 'Liberty Square',
+        'metro_1_12': 'Avlabari',
+        'metro_1_13': '300 Aragveli',
+        'metro_1_14': 'Isani',
+        'metro_1_15': 'Samgori',
+        'metro_1_16': 'Varketili',
+        'metro_2_1': 'Station Square 2',
+        'metro_2_2': 'Tsereteli',
+        'metro_2_3': 'Technical University',
+        'metro_2_4': 'Medical University',
+        'metro_2_5': 'Delisi',
+        'metro_2_6': 'Vazha-Pshavela',
+        'metro_2_7': 'State University'
+    };
+    return STATION_NAMES[stationId] || stationId;
+}
+
+function renderExits() {
+    if (!_map) return;
+
+    const features = [];
+
+    Object.entries(_exits).forEach(([stationId, stationData]) => {
+        if (!stationData.exits) return;
+
+        const lineColor = stationId.startsWith('metro_2_') ? '#22c55e' : '#ef4444';
+
+        stationData.exits.forEach((exit, idx) => {
+            features.push({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: exit.coords },
+                properties: {
+                    id: exit.id,
+                    stationId: stationId,
+                    label: exit.label || '',
+                    color: lineColor,
+                    radius: 8
+                }
+            });
+        });
+    });
+
+    // Update/create exits editor source
+    let source = _map.getSource('metro-editor-exits-source');
+    if (source) {
+        source.setData({ type: 'FeatureCollection', features });
+    } else {
+        _map.addSource('metro-editor-exits-source', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features }
+        });
+
+        // Add exits layer (circles for editing)
+        _map.addLayer({
+            id: 'metro-editor-exits-layer',
+            type: 'circle',
+            source: 'metro-editor-exits-source',
+            paint: {
+                'circle-color': ['get', 'color'],
+                'circle-radius': ['get', 'radius'],
+                'circle-stroke-width': 3,
+                'circle-stroke-color': '#ffffff'
+            }
+        });
+
+        // Add exits label layer
+        _map.addLayer({
+            id: 'metro-editor-exits-label',
+            type: 'symbol',
+            source: 'metro-editor-exits-source',
+            layout: {
+                'text-field': ['case', ['!=', ['get', 'label'], ''], ['get', 'label'], ['get', 'id']],
+                'text-size': 10,
+                'text-offset': [0, 1.5],
+                'text-anchor': 'top',
+                'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold']
+            },
+            paint: {
+                'text-color': '#000000',
+                'text-halo-color': '#ffffff',
+                'text-halo-width': 1
+            }
+        });
+    }
+
+    console.log(`[MetroEditor] Rendered ${features.length} exit markers`);
+
+    // Also refresh the main map's exit layer if available
+    import('./metro.js').then(({ refreshMetroExits }) => {
+        refreshMetroExits(_map, _exits);
+    }).catch(() => {
+        // metro.js may not be loaded in editor context
+    });
+}
+
+async function saveExits() {
+    console.log('[MetroEditor] Saving exits...');
+
+    try {
+        const res = await fetch('/api/save-metro-exits', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(_exits)
+        });
+
+        if (res.ok) {
+            console.log('[MetroEditor] ✓ Saved exits.');
+        } else {
+            console.error('[MetroEditor] ✗ Failed to save exits:', res.status, await res.text());
+        }
+    } catch (e) {
+        console.error('[MetroEditor] Save exits failed:', e);
+    }
+}
+

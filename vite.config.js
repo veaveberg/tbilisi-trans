@@ -313,6 +313,36 @@ const saveStopsPlugin = () => ({
                 next();
             }
         });
+
+        // Metro Exits Save Middleware
+        server.middlewares.use('/api/save-metro-exits', async (req, res, next) => {
+            console.log('[Middleware] Received request:', req.method, req.url);
+            if (req.method === 'POST') {
+                let body = '';
+                req.on('data', chunk => body += chunk);
+                req.on('end', async () => {
+                    try {
+                        const exits = JSON.parse(body);
+                        const exitsPath = path.resolve(__dirname, 'public/data/metro_exits.json');
+
+                        // Create backup before saving
+                        createBackup(exitsPath);
+
+                        console.log(`[Middleware] Saving metro exits to public/data/metro_exits.json`);
+                        fs.writeFileSync(exitsPath, JSON.stringify(exits, null, 2));
+
+                        res.statusCode = 200;
+                        res.end('Saved');
+                    } catch (e) {
+                        console.error('[Middleware] Failed to save metro exits:', e);
+                        res.statusCode = 500;
+                        res.end('Error: ' + e.message);
+                    }
+                });
+            } else {
+                next();
+            }
+        });
     }
 });
 
@@ -394,7 +424,8 @@ export default defineConfig({
                 '**/public/data/stops_overrides_rustavi.csv',
                 '**/public/data/stops_overrides.csv',
                 '**/public/data/routes_overrides.csv',
-                '**/public/data/metro_midpoints.json'
+                '**/public/data/metro_midpoints.json',
+                '**/public/data/metro_exits.json'
             ]
         },
         host: true, // Allow LAN access

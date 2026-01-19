@@ -150,8 +150,56 @@ export function initMapFeatures() {
         update3DTerrain();
         updatePoiLabels();
         hideShieldLayers();
+        movePlaceLabelsBelow();
     } catch (err) {
         console.error('[Map] Failed to init features:', err);
+    }
+}
+
+// Move place/district/neighborhood labels below our transit layers
+export function movePlaceLabelsBelow() {
+    try {
+        const style = map.getStyle();
+        if (!style || !style.layers) return;
+
+        // Find our first transit layer (lowest one that should be above place labels)
+        const firstTransitLayer =
+            map.getLayer('stops-layer-glow') ? 'stops-layer-glow' :
+                map.getLayer('stops-layer-circle') ? 'stops-layer-circle' :
+                    map.getLayer('metro-layer-glow') ? 'metro-layer-glow' :
+                        null;
+
+        if (!firstTransitLayer) return;
+
+        // Find all place/settlement label layers from the Mapbox Standard style
+        // These typically have IDs containing 'settlement', 'place', 'neighborhood', etc.
+        const placeLabelPatterns = [
+            'settlement-subdivision',
+            'settlement-minor',
+            'settlement-major',
+            'place-neighborhood',
+            'place-suburb',
+            'place-town',
+            'place-village',
+            'place-city',
+            'place-label'
+        ];
+
+        style.layers.forEach(layer => {
+            const layerId = layer.id;
+            const isPlaceLabel = placeLabelPatterns.some(pattern => layerId.includes(pattern));
+
+            if (isPlaceLabel && map.getLayer(layerId)) {
+                try {
+                    map.moveLayer(layerId, firstTransitLayer);
+                    console.log(`[Map] Moved ${layerId} below ${firstTransitLayer}`);
+                } catch (e) {
+                    // Layer may not exist or can't be moved
+                }
+            }
+        });
+    } catch (err) {
+        console.warn('[Map] Failed to move place labels:', err.message);
     }
 }
 
@@ -248,23 +296,23 @@ export async function loadImages() {
         },
         {
             id: 'stop-icon',
-            sdf: false,
-            svg: `<svg width="${53 * ICON_SCALE}" height="${53 * ICON_SCALE}" viewBox="0 0 53 53" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="26.5" cy="26.5" r="24.5" fill="black" stroke="white" stroke-width="4"/></svg>`
+            sdf: true,
+            svg: `<svg width="${53 * ICON_SCALE}" height="${53 * ICON_SCALE}" viewBox="0 0 53 53" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="26.5" cy="26.5" r="24.5" fill="black"/></svg>`
         },
         {
             id: 'stop-close-up-icon',
-            sdf: false,
+            sdf: true,
             svg: `<svg width="${53 * ICON_SCALE}" height="${100 * ICON_SCALE}" viewBox="0 0 53 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-<circle cx="26.5" cy="49.3533" r="24.5" fill="black" stroke="white" stroke-width="4"/>
-<path d="M22.1698 4.5C24.0943 1.1667 28.9054 1.16675 30.83 4.5L35.9657 13.3945C37.8902 16.7278 35.4845 20.8944 31.6356 20.8945H21.3651C17.5161 20.8945 15.1096 16.7279 17.0341 13.3945L22.1698 4.5Z" fill="black" stroke="white" stroke-width="4"/>
+<circle cx="26.5" cy="49.3533" r="24.5" fill="black"/>
+<path d="M22.1698 4.5C24.0943 1.1667 28.9054 1.16675 30.83 4.5L35.9657 13.3945C37.8902 16.7278 35.4845 20.8944 31.6356 20.8945H21.3651C17.5161 20.8945 15.1096 16.7279 17.0341 13.3945L22.1698 4.5Z" fill="black"/>
 </svg>`
         },
         {
             id: 'stop-selected-icon',
-            sdf: false,
+            sdf: true,
             svg: `<svg width="${53 * ICON_SCALE}" height="${100 * ICON_SCALE}" viewBox="0 0 53 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-<circle cx="26.5" cy="49.3533" r="24.5" fill="black" stroke="white" stroke-width="4"/>
-<path d="M22.1698 4.5C24.0943 1.1667 28.9054 1.16675 30.83 4.5L35.9657 13.3945C37.8902 16.7278 35.4845 20.8944 31.6356 20.8945H21.3651C17.5161 20.8945 15.1096 16.7279 17.0341 13.3945L22.1698 4.5Z" fill="black" stroke="white" stroke-width="4"/>
+<circle cx="26.5" cy="49.3533" r="24.5" fill="black"/>
+<path d="M22.1698 4.5C24.0943 1.1667 28.9054 1.16675 30.83 4.5L35.9657 13.3945C37.8902 16.7278 35.4845 20.8944 31.6356 20.8945H21.3651C17.5161 20.8945 15.1096 16.7279 17.0341 13.3945L22.1698 4.5Z" fill="black"/>
 </svg>`
         },
         {
@@ -277,6 +325,119 @@ export async function loadImages() {
 </svg>`
         }
     ];
+
+    // Generate metro exit icons dynamically using canvas
+    const generateExitIcons = () => {
+        const size = 64;
+        const pixelRatio = 2;
+        const exitIcons = [];
+
+        // Generate numbered exit icons (1-10)
+        for (let i = 1; i <= 10; i++) {
+            const canvas = document.createElement('canvas');
+            canvas.width = size * pixelRatio;
+            canvas.height = size * pixelRatio;
+            const ctx = canvas.getContext('2d');
+            ctx.scale(pixelRatio, pixelRatio);
+
+            // Rounded square background
+            const radius = 10;
+            const padding = 4;
+            ctx.beginPath();
+            ctx.moveTo(padding + radius, padding);
+            ctx.lineTo(size - padding - radius, padding);
+            ctx.quadraticCurveTo(size - padding, padding, size - padding, padding + radius);
+            ctx.lineTo(size - padding, size - padding - radius);
+            ctx.quadraticCurveTo(size - padding, size - padding, size - padding - radius, size - padding);
+            ctx.lineTo(padding + radius, size - padding);
+            ctx.quadraticCurveTo(padding, size - padding, padding, size - padding - radius);
+            ctx.lineTo(padding, padding + radius);
+            ctx.quadraticCurveTo(padding, padding, padding + radius, padding);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            ctx.strokeStyle = '#333333';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Number text
+            ctx.fillStyle = '#333333';
+            ctx.font = `bold ${size * 0.5}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(i), size / 2, size / 2 + 2);
+
+            exitIcons.push({
+                id: `exit-${i}`,
+                imageData: ctx.getImageData(0, 0, canvas.width, canvas.height),
+                pixelRatio
+            });
+        }
+
+        // Generate generic exit arrow icon (arrow pointing out of square)
+        const arrowCanvas = document.createElement('canvas');
+        arrowCanvas.width = size * pixelRatio;
+        arrowCanvas.height = size * pixelRatio;
+        const arrowCtx = arrowCanvas.getContext('2d');
+        arrowCtx.scale(pixelRatio, pixelRatio);
+
+        // Rounded square background
+        const arrowRadius = 10;
+        const arrowPadding = 4;
+        arrowCtx.beginPath();
+        arrowCtx.moveTo(arrowPadding + arrowRadius, arrowPadding);
+        arrowCtx.lineTo(size - arrowPadding - arrowRadius, arrowPadding);
+        arrowCtx.quadraticCurveTo(size - arrowPadding, arrowPadding, size - arrowPadding, arrowPadding + arrowRadius);
+        arrowCtx.lineTo(size - arrowPadding, size - arrowPadding - arrowRadius);
+        arrowCtx.quadraticCurveTo(size - arrowPadding, size - arrowPadding, size - arrowPadding - arrowRadius, size - arrowPadding);
+        arrowCtx.lineTo(arrowPadding + arrowRadius, size - arrowPadding);
+        arrowCtx.quadraticCurveTo(arrowPadding, size - arrowPadding, arrowPadding, size - arrowPadding - arrowRadius);
+        arrowCtx.lineTo(arrowPadding, arrowPadding + arrowRadius);
+        arrowCtx.quadraticCurveTo(arrowPadding, arrowPadding, arrowPadding + arrowRadius, arrowPadding);
+        arrowCtx.closePath();
+        arrowCtx.fillStyle = '#ffffff';
+        arrowCtx.fill();
+        arrowCtx.strokeStyle = '#333333';
+        arrowCtx.lineWidth = 2;
+        arrowCtx.stroke();
+
+        // Exit arrow pointing up-right
+        arrowCtx.strokeStyle = '#333333';
+        arrowCtx.lineWidth = 4;
+        arrowCtx.lineCap = 'round';
+        arrowCtx.lineJoin = 'round';
+        const cx = size / 2;
+        const cy = size / 2;
+        const arrowSize = 14;
+        // Main line (diagonal)
+        arrowCtx.beginPath();
+        arrowCtx.moveTo(cx - arrowSize * 0.7, cy + arrowSize * 0.7);
+        arrowCtx.lineTo(cx + arrowSize * 0.7, cy - arrowSize * 0.7);
+        arrowCtx.stroke();
+        // Arrow head
+        arrowCtx.beginPath();
+        arrowCtx.moveTo(cx + arrowSize * 0.2, cy - arrowSize * 0.7);
+        arrowCtx.lineTo(cx + arrowSize * 0.7, cy - arrowSize * 0.7);
+        arrowCtx.lineTo(cx + arrowSize * 0.7, cy - arrowSize * 0.2);
+        arrowCtx.stroke();
+
+        exitIcons.push({
+            id: 'exit-arrow',
+            imageData: arrowCtx.getImageData(0, 0, arrowCanvas.width, arrowCanvas.height),
+            pixelRatio
+        });
+
+        return exitIcons;
+    };
+
+    // Add exit icons
+    const exitIcons = generateExitIcons();
+    exitIcons.forEach(icon => {
+        if (!map.hasImage(icon.id)) {
+            map.addImage(icon.id, icon.imageData, { pixelRatio: icon.pixelRatio });
+        }
+    });
+    console.log('[Map] Generated', exitIcons.length, 'metro exit icons');
 
     const promises = images.map(img => {
         if (map.hasImage(img.id)) map.removeImage(img.id);
@@ -327,10 +488,10 @@ export function updateMapTheme() {
     }
 
     if (map.getLayer('stops-layer-circle')) {
-        const stopColor = isDark ? '#FFED74' : '#000000';
-        const stopStrokeColor = isDark ? '#FFED74' : '#ffffff';
-        const stopStrokeWidth = isDark ? 0.5 : 2.1;
-        const stopStrokeOpacity = isDark ? 0.3 : 1;
+        const stopColor = isDark ? '#FFED74' : '#3C3C3C';
+        const stopStrokeColor = isDark ? '#FFED74' : '#3C3C3C';
+        const stopStrokeWidth = 0.5;
+        const stopStrokeOpacity = 0.3;
 
         map.setPaintProperty('stops-layer-circle', 'circle-color', stopColor);
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', stopStrokeColor);
@@ -339,7 +500,26 @@ export function updateMapTheme() {
     }
 
     if (map.getLayer('stops-layer-glow')) {
-        map.setPaintProperty('stops-layer-glow', 'circle-opacity', isDark ? 0.05 : 0);
+        const glowColor = isDark ? '#FFED74' : '#3C3C3C';
+        map.setPaintProperty('stops-layer-glow', 'circle-opacity', 0.05);
+        map.setPaintProperty('stops-layer-glow', 'circle-color', glowColor);
+    }
+    if (map.getLayer('stops-highlight-glow')) {
+        const glowColor = isDark ? '#FFED74' : '#93C5FD'; // Blue glow for light theme
+        map.setPaintProperty('stops-highlight-glow', 'circle-opacity', 0.1);
+        map.setPaintProperty('stops-highlight-glow', 'circle-color', glowColor);
+    }
+
+    const stopIconColor = isDark ? '#FFED74' : '#3C3C3C';
+    if (map.getLayer('stops-layer')) {
+        map.setPaintProperty('stops-layer', 'icon-color', stopIconColor);
+        map.setPaintProperty('stops-layer', 'icon-halo-color', haloColor);
+        map.setPaintProperty('stops-layer', 'icon-halo-width', 0.5);
+    }
+    if (map.getLayer('stops-highlight')) {
+        map.setPaintProperty('stops-highlight', 'icon-color', stopIconColor);
+        map.setPaintProperty('stops-highlight', 'icon-halo-color', haloColor);
+        map.setPaintProperty('stops-highlight', 'icon-halo-width', 0.5);
     }
 }
 
@@ -351,12 +531,33 @@ export function addStopsToMap(stops, options = {}) {
     // Let's keep it as is.
     const { redirectMap, filterManager, updateConnectionLine } = options;
 
-    // Cleanup existing layers/sources
-    const layers = ['metro-layer-label', 'metro-layer-circle', 'metro-transfer-layer', 'metro-layer-overlay', 'metro-lines-layer', 'stops-layer', 'stops-layer-hit-target', 'stops-layer-circle', 'stops-layer-glow', 'stops-label-selected', 'stops-highlight', 'filter-connection-line'];
-    const sources = ['metro-stops', 'metro-lines-manual', 'stops', 'selected-stop', 'filter-connection'];
+    const sourcesToClean = ['metro-stops', 'metro-lines-manual', 'stops', 'selected-stop', 'filter-connection'];
 
-    layers.forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
-    sources.forEach(id => { if (map.getSource(id)) map.removeSource(id); });
+    // Exhaustive cleanup: Remove ALL layers using our sources, then remove sources.
+    const currentStyle = map.getStyle();
+    if (currentStyle && currentStyle.layers) {
+        currentStyle.layers.forEach(layer => {
+            if (sourcesToClean.includes(layer.source) ||
+                layer.id.startsWith('filter-connection-') ||
+                layer.id === 'stops-highlight-glow' ||
+                layer.id === 'stops-label-selected') {
+                try {
+                    if (map.getLayer(layer.id)) map.removeLayer(layer.id);
+                } catch (e) {
+                    console.warn(`[Map] Failed to remove layer ${layer.id}:`, e.message);
+                }
+            }
+        });
+    }
+
+    // Now remove the sources
+    sourcesToClean.forEach(sourceId => {
+        try {
+            if (map.getSource(sourceId)) map.removeSource(sourceId);
+        } catch (e) {
+            console.warn(`[Map] Failed to remove source ${sourceId}:`, e.message);
+        }
+    });
 
     const { busStops, metroFeatures } = metro.processMetroStops(stops, stopRotations);
     const metroLines = metro.generateMetroLines(metroFeatures);
@@ -386,10 +587,10 @@ export function addStopsToMap(stops, options = {}) {
         source: 'stops',
         slot: 'top',
         paint: {
-            'circle-color': '#FFED74',
-            'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 12, 16, 20, 18, 25],
+            'circle-color': '#000000',
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 12, 16, 25, 20, 60],
             'circle-opacity': 0,
-            'circle-blur': 0.8,
+            'circle-blur': 0.9,
             'circle-emissive-strength': 1
         }
     });
@@ -403,7 +604,8 @@ export function addStopsToMap(stops, options = {}) {
         paint: {
             'circle-color': '#000000',
             'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 2.1,
+            'circle-stroke-width': 0.5,
+            'circle-stroke-opacity': 0.3,
             'circle-radius': getCircleRadiusExpression(1),
             'circle-opacity': 1,
             'circle-emissive-strength': 1
@@ -427,6 +629,9 @@ export function addStopsToMap(stops, options = {}) {
         },
         paint: {
             'icon-opacity': 1,
+            'icon-color': '#000000',
+            'icon-halo-color': '#ffffff',
+            'icon-halo-width': 0.5,
             'icon-emissive-strength': 1
         }
     });
@@ -434,6 +639,20 @@ export function addStopsToMap(stops, options = {}) {
     map.addSource('selected-stop', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] }
+    });
+
+    map.addLayer({
+        id: 'stops-highlight-glow',
+        type: 'circle',
+        source: 'selected-stop',
+        slot: 'top',
+        paint: {
+            'circle-color': '#000000',
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 15, 16, 30, 20, 70],
+            'circle-opacity': 0,
+            'circle-blur': 0.9,
+            'circle-emissive-strength': 1
+        }
     });
 
     map.addLayer({
@@ -451,6 +670,9 @@ export function addStopsToMap(stops, options = {}) {
         },
         paint: {
             'icon-opacity': 1,
+            'icon-color': '#000000',
+            'icon-halo-color': '#ffffff',
+            'icon-halo-width': 0.5,
             'icon-emissive-strength': 1
         }
     });
@@ -521,12 +743,18 @@ export function addStopsToMap(stops, options = {}) {
     if (map.getLayer('stops-layer-glow') && map.getLayer('stops-layer-circle')) {
         map.moveLayer('stops-layer-glow', 'stops-layer-circle');
     }
+    if (map.getLayer('stops-highlight-glow') && map.getLayer('stops-highlight')) {
+        map.moveLayer('stops-highlight-glow', 'stops-highlight');
+    }
     if (map.getLayer('metro-lines-layer') && map.getLayer('stops-layer')) {
         map.moveLayer('metro-lines-layer', 'stops-layer');
     }
     if (map.getLayer('stops-highlight')) {
         map.moveLayer('stops-highlight');
     }
+
+    // Move place/district labels below our transit layers
+    movePlaceLabelsBelow();
 
     updateMapTheme();
 
@@ -616,49 +844,59 @@ export function updateStopHoverEffects(hoveredId) {
     if (!map || !map.getStyle()) return;
     const isDark = document.body.classList.contains('dark-mode');
 
-    const baseStopColor = isDark ? '#FFED74' : '#000000';
-    const baseStopStrokeColor = isDark ? '#FFED74' : '#ffffff';
-    const baseGlowOpacity = isDark ? 0.05 : 0;
+    const baseStopColor = isDark ? '#FFED74' : '#3C3C3C';
+    const baseStopStrokeColor = isDark ? '#FFED74' : '#3C3C3C';
+    const hoverColor = isDark ? '#FFFFFF' : '#505050'; // Light Blue for light theme
+    const hoverStrokeColor = isDark ? '#FFFFFF' : '#505050';
+    const baseGlowOpacity = 0.05;
+    const hoverGlowOpacity = 0.7;
 
     if (map.getLayer('stops-layer-circle')) {
-        const hoverColor = isDark ? '#FFFFFF' : '#FFED74';
         map.setPaintProperty('stops-layer-circle', 'circle-color', [
             'case',
             ['==', ['get', 'id'], hoveredId], hoverColor,
             baseStopColor
         ]);
 
-        if (!isDark) {
-            map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', [
-                'case',
-                ['==', ['get', 'id'], hoveredId], '#000000',
-                baseStopStrokeColor
-            ]);
-        }
+        map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', [
+            'case',
+            ['==', ['get', 'id'], hoveredId], hoverStrokeColor,
+            baseStopStrokeColor
+        ]);
     }
 
     if (map.getLayer('stops-layer-glow')) {
-        const hoverGlowOpacity = 0.7;
         map.setPaintProperty('stops-layer-glow', 'circle-opacity', [
             'case',
             ['==', ['get', 'id'], hoveredId], hoverGlowOpacity,
             baseGlowOpacity
         ]);
+
+        map.setPaintProperty('stops-layer-glow', 'circle-color', [
+            'case',
+            ['==', ['get', 'id'], hoveredId], hoverColor,
+            baseStopColor
+        ]);
     }
 
     if (map.getLayer('stops-layer')) {
-        map.setPaintProperty('stops-layer', 'icon-opacity', [
+        map.setPaintProperty('stops-layer', 'icon-color', [
             'case',
-            ['==', ['get', 'id'], hoveredId], 0.85,
-            1
+            ['==', ['get', 'id'], hoveredId], hoverColor,
+            baseStopColor
         ]);
     }
 
     if (map.getLayer('metro-layer-circle')) {
+        // Use zoom-scaled radius for hover effect
         map.setPaintProperty('metro-layer-circle', 'circle-radius', [
-            'case',
-            ['==', ['get', 'id'], hoveredId], 6,
-            4
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            10, ['case', ['==', ['get', 'id'], hoveredId], 8, 5],
+            12, ['case', ['==', ['get', 'id'], hoveredId], 10, 7],
+            14, ['case', ['==', ['get', 'id'], hoveredId], 14, 10],
+            16, ['case', ['==', ['get', 'id'], hoveredId], 18, 14]
         ]);
     }
 }

@@ -6,7 +6,39 @@ import { simplifyNumber } from './settings.js';
 
 let metroTicker = null;
 let _cachedSegments = null;
+let _cachedExits = null;
 let _isFetchingSchematic = false;
+let _lastMetroFeatures = null; // Store reference for exit annotation refreshes
+
+// Explicit mapping from station display names to segment IDs for exit/snapping lookup
+const STATION_TO_SEGMENT_ID = {
+    // Line 1 (Red) - Varketili to Akhmeteli Theatre (16 to 1)
+    'Varketili': 'metro_1_16',
+    'Samgori': 'metro_1_15',
+    'Isani': 'metro_1_14',
+    '300 Aragveli': 'metro_1_13',
+    'Avlabari': 'metro_1_12',
+    'Liberty Square': 'metro_1_11',
+    'Rustaveli': 'metro_1_10',
+    'Marjanishvili': 'metro_1_9',
+    'Station Square': 'metro_1_8', // Red line version
+    'Nadzaladevi': 'metro_1_7',
+    'Gotsiridze': 'metro_1_6',
+    'Didube': 'metro_1_5',
+    'Ghrmaghele': 'metro_1_4',
+    'Guramishvili': 'metro_1_3',
+    'Sarajishvili': 'metro_1_2',
+    'Akhmeteli Theatre': 'metro_1_1',
+    // Line 2 (Green) - Station Square 2 to State University (1 to 7)
+    'Station Square 2': 'metro_2_1', // Green line version (will be mapped by color)
+    'Tsereteli': 'metro_2_2',
+    'Technical University': 'metro_2_3',
+    'Medical University': 'metro_2_4',
+    'Delisi': 'metro_2_5',
+    'Vazha-Pshavela': 'metro_2_6',
+    'Vazha Pshavela': 'metro_2_6', // Alternative spelling
+    'State University': 'metro_2_7'
+};
 
 export function startMetroTicker() {
     if (metroTicker) return;
@@ -427,13 +459,16 @@ export function processMetroStops(stops, stopBearings = {}) {
         }
 
         // Metro Check
-        const nameMatch = ALL_METRO_NAMES.some(m => stop.name.includes(m));
-        const codeMissing = !stop.code || stop.code.length === 0 || !stop.code.match(/^\d+$/);
+        // A stop is a metro station if:
+        // 1. vehicleMode is explicitly SUBWAY, OR
+        // 2. ID starts with 'M:' (schematic metro stops), OR
+        // 3. Name includes 'Metro Station' AND has no numeric code (actual metro entrances, not nearby bus stops)
+        // Note: Bus stops near metro stations have names like "M/S Akhmeteli Theatre" but have numeric codes
+        const hasNumericCode = stop.code && stop.code.length > 0 && /^\d+$/.test(stop.code);
 
         const isMetro = stop.vehicleMode === 'SUBWAY' ||
-            stop.name.includes('Metro Station') ||
             (stop.id && stop.id.startsWith('M:')) ||
-            (nameMatch && codeMissing);
+            (stop.name.includes('Metro Station') && !hasNumericCode);
 
         if (isMetro) {
             // Clean Name
@@ -509,6 +544,7 @@ export function generateMetroLines(metroFeatures) {
 
 
 export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLineCoords }) {
+    _lastMetroFeatures = metroFeaturesRef;
     // 1. Fetch & Render Schematic Metro Lines
     const addSchematicLayer = () => {
         if (!map.getLayer('metro-lines-layer') && map.getSource('metro-schematic-source')) {
@@ -523,8 +559,24 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 },
                 paint: {
                     'line-color': ['get', 'color'],
-                    'line-width': 8,
-                    'line-opacity': 0.3,
+                    'line-width': [
+                        'interpolate',
+                        ['linear'],
+                        ['zoom'],
+                        10, 4,
+                        12, 6,
+                        14, ['case', ['==', ['get', 'type'], 'segment'], 12, 6],
+                        16, ['case', ['==', ['get', 'type'], 'segment'], 14, 8]
+                    ],
+                    'line-opacity': [
+                        'interpolate',
+                        ['linear'],
+                        ['zoom'],
+                        10, 0.25,
+                        12, 0.3,
+                        14, ['case', ['==', ['get', 'type'], 'segment'], 0.6, 0.2],
+                        16, ['case', ['==', ['get', 'type'], 'segment'], 0.7, 0.25]
+                    ],
                     'line-emissive-strength': 1
                 }
             });
@@ -534,40 +586,8 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
 
     // Helper: Snap stations using segments
     const snapStationsToSegments = (segments, featuresRef) => {
-        // Explicit mapping from station display names to segment IDs
-        const STATION_TO_SEGMENT_ID = {
-            // Line 1 (Red) - Varketili to Akhmeteli Theatre (16 to 1)
-            'Varketili': 'metro_1_16',
-            'Samgori': 'metro_1_15',
-            'Isani': 'metro_1_14',
-            '300 Aragveli': 'metro_1_13',
-            'Avlabari': 'metro_1_12',
-            'Liberty Square': 'metro_1_11',
-            'Rustaveli': 'metro_1_10',
-            'Marjanishvili': 'metro_1_9',
-            'Station Square': 'metro_1_8', // Red line version
-            'Nadzaladevi': 'metro_1_7',
-            'Gotsiridze': 'metro_1_6',
-            'Didube': 'metro_1_5',
-            'Ghrmaghele': 'metro_1_4',
-            'Guramishvili': 'metro_1_3',
-            'Sarajishvili': 'metro_1_2',
-            'Akhmeteli Theatre': 'metro_1_1',
-            // Line 2 (Green) - Station Square 2 to State University (1 to 7)
-            'Station Square 2': 'metro_2_1', // Green line version (will be mapped by color)
-            'Tsereteli': 'metro_2_2',
-            'Technical University': 'metro_2_3',
-            'Medical University': 'metro_2_4',
-            'Delisi': 'metro_2_5',
-            'Vazha-Pshavela': 'metro_2_6',
-            'Vazha Pshavela': 'metro_2_6', // Alternative spelling
-            'State University': 'metro_2_7'
-        };
-
         let snappedCount = 0;
 
-        // Mutate the original reference so that if addMetroLayers is called again (which uses this ref),
-        // it uses the snapped coordinates.
         featuresRef.forEach(f => {
             const name = f.properties.name;
             const color = f.properties.color;
@@ -614,17 +634,35 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
         const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
         const segmentsUrl = `${basePath}data/metro_segments.json?t=${Date.now()}`;
         const midpointsUrl = `${basePath}data/metro_midpoints.json?t=${Date.now()}`;
-        console.log('[Metro] Fetching schematic data from:', segmentsUrl, midpointsUrl);
+        const exitsUrl = `${basePath}data/metro_exits.json?t=${Date.now()}`;
+        console.log('[Metro] Fetching schematic data from:', segmentsUrl, midpointsUrl, exitsUrl);
 
-        // Fetch both segments and midpoints
+        // Fetch segments, midpoints, and exits
         Promise.all([
             fetch(segmentsUrl, { cache: 'no-store' }).then(res => res.json()),
-            fetch(midpointsUrl, { cache: 'no-store' }).then(res => res.ok ? res.json() : {}).catch(() => ({}))
+            fetch(midpointsUrl, { cache: 'no-store' }).then(res => res.ok ? res.json() : {}).catch(() => ({})),
+            fetch(exitsUrl, { cache: 'no-store' }).then(res => res.ok ? res.json() : {}).catch(() => ({}))
         ])
-            .then(([segments, midpoints]) => {
+            .then(([segments, midpoints, exits]) => {
                 _isFetchingSchematic = false;
                 _cachedSegments = segments; // Cache it!
-                console.log('[Metro] Schematic segments loaded. Midpoints:', Object.keys(midpoints).length);
+                _cachedExits = exits; // Cache exits!
+                console.log('[Metro] Schematic segments loaded. Midpoints:', Object.keys(midpoints).length, 'Exits:', Object.keys(exits).length);
+
+                // Annotate station features with hasExits property
+                metroFeaturesRef.forEach(f => {
+                    const name = f.properties.name;
+                    const color = f.properties.color;
+                    let sid = null;
+                    if (name === 'Station Square' || name.includes('Station Square')) {
+                        sid = (color === '#22c55e') ? 'metro_2_1' : 'metro_1_8';
+                    } else {
+                        sid = STATION_TO_SEGMENT_ID[name];
+                    }
+                    const hasExits = sid && exits[sid] && exits[sid].exits && exits[sid].exits.length > 0;
+                    f.properties.hasExits = hasExits;
+                });
+
                 const features = [];
 
                 const lines = [
@@ -682,11 +720,12 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
 
                 addSchematicLayer();
 
-                // 3. Snap Stations (First time)
-                snapStationsToSegments(segments, metroFeaturesRef);
+                // Skip snapping - keep stations at original locations
 
-                // Update the source (and force refresh layers)
-                updateMetroStopsSource(map, metroFeaturesRef);
+                // Update the source if needed
+                if (map.getSource('metro-stops')) {
+                    map.getSource('metro-stops').setData({ type: 'FeatureCollection', features: metroFeaturesRef });
+                }
             })
             .catch(err => {
                 _isFetchingSchematic = false;
@@ -696,22 +735,32 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
         // Cache exists!
         // 1. Ensure schematic layers are there
         if (!map.getSource('metro-schematic-source')) {
-            // We have _cachedSegments but source is gone (rare, maybe style change?)
-            // We need to re-generate the schematic features.
-            // For simplicity, let's just trigger the fetch path again by clearing cache?
-            // Or better, just skipping schematic source regeneration if it's too complex to duplicate logic.
-            // But we MUST snap.
+            // We have _cachedSegments but source is gone
         } else {
             addSchematicLayer();
         }
 
-        // 2. Snap Stations Synchronously!
-        console.log('[Metro] Using cached segments for snapping.');
-        snapStationsToSegments(_cachedSegments, metroFeaturesRef);
-        // Source update happens below in the main flow
+        // Skip snapping - keep stations at original locations
+        console.log('[Metro] Keeping stations at original locations.');
+
+        // Re-annotate in case exits were updated
+        if (_cachedExits) {
+            metroFeaturesRef.forEach(f => {
+                const name = f.properties.name;
+                const color = f.properties.color;
+                let sid = null;
+                if (name === 'Station Square' || name.includes('Station Square')) {
+                    sid = (color === '#22c55e') ? 'metro_2_1' : 'metro_1_8';
+                } else {
+                    sid = STATION_TO_SEGMENT_ID[name];
+                }
+                const hasExits = sid && _cachedExits[sid] && _cachedExits[sid].exits && _cachedExits[sid].exits.length > 0;
+                f.properties.hasExits = hasExits;
+            });
+        }
     }
 
-    // Helper to update source and layers (extracted from previous logic)
+    // Helper to update source and layers
     function updateMetroStopsSource(map, features) {
         const source = map.getSource('metro-stops');
         if (source) {
@@ -730,7 +779,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 slot: 'top',
                 paint: {
                     'circle-color': ['get', 'color'],
-                    'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 4, 16, 6],
+                    'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 5, 12, 7, 14, 10, 16, 14],
                     'circle-stroke-width': 2,
                     'circle-stroke-color': '#ffffff',
                     'circle-emissive-strength': 1
@@ -765,11 +814,9 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     ]
                 }
             });
-        } else {
-            // Add source logic handled by main flow below...
-            // But we should probably consolidate it.
         }
     }
+
 
     // 2. Metro Source & Layers (Dots - Keep these for station locations)
     if (!map.getSource('metro-stops')) {
@@ -777,6 +824,31 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
             type: 'geojson',
             data: { type: 'FeatureCollection', features: metroFeaturesRef },
             promoteId: 'id' // Required for feature-state
+        });
+    }
+
+    // Metro Glow Layer (for hover effects)
+    if (!map.getLayer('metro-layer-glow')) {
+        map.addLayer({
+            id: 'metro-layer-glow',
+            type: 'circle',
+            source: 'metro-stops',
+            slot: 'top',
+            paint: {
+                'circle-color': ['get', 'color'],
+                'circle-radius': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    10, 12,
+                    12, 18,
+                    14, 25,
+                    16, 35
+                ],
+                'circle-opacity': 0, // Controlled by interactions/hover
+                'circle-blur': 0.8,
+                'circle-emissive-strength': 1
+            }
         });
     }
 
@@ -794,12 +866,27 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     'interpolate',
                     ['linear'],
                     ['zoom'],
-                    10, 3,
-                    14, 8,
-                    16, 12
+                    10, 5,
+                    12, 7,
+                    14, 10,
+                    16, 14
+                ],
+                'circle-opacity': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    15, 1,
+                    15.5, ['case', ['boolean', ['get', 'hasExits'], false], 0, 1]
                 ],
                 'circle-stroke-width': 2,
                 'circle-stroke-color': '#fff',
+                'circle-stroke-opacity': [
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    15, 1,
+                    15.5, ['case', ['boolean', ['get', 'hasExits'], false], 0, 1]
+                ],
                 'circle-emissive-strength': 1
             }
         });
@@ -819,15 +906,17 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     'interpolate',
                     ['linear'],
                     ['zoom'],
-                    10, 3,
-                    14, 8,
-                    16, 12
+                    10, 5,
+                    12, 7,
+                    14, 10,
+                    16, 14
                 ],
                 'circle-opacity': [
-                    'case',
-                    ['boolean', ['feature-state', 'hover'], false],
-                    0.5, // 50% white tint on hover
-                    0
+                    'interpolate',
+                    ['linear'],
+                    ['zoom'],
+                    15, ['case', ['boolean', ['feature-state', 'hover'], false], 0.5, 0],
+                    15.5, ['case', ['boolean', ['get', 'hasExits'], false], 0, ['case', ['boolean', ['feature-state', 'hover'], false], 0.5, 0]]
                 ],
                 'circle-stroke-width': 0
             }
@@ -907,4 +996,131 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
         });
     }
     */
+
+    // Ensure proper layer ordering: glow below circle
+    if (map.getLayer('metro-layer-glow') && map.getLayer('metro-layer-circle')) {
+        map.moveLayer('metro-layer-glow', 'metro-layer-circle');
+    }
+
+    // --- Metro Exits Layer (visible at zoom > 15) ---
+    addMetroExitsLayers(map);
+}
+
+// Helper to add/update exit layers
+function addMetroExitsLayers(map) {
+    if (!_cachedExits) return;
+
+    // Collect all exit features from cached data
+    const exitFeatures = [];
+    Object.entries(_cachedExits).forEach(([stationId, stationData]) => {
+        if (!stationData.exits) return;
+        stationData.exits.forEach((exit, idx) => {
+            // Determine line color from station ID
+            const lineColor = stationId.startsWith('metro_2_') ? '#22c55e' : '#ef4444';
+            exitFeatures.push({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: exit.coords },
+                properties: {
+                    id: `${stationId}_exit_${exit.id || idx}`,
+                    stationId: stationId,
+                    stationName: stationData.stationName || stationId,
+                    label: exit.label || '',
+                    color: lineColor
+                }
+            });
+        });
+    });
+
+    console.log(`[Metro] Adding ${exitFeatures.length} exit markers`);
+
+    // Add/update exits source
+    if (map.getSource('metro-exits')) {
+        map.getSource('metro-exits').setData({ type: 'FeatureCollection', features: exitFeatures });
+    } else {
+        map.addSource('metro-exits', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: exitFeatures },
+            promoteId: 'id'
+        });
+    }
+
+    // Exit marker layer - rounded square with number
+    if (!map.getLayer('metro-exits-layer')) {
+        map.addLayer({
+            id: 'metro-exits-layer',
+            type: 'symbol',
+            source: 'metro-exits',
+            slot: 'top',
+            minzoom: 15,
+            layout: {
+                'icon-image': [
+                    'case',
+                    ['!=', ['get', 'label'], ''],
+                    ['concat', 'exit-', ['get', 'label']],
+                    'exit-arrow'
+                ],
+                'icon-size': [
+                    'interpolate', ['linear'], ['zoom'],
+                    15, 0.6,
+                    18, 1.0
+                ],
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true
+            },
+            paint: {
+                'icon-opacity': [
+                    'interpolate', ['linear'], ['zoom'],
+                    15, 0,
+                    15.5, 1
+                ],
+                'icon-emissive-strength': 1
+            }
+        });
+    }
+
+    // Exit glow layer for hover effects
+    if (!map.getLayer('metro-exits-glow')) {
+        map.addLayer({
+            id: 'metro-exits-glow',
+            type: 'circle',
+            source: 'metro-exits',
+            slot: 'top',
+            minzoom: 15,
+            paint: {
+                'circle-color': ['get', 'color'],
+                'circle-radius': [
+                    'interpolate', ['linear'], ['zoom'],
+                    15, 20,
+                    18, 30
+                ],
+                'circle-opacity': 0,
+                'circle-blur': 0.8,
+                'circle-emissive-strength': 1
+            }
+        }, 'metro-exits-layer');
+    }
+}
+
+// Export function to refresh exits (for editor)
+export function refreshMetroExits(map, exits) {
+    _cachedExits = exits;
+
+    // Re-annotate features if we have the reference
+    if (_lastMetroFeatures && map.getSource('metro-stops')) {
+        _lastMetroFeatures.forEach(f => {
+            const name = f.properties.name;
+            const color = f.properties.color;
+            let sid = null;
+            if (name === 'Station Square' || name.includes('Station Square')) {
+                sid = (color === '#22c55e') ? 'metro_2_1' : 'metro_1_8';
+            } else {
+                sid = STATION_TO_SEGMENT_ID[name];
+            }
+            const hasExits = sid && exits[sid] && exits[sid].exits && exits[sid].exits.length > 0;
+            f.properties.hasExits = hasExits;
+        });
+        map.getSource('metro-stops').setData({ type: 'FeatureCollection', features: _lastMetroFeatures });
+    }
+
+    addMetroExitsLayers(map);
 }

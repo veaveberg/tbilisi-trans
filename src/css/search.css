@@ -1,5 +1,5 @@
 /* --- Search Bar --- */
-.search-wrapper {
+#ui-wrapper .search-wrapper {
     position: absolute;
     top: calc(16px + env(safe-area-inset-top));
     left: 16px;
@@ -9,7 +9,7 @@
     flex-direction: column;
     align-items: center;
     gap: 8px;
-    pointer-events: none;
+    pointer-events: none !important;
     zoom: var(--ui-scale, 1);
 }
 

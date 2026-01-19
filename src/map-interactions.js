@@ -42,9 +42,10 @@ export function setMapFocus(active) {
             'interpolate',
             ['linear'],
             ['zoom'],
-            10, ['case', ['==', ['get', 'id'], selectedId], 6, 3],
-            14, ['case', ['==', ['get', 'id'], selectedId], 13, 8],
-            16, ['case', ['==', ['get', 'id'], selectedId], 17, 12]
+            10, ['case', ['==', ['get', 'id'], selectedId], 8, 5],
+            12, ['case', ['==', ['get', 'id'], selectedId], 10, 7],
+            14, ['case', ['==', ['get', 'id'], selectedId], 14, 10],
+            16, ['case', ['==', ['get', 'id'], selectedId], 18, 14]
         ];
         map.setPaintProperty('metro-layer-circle', 'circle-radius', radiusExpr);
 
@@ -84,7 +85,25 @@ export function addMetroHoverLogic(map, filterManager) {
     if (!map.getLayer('metro-layer-circle')) return;
 
     let hoveredStateId = null;
-    const targets = ['metro-layer-circle', 'metro-layer-overlay', 'metro-layer-label', 'metro-transfer-layer'];
+    const targets = ['metro-layer-circle', 'metro-layer-overlay', 'metro-layer-glow', 'metro-layer-label', 'metro-transfer-layer'];
+
+    // Helper to update glow layer opacity
+    const updateMetroGlow = (hoveredId) => {
+        if (!map.getLayer('metro-layer-glow')) return;
+
+        if (hoveredId !== null) {
+            // Show glow only for the hovered station
+            map.setPaintProperty('metro-layer-glow', 'circle-opacity', [
+                'case',
+                ['==', ['get', 'id'], hoveredId],
+                0.6, // Glow opacity for hovered station
+                0    // Hidden for others
+            ]);
+        } else {
+            // Reset to no glow
+            map.setPaintProperty('metro-layer-glow', 'circle-opacity', 0);
+        }
+    };
 
     map.on('mouseenter', targets, (e) => {
         // Disable Metro Hover if Filter is Active (Metro is not "reachable")
@@ -92,18 +111,23 @@ export function addMetroHoverLogic(map, filterManager) {
 
         map.getCanvas().style.cursor = 'pointer';
         if (e.features.length > 0) {
+            const hoveredFeature = e.features[0];
+            const hoveredId = hoveredFeature.properties?.id || hoveredFeature.id;
 
-            if (hoveredStateId !== null) {
+            if (hoveredStateId !== null && hoveredStateId !== hoveredId) {
                 map.setFeatureState(
                     { source: 'metro-stops', id: hoveredStateId },
                     { hover: false }
                 );
             }
-            hoveredStateId = e.features[0].id; // Use implicit ID for consistency
+            hoveredStateId = hoveredFeature.id; // Use implicit ID for feature-state
             map.setFeatureState(
                 { source: 'metro-stops', id: hoveredStateId },
                 { hover: true }
             );
+
+            // Update glow using properties.id for paint expression matching
+            updateMetroGlow(hoveredId);
         }
     });
 
@@ -116,6 +140,7 @@ export function addMetroHoverLogic(map, filterManager) {
             );
         }
         hoveredStateId = null;
+        updateMetroGlow(null);
     });
 }
 

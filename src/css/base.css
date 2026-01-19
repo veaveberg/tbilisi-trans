@@ -1,6 +1,6 @@
 @font-face {
     font-family: 'Matrix Sans';
-    src: url('/tbilisi-trans/fonts/MatrixSansPrint-Regular.woff2') format('woff2');
+    src: url('../assets/fonts/MatrixSansPrint-Regular.woff2') format('woff2');
     font-weight: normal;
     font-style: normal;
     font-feature-settings: 'zero';
@@ -8,7 +8,7 @@
 
 @font-face {
     font-family: 'DSEG7 Classic';
-    src: url('/tbilisi-trans/fonts/dseg7-classic-latin-700-normal.woff') format('woff');
+    src: url('../assets/fonts/dseg7-classic-latin-700-normal.woff') format('woff');
     font-weight: 700;
     font-style: normal;
 }

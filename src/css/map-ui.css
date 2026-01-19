@@ -1,5 +1,5 @@
 /* --- Map Controls --- */
-#map-controls {
+#ui-wrapper #map-controls {
     position: absolute;
     bottom: calc(96px + env(safe-area-inset-bottom, 20px));
     right: 16px;
@@ -10,6 +10,11 @@
     z-index: 30;
     zoom: var(--ui-scale, 1);
     transition: bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+    pointer-events: none;
+}
+
+#map-controls>* {
+    pointer-events: auto;
 }
 
 body.panel-open #map-controls {

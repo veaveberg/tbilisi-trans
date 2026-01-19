@@ -402,11 +402,11 @@ async function initializeMapData(stopsData, routesData) {
     }
 
     // 5. Map Visuals
-    addStopsToMap(allStops, { redirectMap, filterManager, updateConnectionLine });
     if (!areImagesLoaded) {
         await loadImages(map);
         areImagesLoaded = true;
     }
+    addStopsToMap(allStops, { redirectMap, filterManager, updateConnectionLine });
 
     // 6. Final UI
     document.body.classList.remove('loading');
@@ -464,44 +464,8 @@ async function initializeMapData(stopsData, routesData) {
 // Render at 3x resolution for crispness on Retina/High-DPI screens
 // Image Loading Function Moved to map-setup.js
 
-map.on('load', () => {
-    // Selected Stop Source
-    if (!map.getSource('selected-stop')) {
-        map.addSource('selected-stop', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: [] }
-        });
-    }
-
-    // Stop Selection State Layer (more prominent)
-    if (!map.getLayer('stops-highlight')) {
-        map.addLayer({
-            id: 'stops-highlight',
-            type: 'symbol',
-            source: 'selected-stop',
-            // filter: ['!=', 'mode', 'SUBWAY'], // Removed to ensure ALL stops highlight
-            layout: {
-                'icon-image': [
-                    'case',
-                    ['>', ['get', 'rotation'], 0], 'stop-selected-icon', // Arrow
-                    'stop-icon' // Circle fallback
-                ],
-                'icon-size': [
-                    'case',
-                    ['==', ['get', 'mode'], 'SUBWAY'], 1.5,
-                    1.2
-                ],
-                'icon-allow-overlap': true,
-                'icon-ignore-placement': true,
-                'icon-rotate': ['coalesce', ['get', 'rotation'], 0],
-                'icon-rotation-alignment': 'map'
-            },
-            paint: {
-                'icon-opacity': 1
-            }
-        });
-    }
-});
+// Redundant stops-highlight initialization removed. 
+// Handled by addStopsToMap for better consistency and cleanup.
 
 // Removed pendingRequests (moved to api.js)
 
@@ -673,17 +637,7 @@ function restoreMapLayers() {
     }
 
     // 2.5 Ensure Selected Stop Source & Layer Exist (Critical for Style Reload)
-    if (!map.getSource('selected-stop')) {
-        map.addSource('selected-stop', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: [] }
-        });
-    }
-    // Layer is added by addStopsToMap now? No, we need to ensure it's added.
-    // Actually, addStopsToMap should handle all static layers including highlight for consistency.
-    // Let's modify addStopsToMap to include it, so we don't duplicate logic.
-    // But for now, ensuring source exists here is safe.
-
+    // Redundant check removed as addStopsToMap handles source creation.
 
     // 3. Restore Active Route (Only if actually active/open)
     if (currentRoute) {

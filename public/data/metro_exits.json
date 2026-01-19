@@ -1,0 +1,94 @@
+{
+    "metro_1_1": {
+        "stationName": "Akhmeteli Theatre",
+        "exits": []
+    },
+    "metro_1_2": {
+        "stationName": "Sarajishvili",
+        "exits": []
+    },
+    "metro_1_3": {
+        "stationName": "Guramishvili",
+        "exits": []
+    },
+    "metro_1_4": {
+        "stationName": "Ghrmaghele",
+        "exits": []
+    },
+    "metro_1_5": {
+        "stationName": "Didube",
+        "exits": []
+    },
+    "metro_1_6": {
+        "stationName": "Gotsiridze",
+        "exits": []
+    },
+    "metro_1_7": {
+        "stationName": "Nadzaladevi",
+        "exits": []
+    },
+    "metro_1_8": {
+        "stationName": "Station Square",
+        "exits": []
+    },
+    "metro_1_9": {
+        "stationName": "Marjanishvili",
+        "exits": []
+    },
+    "metro_1_10": {
+        "stationName": "Rustaveli",
+        "exits": []
+    },
+    "metro_1_11": {
+        "stationName": "Liberty Square",
+        "exits": []
+    },
+    "metro_1_12": {
+        "stationName": "Avlabari",
+        "exits": []
+    },
+    "metro_1_13": {
+        "stationName": "300 Aragveli",
+        "exits": []
+    },
+    "metro_1_14": {
+        "stationName": "Isani",
+        "exits": []
+    },
+    "metro_1_15": {
+        "stationName": "Samgori",
+        "exits": []
+    },
+    "metro_1_16": {
+        "stationName": "Varketili",
+        "exits": []
+    },
+    "metro_2_1": {
+        "stationName": "Station Square 2",
+        "exits": []
+    },
+    "metro_2_2": {
+        "stationName": "Tsereteli",
+        "exits": []
+    },
+    "metro_2_3": {
+        "stationName": "Technical University",
+        "exits": []
+    },
+    "metro_2_4": {
+        "stationName": "Medical University",
+        "exits": []
+    },
+    "metro_2_5": {
+        "stationName": "Delisi",
+        "exits": []
+    },
+    "metro_2_6": {
+        "stationName": "Vazha-Pshavela",
+        "exits": []
+    },
+    "metro_2_7": {
+        "stationName": "State University",
+        "exits": []
+    }
+}
