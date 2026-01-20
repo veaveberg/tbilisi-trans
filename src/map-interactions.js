@@ -9,6 +9,7 @@ export function setMapFocus(active) {
     const isDark = document.body.classList.contains('dark-mode');
     const baseOpacity = isDark ? 0.3 : 0.4;
     const selectedId = window.currentStopId || "";
+    const isMetroSelected = window.currentStopMode === 'SUBWAY';
 
     const opacityExpr = active ? [
         'case',
@@ -26,17 +27,22 @@ export function setMapFocus(active) {
         map.setPaintProperty('stops-layer-circle', 'circle-opacity', opacityExpr);
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', opacityExpr);
     }
+
     if (map.getLayer('metro-layer-circle')) {
-        // Opacity: Highlight selected, dim others if active, but preserve zoom-based fade for exits
+        // If metro is selected, hide the circle for THAT station, dim others.
+        // Otherwise use standard opacity logic.
         const metroOpacity = active ? [
             'interpolate',
             ['linear'],
             ['zoom'],
-            15, ['case', ['==', ['get', 'id'], selectedId], 1.0, 0.4],
+            15, ['case',
+                ['==', ['get', 'id'], selectedId], (isMetroSelected ? 0 : 1.0),
+                baseOpacity
+            ],
             15.5, ['case',
-                ['==', ['get', 'id'], selectedId], 1.0,
+                ['==', ['get', 'id'], selectedId], (isMetroSelected ? 0 : 1.0),
                 ['boolean', ['get', 'hasExits'], false], 0,
-                0.4
+                baseOpacity
             ]
         ] : [
             'interpolate',
@@ -49,7 +55,7 @@ export function setMapFocus(active) {
         map.setPaintProperty('metro-layer-circle', 'circle-opacity', metroOpacity);
         map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', metroOpacity);
 
-        // Radius: Enlarge selected
+        // Radius: Enlarge selected (if not hidden)
         const radiusExpr = [
             'interpolate',
             ['linear'],
@@ -61,36 +67,53 @@ export function setMapFocus(active) {
         ];
         map.setPaintProperty('metro-layer-circle', 'circle-radius', radiusExpr);
 
-        // Sync Overlay Layer for Hover Effect (30% white tint)
         if (map.getLayer('metro-layer-overlay')) {
             map.setPaintProperty('metro-layer-overlay', 'circle-radius', radiusExpr);
+            map.setPaintProperty('metro-layer-overlay', 'circle-opacity', isMetroSelected ? 0 : (active ? 0.3 : 0));
         }
     }
+
     if (map.getLayer('metro-lines-layer')) {
-        map.setPaintProperty('metro-lines-layer', 'line-opacity', active ? 0.3 : 0.8);
+        // If metro is selected, keep lines bright. Otherwise dim.
+        map.setPaintProperty('metro-lines-layer', 'line-opacity', active ? (isMetroSelected ? 0.8 : 0.3) : 0.8);
     }
+
     if (map.getLayer('metro-layer-label')) {
         map.setPaintProperty('metro-layer-label', 'text-color', labelColor);
         map.setPaintProperty('metro-layer-label', 'text-halo-color', haloColor);
-        // Preserve zoom-based fade at high zoom while applying selection dimming
         const labelOpacity = active ? [
-            'interpolate',
-            ['linear'],
+            'step',
             ['zoom'],
-            14, ['case', ['==', ['get', 'id'], selectedId], 1.0, baseOpacity],
-            15, ['case', ['==', ['get', 'id'], selectedId], 1.0, baseOpacity],
-            15.5, ['case', ['==', ['get', 'id'], selectedId], 1.0, baseOpacity],
-            16, 0  // Always fade out at high zoom
+            ['case', ['==', ['get', 'id'], selectedId], (isMetroSelected ? 0 : 1.0), baseOpacity],
+            15.2, 0
         ] : [
-            'interpolate',
-            ['linear'],
+            'step',
             ['zoom'],
-            14, 1,
-            15, 1,
-            15.5, 1,
-            16, 0  // Always fade out at high zoom
+            1,
+            15.2, 0
         ];
         map.setPaintProperty('metro-layer-label', 'text-opacity', labelOpacity);
+    }
+
+    // Handle close-up segment labels if present
+    if (map.getLayer('metro-segment-center-label')) {
+        if (active && isMetroSelected) {
+            // Highlight ONLY the selected station label, dim others
+            map.setPaintProperty('metro-segment-center-label', 'text-opacity', [
+                'step',
+                ['zoom'],
+                0,
+                15.2, ['case', ['==', ['get', 'stationId'], selectedId], 1.0, 0.2]
+            ]);
+        } else {
+            // Reset to default zoom-based visibility
+            map.setPaintProperty('metro-segment-center-label', 'text-opacity', [
+                'step',
+                ['zoom'],
+                0,
+                15.2, 1.0
+            ]);
+        }
     }
 
     if (map.getLayer('metro-transfer-layer')) {
@@ -106,9 +129,6 @@ export function setMapFocus(active) {
         map.setPaintProperty('stops-label-selected', 'text-halo-color', haloColor);
     }
 
-    if (map.getLayer('stops-highlight')) {
-        map.setPaintProperty('stops-highlight', 'icon-opacity', 1.0);
-    }
 }
 
 export function addMetroHoverLogic(map, filterManager) {

@@ -9,6 +9,7 @@ let _cachedSegments = null;
 let _cachedExits = null;
 let _isFetchingSchematic = false;
 let _lastMetroFeatures = null; // Store reference for exit annotation refreshes
+let _lastAllStops = null;
 
 // Explicit mapping from station display names to segment IDs for exit/snapping lookup
 const STATION_TO_SEGMENT_ID = {
@@ -569,8 +570,9 @@ export function generateMetroLines(metroFeatures) {
 
 
 
-export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLineCoords }) {
+export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLineCoords }, allStopsRef) {
     _lastMetroFeatures = metroFeaturesRef;
+    _lastAllStops = allStopsRef;
     // 1. Fetch & Render Schematic Metro Lines
     const addSchematicLayer = () => {
         if (!map.getLayer('metro-lines-layer') && map.getSource('metro-schematic-source')) {
@@ -616,7 +618,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 type: 'symbol',
                 source: 'metro-schematic-source',
                 slot: 'top',
-                minzoom: 15.5,
+                minzoom: 15.2,
                 filter: ['==', ['get', 'type'], 'segment-center'],
                 layout: {
                     'text-field': ['get', 'name'],
@@ -629,14 +631,15 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     'text-padding': 4
                 },
                 paint: {
-                    'text-color': ['get', 'color'],  // Colored text (red/green)
-                    'text-halo-color': '#ffffff',    // White stroke
-                    'text-halo-width': 3,
+                    'text-color': '#000000',       // Black text (same as regular labels)
+                    'text-halo-color': '#ffffff',  // White stroke
+                    'text-halo-width': 2,
                     'text-halo-blur': 0,
+                    'text-emissive-strength': 1,
                     'text-opacity': [
-                        'interpolate', ['linear'], ['zoom'],
-                        15.5, 0,
-                        16, 1
+                        'step', ['zoom'],
+                        0,        // Hidden below zoom 15.2
+                        15.2, 1   // Visible at zoom 15.2+
                     ]
                 }
             });  // No before-layer = placed on top
@@ -678,6 +681,18 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 snappedCount++;
                 // Mutate in place!
                 f.geometry.coordinates = matchedSeg.center;
+
+                // ALSO update the original stop objects in allStops to ensure FlyTo works correctly
+                if (_lastAllStops) {
+                    const stopObj = _lastAllStops.find(s => String(s.id) === String(f.properties.id));
+                    if (stopObj) {
+                        stopObj.lon = matchedSeg.center[0];
+                        stopObj.lat = matchedSeg.center[1];
+                        stopObj.segmentCenterLon = matchedSeg.center[0];
+                        stopObj.segmentCenterLat = matchedSeg.center[1];
+                    }
+                }
+
                 console.log(`[Metro] Snapped "${name}" -> in-place at [${matchedSeg.center[0].toFixed(4)}, ${matchedSeg.center[1].toFixed(4)}]`);
             } else {
                 console.log(`[Metro] Failed to snap "${name}". TargetID: ${targetId}`);
@@ -873,6 +888,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 type: 'circle',
                 source: 'metro-stops',
                 slot: 'top',
+                maxzoom: 15.2,  // Hide at 15.2+ when exits/segment labels appear
                 paint: {
                     'circle-color': ['get', 'color'],
                     'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 5, 12, 7, 14, 10, 16, 14],
@@ -889,6 +905,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 source: 'metro-stops',
                 slot: 'top',
                 minzoom: 13,
+                maxzoom: 15.2,  // Hide at 15.2+ when segment labels appear
                 layout: {
                     'text-field': ['get', 'name'],
                     'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
@@ -902,13 +919,10 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     'text-halo-width': 2,
                     'text-emissive-strength': 1,
                     'text-opacity': [
-                        'interpolate',
-                        ['linear'],
+                        'step',
                         ['zoom'],
-                        14, ['case', ['all', ['==', ['get', 'name'], 'Station Square'], ['==', ['get', 'color'], '#22c55e']], 0, 1],
-                        15, 1,
-                        15.5, 1,
-                        16, 0  // Fade out as segment labels appear
+                        ['case', ['all', ['==', ['get', 'name'], 'Station Square'], ['==', ['get', 'color'], '#22c55e']], 0, 1],  // Default (below zoom 16)
+                        15.2, 0  // Hidden at zoom 15.2+
                     ]
                 }
             });
@@ -957,6 +971,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
             type: 'circle',
             source: 'metro-stops',
             slot: 'top',
+            maxzoom: 15.2,  // Hide at 15.2+ when exits/segment labels appear
             // filter: ['!=', 'name', 'Station Square'],
             paint: {
                 'circle-color': ['get', 'color'],
@@ -1021,7 +1036,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
         });
     }
 
-    // Metro Text Labels (visible from zoom 12-15.5, fades out as segment labels appear)
+    // Metro Text Labels (visible from zoom 12 to 15.2, then segment labels take over)
     if (!map.getLayer('metro-layer-label')) {
         map.addLayer({
             id: 'metro-layer-label',
@@ -1029,6 +1044,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
             source: 'metro-stops',
             slot: 'top',
             minzoom: 12,
+            maxzoom: 15.2,  // Hide at 15.2+ when segment labels appear
             layout: {
                 'text-field': ['get', 'name'],
                 'text-size': [
@@ -1045,18 +1061,15 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 'text-ignore-placement': true
             },
             paint: {
-                'text-color': '#000000',
-                'text-halo-color': '#ffffff',
+                'text-color': ['get', 'color'],  // Colored text (red/green matching line)
+                'text-halo-color': '#ffffff',    // White stroke
                 'text-halo-width': 2,
                 'text-emissive-strength': 1,
                 'text-opacity': [
-                    'interpolate',
-                    ['linear'],
+                    'step',
                     ['zoom'],
-                    14, ['case', ['all', ['==', ['get', 'name'], 'Station Square'], ['==', ['get', 'color'], '#22c55e']], 0, 1],
-                    15, 1,
-                    15.5, 1,
-                    16, 0  // Fade out as segment labels appear
+                    ['case', ['all', ['==', ['get', 'name'], 'Station Square'], ['==', ['get', 'color'], '#22c55e']], 0, 1],  // Default (below zoom 16)
+                    15.2, 0  // Hidden at zoom 15.2+ (segment labels take over)
                 ]
             }
         });

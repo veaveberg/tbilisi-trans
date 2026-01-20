@@ -446,6 +446,91 @@ export async function loadImages() {
         return exitIcons;
     };
 
+    // Generate themed stop icons with strokes for closeup view
+    const generateThemedStopIcons = () => {
+        const pixelRatio = 3;
+        const icons = [];
+
+        // Original SVG path for the pointer/arrow
+        const pointerPathStr = "M22.1698 4.5C24.0943 1.1667 28.9054 1.16675 30.83 4.5L35.9657 13.3945C37.8902 16.7278 35.4845 20.8944 31.6356 20.8945H21.3651C17.5161 20.8945 15.1096 16.7279 17.0341 13.3945L22.1698 4.5Z";
+
+        // Theme configurations
+        const themes = [
+            { suffix: 'dark', fill: '#FFED74', stroke: '#D4C45A' },    // Dark theme base
+            { suffix: 'light', fill: '#3C3C3C', stroke: '#5C5C5C' },   // Light theme base
+            { suffix: 'hover-dark', fill: '#FFFFFF', stroke: '#E5E7EB' }, // Dark theme hover: White fill, very subtle gray stroke
+            { suffix: 'hover-light', fill: '#898989', stroke: '#FFFFFF' } // Light theme hover: Light gray fill, white stroke
+        ];
+
+        themes.forEach(({ suffix, fill, stroke }) => {
+            // Simple circle icon (for stops without rotation)
+            const circleSize = 53;
+            const circleCanvas = document.createElement('canvas');
+            circleCanvas.width = circleSize * pixelRatio;
+            circleCanvas.height = circleSize * pixelRatio;
+            const circleCtx = circleCanvas.getContext('2d');
+            circleCtx.scale(pixelRatio, pixelRatio);
+
+            // Draw circle with stroke - Exact match for r=24.5
+            circleCtx.beginPath();
+            circleCtx.arc(26.5, 26.5, 24.5, 0, 2 * Math.PI);
+            circleCtx.fillStyle = fill;
+            circleCtx.fill();
+            circleCtx.strokeStyle = stroke;
+            circleCtx.lineWidth = 2.5;
+            circleCtx.stroke();
+
+            icons.push({
+                id: `stop-icon-${suffix}`,
+                imageData: circleCtx.getImageData(0, 0, circleCanvas.width, circleCanvas.height),
+                pixelRatio
+            });
+
+            // Close-up icon with arrow pointer
+            const closeupWidth = 53;
+            const closeupHeight = 100;
+            const closeupCanvas = document.createElement('canvas');
+            closeupCanvas.width = closeupWidth * pixelRatio;
+            closeupCanvas.height = closeupHeight * pixelRatio;
+            const closeupCtx = closeupCanvas.getContext('2d');
+            closeupCtx.scale(pixelRatio, pixelRatio);
+
+            // Create Path2D for the exact pointer shape
+            const pointerPath = new Path2D(pointerPathStr);
+
+            // Draw the arrow/pointer at top
+            closeupCtx.fillStyle = fill;
+            closeupCtx.fill(pointerPath);
+            closeupCtx.strokeStyle = stroke;
+            closeupCtx.lineWidth = 2;
+            closeupCtx.stroke(pointerPath);
+
+            // Draw circle - Exact match for cy=49.3533, r=24.5
+            closeupCtx.beginPath();
+            closeupCtx.arc(26.5, 49.3533, 24.5, 0, 2 * Math.PI);
+            closeupCtx.fillStyle = fill;
+            closeupCtx.fill();
+            closeupCtx.strokeStyle = stroke;
+            closeupCtx.lineWidth = 2.5;
+            closeupCtx.stroke();
+
+            icons.push({
+                id: `stop-close-up-icon-${suffix}`,
+                imageData: closeupCtx.getImageData(0, 0, closeupCanvas.width, closeupCanvas.height),
+                pixelRatio
+            });
+
+            // Selected icon (same as close-up)
+            icons.push({
+                id: `stop-selected-icon-${suffix}`,
+                imageData: closeupCtx.getImageData(0, 0, closeupCanvas.width, closeupCanvas.height),
+                pixelRatio
+            });
+        });
+
+        return icons;
+    };
+
     // Add exit icons
     const exitIcons = generateExitIcons();
     exitIcons.forEach(icon => {
@@ -454,6 +539,15 @@ export async function loadImages() {
         }
     });
     console.log('[Map] Generated', exitIcons.length, 'metro exit icons');
+
+    // Add themed stop icons
+    const themedStopIcons = generateThemedStopIcons();
+    themedStopIcons.forEach(icon => {
+        if (!map.hasImage(icon.id)) {
+            map.addImage(icon.id, icon.imageData, { pixelRatio: icon.pixelRatio });
+        }
+    });
+    console.log('[Map] Generated', themedStopIcons.length, 'themed stop icons');
 
     const promises = images.map(img => {
         if (map.hasImage(img.id)) map.removeImage(img.id);
@@ -487,55 +581,58 @@ export function getCircleRadiusExpression(scale = 1) {
 export function updateMapTheme() {
     if (!map || !map.getStyle()) return;
     const isDark = document.body.classList.contains('dark-mode');
-    const labelColor = isDark ? '#ffffff' : '#000000';
-    const haloColor = isDark ? '#000000' : '#ffffff';
+    const theme = {
+        label: isDark ? '#ffffff' : '#000000',
+        halo: isDark ? '#000000' : '#ffffff',
+        stop: isDark ? '#FFED74' : '#3C3C3C',
+        stopStroke: isDark ? '#D4C45A' : '#5C5C5C',
+        glow: isDark ? '#FFED74' : '#3C3C3C',
+        highlightGlow: isDark ? '#FFED74' : '#93C5FD',
+        suffix: isDark ? 'dark' : 'light'
+    };
 
-    if (map.getLayer('metro-layer-label')) {
-        map.setPaintProperty('metro-layer-label', 'text-color', labelColor);
-        map.setPaintProperty('metro-layer-label', 'text-halo-color', haloColor);
-    }
-    if (map.getLayer('metro-transfer-layer')) {
-        map.setPaintProperty('metro-transfer-layer', 'text-color', labelColor);
-        map.setPaintProperty('metro-transfer-layer', 'text-halo-color', haloColor);
-    }
-    if (map.getLayer('stops-label-selected')) {
-        map.setPaintProperty('stops-label-selected', 'text-color', labelColor);
-        map.setPaintProperty('stops-label-selected', 'text-halo-color', haloColor);
-    }
+    // Update Label Layers
+    const labelLayers = ['metro-layer-label', 'metro-transfer-layer', 'stops-label-selected'];
+    labelLayers.forEach(id => {
+        if (map.getLayer(id)) {
+            map.setPaintProperty(id, 'text-color', theme.label);
+            map.setPaintProperty(id, 'text-halo-color', theme.halo);
+        }
+    });
 
+    // Update Stop Circle Layers
     if (map.getLayer('stops-layer-circle')) {
-        const stopColor = isDark ? '#FFED74' : '#3C3C3C';
-        const stopStrokeColor = isDark ? '#FFED74' : '#3C3C3C';
-        const stopStrokeWidth = 0.5;
-        const stopStrokeOpacity = 0.3;
-
-        map.setPaintProperty('stops-layer-circle', 'circle-color', stopColor);
-        map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', stopStrokeColor);
-        map.setPaintProperty('stops-layer-circle', 'circle-stroke-width', stopStrokeWidth);
-        map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', stopStrokeOpacity);
+        map.setPaintProperty('stops-layer-circle', 'circle-color', theme.stop);
+        map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', theme.stopStroke);
+        map.setPaintProperty('stops-layer-circle', 'circle-stroke-width', 1.5);
+        map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', 1);
+    }
+    if (map.getLayer('stops-layer-circle-hover')) {
+        map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-color', theme.stopStroke);
+        map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-width', 1.5);
     }
 
+    // Update Glow Layers
     if (map.getLayer('stops-layer-glow')) {
-        const glowColor = isDark ? '#FFED74' : '#3C3C3C';
+        map.setPaintProperty('stops-layer-glow', 'circle-color', theme.glow);
         map.setPaintProperty('stops-layer-glow', 'circle-opacity', 0.05);
-        map.setPaintProperty('stops-layer-glow', 'circle-color', glowColor);
     }
     if (map.getLayer('stops-highlight-glow')) {
-        const glowColor = isDark ? '#FFED74' : '#93C5FD'; // Blue glow for light theme
+        map.setPaintProperty('stops-highlight-glow', 'circle-color', theme.highlightGlow);
         map.setPaintProperty('stops-highlight-glow', 'circle-opacity', 0.1);
-        map.setPaintProperty('stops-highlight-glow', 'circle-color', glowColor);
     }
 
-    const stopIconColor = isDark ? '#FFED74' : '#3C3C3C';
+    // Update Symbol Layers (Close-up)
+    const iconImage = ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${theme.suffix}`, `stop-close-up-icon-${theme.suffix}`];
     if (map.getLayer('stops-layer')) {
-        map.setPaintProperty('stops-layer', 'icon-color', stopIconColor);
-        map.setPaintProperty('stops-layer', 'icon-halo-color', haloColor);
-        map.setPaintProperty('stops-layer', 'icon-halo-width', 0.5);
+        map.setLayoutProperty('stops-layer', 'icon-image', iconImage);
+    }
+    if (map.getLayer('stops-layer-hover')) {
+        // Hover image update handled in updateStopHoverEffects
     }
     if (map.getLayer('stops-highlight')) {
-        map.setPaintProperty('stops-highlight', 'icon-color', stopIconColor);
-        map.setPaintProperty('stops-highlight', 'icon-halo-color', haloColor);
-        map.setPaintProperty('stops-highlight', 'icon-halo-width', 0.5);
+        const highlightImage = ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-${theme.suffix}`, `stop-icon-${theme.suffix}`];
+        map.setLayoutProperty('stops-highlight', 'icon-image', highlightImage);
     }
 }
 
@@ -619,14 +716,36 @@ export function addStopsToMap(stops, options = {}) {
         slot: 'top',
         paint: {
             'circle-color': '#000000',
-            'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 0.5,
-            'circle-stroke-opacity': 0.3,
+            'circle-stroke-color': '#555555',
+            'circle-stroke-width': 1.5,
+            'circle-stroke-opacity': 1,
             'circle-radius': getCircleRadiusExpression(1),
             'circle-opacity': 1,
             'circle-emissive-strength': 1
         }
     });
+
+    // Hover layer: renders above stops-layer-circle to pop hovered stop to top
+    map.addLayer({
+        id: 'stops-layer-circle-hover',
+        type: 'circle',
+        source: 'stops',
+        maxzoom: 15.2,
+        slot: 'top',
+        filter: ['==', ['get', 'id'], ''], // Initially hidden (no match)
+        paint: {
+            'circle-color': '#000000',
+            'circle-stroke-color': '#555555',
+            'circle-stroke-width': 1.5,
+            'circle-stroke-opacity': 1,
+            'circle-radius': getCircleRadiusExpression(1),
+            'circle-opacity': 1,
+            'circle-emissive-strength': 1
+        }
+    });
+
+    const isDark = document.body.classList.contains('dark-mode');
+    const themeSuffix = isDark ? 'dark' : 'light';
 
     map.addLayer({
         id: 'stops-layer',
@@ -638,16 +757,36 @@ export function addStopsToMap(stops, options = {}) {
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
             'symbol-z-order': 'source',
-            'icon-image': ['case', ['==', ['get', 'rotation'], 0], 'stop-icon', 'stop-close-up-icon'],
+            'icon-image': ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${themeSuffix}`, `stop-close-up-icon-${themeSuffix}`],
             'icon-size': ['interpolate', ['linear'], ['zoom'], 15.2, 0.5, 16, 0.6, 18, 0.8],
             'icon-rotate': ['get', 'rotation'],
             'icon-rotation-alignment': 'map'
         },
         paint: {
             'icon-opacity': 1,
-            'icon-color': '#000000',
-            'icon-halo-color': '#ffffff',
-            'icon-halo-width': 0.5,
+            'icon-emissive-strength': 1
+        }
+    });
+
+    // Hover symbol layer: renders above stops-layer to pop hovered stop to top at high zoom
+    map.addLayer({
+        id: 'stops-layer-hover',
+        type: 'symbol',
+        source: 'stops',
+        minzoom: 15.2,
+        slot: 'top',
+        filter: ['==', ['get', 'id'], ''], // Initially hidden (no match)
+        layout: {
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+            'symbol-z-order': 'source',
+            'icon-image': ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${themeSuffix}`, `stop-close-up-icon-${themeSuffix}`],
+            'icon-size': ['interpolate', ['linear'], ['zoom'], 15.2, 0.5, 16, 0.6, 18, 0.8],
+            'icon-rotate': ['get', 'rotation'],
+            'icon-rotation-alignment': 'map'
+        },
+        paint: {
+            'icon-opacity': 1,
             'icon-emissive-strength': 1
         }
     });
@@ -677,7 +816,7 @@ export function addStopsToMap(stops, options = {}) {
         source: 'selected-stop',
         slot: 'top',
         layout: {
-            'icon-image': ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], 'stop-selected-icon', 'stop-icon'],
+            'icon-image': ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-${themeSuffix}`, `stop-icon-${themeSuffix}`],
             'icon-size': ['case', ['==', ['get', 'mode'], 'SUBWAY'], 1.5, 1.2],
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
@@ -686,9 +825,6 @@ export function addStopsToMap(stops, options = {}) {
         },
         paint: {
             'icon-opacity': 1,
-            'icon-color': '#000000',
-            'icon-halo-color': '#ffffff',
-            'icon-halo-width': 0.5,
             'icon-emissive-strength': 1
         }
     });
@@ -712,27 +848,7 @@ export function addStopsToMap(stops, options = {}) {
     });
     if (map.getLayer('stops-layer')) map.moveLayer('filter-connection-line', 'stops-layer');
 
-    // Inline Filter Hover Logic was here (lines 629-676)
-    // We should move that to map-interactions.js or setupHoverHandlers?
-    // The previous code had it inline in addStopsToMap.
-    // Ideally it moves. But for now, let's keep it here IF we have the deps.
-    // It depends on `updateConnectionLine` and `proximitySort`.
-    // proximitySort is NOT in this file. It was in map-setup.js.
-    // I should move proximitySort to this file OR map-interactions.js.
-    // Given the structure, `addStopsToMap` purely adding layers is better.
-    // The interactions should be setup once in setupHoverHandlers.
-    // But this block is ONLY added if `filterManager` is present.
-    // I will comment it out here and ensure logic sits in map-interactions.js.
-    /*
-    if (filterManager && updateConnectionLine) {
-         // ... this logic belongs in interactions ...
-    }
-    */
-    // Wait, the original code added the listener HERE. 
-    // And it used `proximitySort`.
-    // I will remove it from here and rely on `map-interactions.js` to handle all hovers.
-
-    metro.addMetroLayers(map, metroFeatures, metroLines);
+    metro.addMetroLayers(map, metroFeatures, metroLines, stops);
 
     map.addLayer({
         id: 'stops-label-selected',
@@ -767,6 +883,13 @@ export function addStopsToMap(stops, options = {}) {
     }
     if (map.getLayer('stops-highlight')) {
         map.moveLayer('stops-highlight');
+    }
+    // Move hover layers to very top so hovered stop always renders above all other stops
+    if (map.getLayer('stops-layer-circle-hover')) {
+        map.moveLayer('stops-layer-circle-hover');
+    }
+    if (map.getLayer('stops-layer-hover')) {
+        map.moveLayer('stops-layer-hover');
     }
 
     // Move place/district labels below our transit layers
@@ -854,68 +977,50 @@ export async function updateLiveBuses(routeId, patternSuffix, color) {
 }
 
 export function updateStopHoverEffects(hoveredId) {
-    // If a stop is currently selected (Focused Session), do NOT reset global opacity.
-    if (window.currentStopId) return;
+    if (window.currentStopId || !map || !map.getStyle()) return;
 
-    if (!map || !map.getStyle()) return;
     const isDark = document.body.classList.contains('dark-mode');
+    const safeHoveredId = hoveredId ?? '';
 
-    const baseStopColor = isDark ? '#FFED74' : '#3C3C3C';
-    const baseStopStrokeColor = isDark ? '#FFED74' : '#3C3C3C';
-    const hoverColor = isDark ? '#FFFFFF' : '#505050'; // Light Blue for light theme
-    const hoverStrokeColor = isDark ? '#FFFFFF' : '#505050';
-    const baseGlowOpacity = 0.05;
-    const hoverGlowOpacity = 0.7;
+    // Theme values
+    const colors = {
+        base: isDark ? '#FFED74' : '#3C3C3C',
+        baseStroke: isDark ? '#D4C45A' : '#5C5C5C',
+        hover: isDark ? '#FFFFFF' : '#898989',
+        hoverStroke: isDark ? '#E5E7EB' : '#FFFFFF',
+        glowBase: 0.05,
+        glowHover: 0.7
+    };
 
+    // Update Circle Layers
     if (map.getLayer('stops-layer-circle')) {
-        // Use empty string as fallback for null/undefined hoveredId
-        const safeHoveredId = hoveredId ?? '';
-
-        map.setPaintProperty('stops-layer-circle', 'circle-color', [
-            'case',
-            ['==', ['get', 'id'], safeHoveredId], hoverColor,
-            baseStopColor
-        ]);
-
-        map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', [
-            'case',
-            ['==', ['get', 'id'], safeHoveredId], hoverStrokeColor,
-            baseStopStrokeColor
-        ]);
+        map.setPaintProperty('stops-layer-circle', 'circle-color', ['case', ['==', ['get', 'id'], safeHoveredId], colors.hover, colors.base]);
+        map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', ['case', ['==', ['get', 'id'], safeHoveredId], colors.hoverStroke, colors.baseStroke]);
     }
 
+    if (map.getLayer('stops-layer-circle-hover')) {
+        map.setFilter('stops-layer-circle-hover', ['==', ['get', 'id'], safeHoveredId]);
+        map.setPaintProperty('stops-layer-circle-hover', 'circle-color', colors.hover);
+        map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-color', colors.hoverStroke);
+    }
+
+    // Update Glow Layers
     if (map.getLayer('stops-layer-glow')) {
-        const safeHoveredId = hoveredId ?? '';
-
-        map.setPaintProperty('stops-layer-glow', 'circle-opacity', [
-            'case',
-            ['==', ['get', 'id'], safeHoveredId], hoverGlowOpacity,
-            baseGlowOpacity
-        ]);
-
-        map.setPaintProperty('stops-layer-glow', 'circle-color', [
-            'case',
-            ['==', ['get', 'id'], safeHoveredId], hoverColor,
-            baseStopColor
-        ]);
+        map.setPaintProperty('stops-layer-glow', 'circle-opacity', ['case', ['==', ['get', 'id'], safeHoveredId], colors.glowHover, colors.glowBase]);
+        map.setPaintProperty('stops-layer-glow', 'circle-color', ['case', ['==', ['get', 'id'], safeHoveredId], colors.hover, colors.base]);
     }
 
-    if (map.getLayer('stops-layer')) {
-        const safeHoveredId = hoveredId ?? '';
-        map.setPaintProperty('stops-layer', 'icon-color', [
-            'case',
-            ['==', ['get', 'id'], safeHoveredId], hoverColor,
-            baseStopColor
-        ]);
+    // Update Symbol Layers (Close-up)
+    if (map.getLayer('stops-layer-hover')) {
+        map.setFilter('stops-layer-hover', ['==', ['get', 'id'], safeHoveredId]);
+        const hoverSuffix = isDark ? 'hover-dark' : 'hover-light';
+        map.setLayoutProperty('stops-layer-hover', 'icon-image', ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${hoverSuffix}`, `stop-close-up-icon-${hoverSuffix}`]);
     }
 
+    // Metro circle radius hover effect
     if (map.getLayer('metro-layer-circle')) {
-        const safeHoveredId = hoveredId ?? '';
-        // Use zoom-scaled radius for hover effect
         map.setPaintProperty('metro-layer-circle', 'circle-radius', [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
+            'interpolate', ['linear'], ['zoom'],
             10, ['case', ['==', ['get', 'id'], safeHoveredId], 8, 5],
             12, ['case', ['==', ['get', 'id'], safeHoveredId], 10, 7],
             14, ['case', ['==', ['get', 'id'], safeHoveredId], 14, 10],

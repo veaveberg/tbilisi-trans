@@ -248,7 +248,9 @@ const dataProvider = {
 
 const ALL_STOP_LAYERS = [
     'stops-layer',
+    'stops-layer-hover',
     'stops-layer-circle',
+    'stops-layer-circle-hover',
     'stops-layer-hit-target',
     'metro-layer-circle',
     'metro-layer-label',
@@ -935,7 +937,10 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     if (!stop) return;
 
     const prevStopId = window.currentStopId;
-    if (stop.id) window.currentStopId = String(stop.id);
+    if (stop.id) {
+        window.currentStopId = String(stop.id);
+        window.currentStopMode = stop.vehicleMode;
+    }
 
     // Enable Focus Mode (Dim others)
     setMapFocus(true);
@@ -967,8 +972,9 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     });
 
     if (stop.id) {
-        window.currentStopId = stop.id;
         if (window.selectDevStop) window.selectDevStop(stop.id);
+
+        const isMetro = stop.vehicleMode === 'SUBWAY';
 
         console.log('[showStopInfo] flyToStop:', flyToStop, 'stop.lon:', stop.lon, 'stop.lat:', stop.lat);
         if (flyToStop && stop.lon && stop.lat) {
@@ -983,9 +989,20 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
 
             const offsetY = -(window.innerHeight * 0.1);
             const currentZoom = map.getZoom();
-            const targetZoom = stop.savedZoom || (currentZoom > 16 ? currentZoom : 16);
+            // Zoom in closer for metro (to see segment labels)
+            let targetZoom = stop.savedZoom || (currentZoom > 16 ? currentZoom : 16);
+            if (isMetro) targetZoom = Math.max(targetZoom, 17.5);
+
+            // If it's a metro station, try to center on the platform segment if we have that info
+            let targetLon = stop.lon;
+            let targetLat = stop.lat;
+            if (isMetro && stop.segmentCenterLon && stop.segmentCenterLat) {
+                targetLon = stop.segmentCenterLon;
+                targetLat = stop.segmentCenterLat;
+            }
+
             map.flyTo({
-                center: [stop.lon, stop.lat],
+                center: [targetLon, targetLat],
                 zoom: targetZoom,
                 offset: [0, offsetY]
             });
@@ -1030,6 +1047,13 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                         'icon-opacity': 1
                     }
                 });
+            }
+
+            // For Metro stations, we hide the main highlight marker as requested
+            const highlightOpacity = isMetro ? 0 : 1;
+            map.setPaintProperty('stops-highlight', 'icon-opacity', highlightOpacity);
+            if (map.getLayer('stops-highlight-glow')) {
+                map.setPaintProperty('stops-highlight-glow', 'circle-opacity', isMetro ? 0 : 0.1);
             }
 
             map.getSource('selected-stop').setData({
@@ -2437,6 +2461,7 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
 
     try {
         window.currentStopId = null; // Clear Global State
+        window.currentStopMode = null;
         window._lastRenderedStopId = null; // Clear arrivals internal state
         window.lastRoutes = [];
         window.lastArrivals = [];
