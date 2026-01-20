@@ -253,7 +253,10 @@ const ALL_STOP_LAYERS = [
     'metro-layer-circle',
     'metro-layer-label',
     'metro-transfer-layer',
-    'metro-layer-overlay'
+    'metro-layer-overlay',
+    'metro-exits-layer',
+    'metro-lines-layer',
+    'metro-segment-center-label'
 ];
 
 // Explicit Metro Hover Logic (Pop Effect / Overlay)
@@ -320,7 +323,8 @@ setupClickHandlers({
     ALL_STOP_LAYERS,
     filterManager,
     showStopInfo,
-    applyFilter: (targetId) => filterManager.applyFilter(targetId, window.currentStopId, window.lastArrivals, window.lastRoutes)
+    applyFilter: (targetId) => filterManager.applyFilter(targetId, window.currentStopId, window.lastArrivals, window.lastRoutes),
+    getStopById: (id) => allStops.find(s => s.id === id)
 });
 
 // Forwarding functions for UI event handlers

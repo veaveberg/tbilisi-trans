@@ -557,8 +557,23 @@ function onMouseDown(e) {
                 type: props.type,
                 stopId: stopId, // Keep original ID for reverse lookup if needed
                 startLngLat: e.lngLat,
-                // store reference to the segment object we are mutating
-                // wait, mutating _segments directly is fine for drag
+            };
+            _map.dragPan.disable();
+            _map.getCanvas().style.cursor = 'grabbing';
+            e.preventDefault();
+        }
+    }
+
+    // Check exit markers (only if layer exists)
+    if (_map.getLayer('metro-editor-exits-layer')) {
+        const exitFeatures = _map.queryRenderedFeatures(e.point, { layers: ['metro-editor-exits-layer'] });
+        if (exitFeatures.length > 0) {
+            const f = exitFeatures[0];
+            _dragState = {
+                type: 'exit',
+                exitId: f.properties.id,
+                stationId: f.properties.stationId,
+                startLngLat: e.lngLat,
             };
             _map.dragPan.disable();
             _map.getCanvas().style.cursor = 'grabbing';
@@ -571,9 +586,14 @@ function onMouseMove(e) {
     if (!_dragState) {
         // Cursor hover logic
         if (_isEditorActive) {
-            const midpointFeatures = _map.queryRenderedFeatures(e.point, { layers: ['metro-editor-midpoints-layer'] });
+            const exitFeatures = _map.getLayer('metro-editor-exits-layer')
+                ? _map.queryRenderedFeatures(e.point, { layers: ['metro-editor-exits-layer'] })
+                : [];
+            const midpointFeatures = _map.getLayer('metro-editor-midpoints-layer')
+                ? _map.queryRenderedFeatures(e.point, { layers: ['metro-editor-midpoints-layer'] })
+                : [];
             const stationFeatures = _map.queryRenderedFeatures(e.point, { layers: [LAYER_ID_HANDLES] });
-            _map.getCanvas().style.cursor = (midpointFeatures.length || stationFeatures.length) ? 'grab' : '';
+            _map.getCanvas().style.cursor = (exitFeatures.length || midpointFeatures.length || stationFeatures.length) ? 'grab' : '';
         }
         return;
     }
@@ -610,6 +630,20 @@ function onMouseMove(e) {
         }
 
         renderSegments();
+        return;
+    }
+
+    // Handle exit dragging
+    if (type === 'exit') {
+        const { exitId, stationId } = _dragState;
+        const stationData = _exits[stationId];
+        if (stationData && stationData.exits) {
+            const exit = stationData.exits.find(ex => ex.id === exitId);
+            if (exit) {
+                exit.coords = [e.lngLat.lng, e.lngLat.lat];
+                renderExits();
+            }
+        }
         return;
     }
 
@@ -652,11 +686,17 @@ function onMouseMove(e) {
 function onMouseUp(e) {
     if (!_dragState) return;
 
+    const wasExit = _dragState.type === 'exit';
+
     _map.dragPan.enable();
     _map.getCanvas().style.cursor = '';
 
     // Save on release
-    saveMetroSegments();
+    if (wasExit) {
+        saveExits();
+    } else {
+        saveMetroSegments();
+    }
 
     _dragState = null;
 }
@@ -664,6 +704,7 @@ function onMouseUp(e) {
 function setupInteractions() {
     _map.on('mousedown', LAYER_ID_HANDLES, onMouseDown);
     _map.on('mousedown', 'metro-editor-midpoints-layer', onMouseDown);
+    _map.on('mousedown', 'metro-editor-exits-layer', onMouseDown);
     _map.on('mousemove', onMouseMove);
     _map.on('mouseup', onMouseUp);
     // Prevent map drag when clicking handles
@@ -673,17 +714,24 @@ function setupInteractions() {
     // Double-click on connection line to add midpoint
     _map.on('dblclick', 'metro-editor-connections-layer', onConnectionDoubleClick);
 
-    // Click on station to show popup (Add Exit, etc)
+    // Click on station handles or segment lines to show popup (Add Exit, etc)
     _map.on('click', LAYER_ID_HANDLES, onStationClick);
+    _map.on('click', LAYER_ID_LINES, onStationClick);
+
+    // Click on exit markers to edit/delete
+    _map.on('click', 'metro-editor-exits-layer', onExitMarkerClick);
 }
 
 function removeInteractions() {
     _map.off('mousedown', LAYER_ID_HANDLES, onMouseDown);
     _map.off('mousedown', 'metro-editor-midpoints-layer', onMouseDown);
+    _map.off('mousedown', 'metro-editor-exits-layer', onMouseDown);
     _map.off('mousemove', onMouseMove);
     _map.off('mouseup', onMouseUp);
     _map.off('dblclick', 'metro-editor-connections-layer', onConnectionDoubleClick);
     _map.off('click', LAYER_ID_HANDLES, onStationClick);
+    _map.off('click', LAYER_ID_LINES, onStationClick);
+    _map.off('click', 'metro-editor-exits-layer', onExitMarkerClick);
 }
 
 function onConnectionDoubleClick(e) {
@@ -732,12 +780,30 @@ function onConnectionDoubleClick(e) {
 function onStationClick(e) {
     if (_dragState) return;
 
-    const features = _map.queryRenderedFeatures(e.point, { layers: [LAYER_ID_HANDLES] });
+    // Try handles layer first
+    let features = _map.queryRenderedFeatures(e.point, { layers: [LAYER_ID_HANDLES] });
     if (features.length > 0) {
         const f = features[0];
         const type = f.properties.type;
-        if (type === 'handle_center' || type === 'segment') {
-            showStationPopup(f.properties.stopId, e.lngLat);
+        if (type === 'handle_center') {
+            // Normalize stopId by removing prefix
+            const rawId = f.properties.stopId;
+            const stationId = rawId.replace(/^1:/, '');
+            showStationPopup(stationId, e.lngLat);
+            return;
+        }
+    }
+
+    // Try line layer (segment)
+    features = _map.queryRenderedFeatures(e.point, { layers: [LAYER_ID_LINES] });
+    if (features.length > 0) {
+        const f = features[0];
+        const type = f.properties.type;
+        if (type === 'segment') {
+            const rawId = f.properties.stopId;
+            const stationId = rawId.replace(/^1:/, '');
+            showStationPopup(stationId, e.lngLat);
+            return;
         }
     }
 }
@@ -944,6 +1010,104 @@ function hideExitPlacementToast() {
     if (toast) toast.remove();
 }
 
+// --- Exit Marker Click Handler ---
+
+function onExitMarkerClick(e) {
+    if (_dragState) return;
+    if (!_map.getLayer('metro-editor-exits-layer')) return;
+    e.preventDefault();
+
+    const features = _map.queryRenderedFeatures(e.point, { layers: ['metro-editor-exits-layer'] });
+    if (features.length > 0) {
+        const f = features[0];
+        const exitId = f.properties.id;
+        const stationId = f.properties.stationId;
+        showExitPopup(exitId, stationId, e.lngLat);
+    }
+}
+
+let _exitPopup = null;
+
+function showExitPopup(exitId, stationId, lngLat) {
+    hideExitPopup();
+    hideStationPopup();
+
+    const stationName = getStationDisplayName(stationId);
+    const stationData = _exits[stationId];
+    const exit = stationData?.exits?.find(e => e.id === exitId);
+    const currentLabel = exit?.label || '';
+
+    const popupContent = document.createElement('div');
+    popupContent.className = 'metro-editor-exit-popup';
+    popupContent.innerHTML = `
+        <div style="font-weight: bold; margin-bottom: 4px; font-size: 13px;">${stationName}</div>
+        <div style="color: #666; font-size: 11px; margin-bottom: 10px;">Exit ${currentLabel || exitId.slice(-6)}</div>
+        <div style="margin-bottom: 10px;">
+            <div style="font-size: 11px; color: #888; margin-bottom: 4px;">Label:</div>
+            <div id="exit-label-buttons" style="display: flex; gap: 4px; flex-wrap: wrap;">
+                ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `
+                    <button data-label="${n}" style="
+                        width: 28px;
+                        height: 28px;
+                        border: 2px solid ${currentLabel === String(n) ? '#22c55e' : '#ddd'};
+                        background: ${currentLabel === String(n) ? '#dcfce7' : '#fff'};
+                        border-radius: 6px;
+                        cursor: pointer;
+                        font-size: 12px;
+                        font-weight: bold;
+                    ">${n}</button>
+                `).join('')}
+            </div>
+        </div>
+        <button id="delete-exit-btn" style="
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            width: 100%;
+        ">Delete Exit</button>
+    `;
+
+    _exitPopup = new mapboxgl.Popup({
+        closeButton: true,
+        closeOnClick: false,
+        offset: 15
+    })
+        .setLngLat(lngLat)
+        .setDOMContent(popupContent)
+        .addTo(_map);
+
+    // Label button handlers
+    setTimeout(() => {
+        const labelBtns = popupContent.querySelectorAll('#exit-label-buttons button');
+        labelBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const newLabel = btn.getAttribute('data-label');
+                setExitLabel(exitId, newLabel);
+                hideExitPopup();
+            });
+        });
+
+        const deleteBtn = document.getElementById('delete-exit-btn');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', () => {
+                removeExit(stationId, exitId);
+                hideExitPopup();
+            });
+        }
+    }, 0);
+}
+
+function hideExitPopup() {
+    if (_exitPopup) {
+        _exitPopup.remove();
+        _exitPopup = null;
+    }
+}
+
 // --- Exit Management Functions ---
 
 
@@ -1114,7 +1278,9 @@ function renderExits() {
     Object.entries(_exits).forEach(([stationId, stationData]) => {
         if (!stationData.exits) return;
 
-        const lineColor = stationId.startsWith('metro_2_') ? '#22c55e' : '#ef4444';
+        const isGreenLine = stationId.startsWith('metro_2_');
+        const lineColor = isGreenLine ? '#22c55e' : '#ef4444';
+        const colorName = isGreenLine ? 'green' : 'red';
 
         stationData.exits.forEach((exit, idx) => {
             features.push({
@@ -1125,6 +1291,7 @@ function renderExits() {
                     stationId: stationId,
                     label: exit.label || '',
                     color: lineColor,
+                    colorName: colorName,
                     radius: 8
                 }
             });

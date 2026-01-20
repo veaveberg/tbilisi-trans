@@ -332,99 +332,115 @@ export async function loadImages() {
         const pixelRatio = 2;
         const exitIcons = [];
 
-        // Generate numbered exit icons (1-10)
-        for (let i = 1; i <= 10; i++) {
-            const canvas = document.createElement('canvas');
-            canvas.width = size * pixelRatio;
-            canvas.height = size * pixelRatio;
-            const ctx = canvas.getContext('2d');
-            ctx.scale(pixelRatio, pixelRatio);
+        // Colors for the two metro lines
+        const colors = [
+            { name: 'red', fill: '#ef4444', text: '#ffffff' },
+            { name: 'green', fill: '#22c55e', text: '#ffffff' }
+        ];
+
+        colors.forEach(({ name, fill, text }) => {
+            // Generate numbered exit icons (1-10) for each color
+            for (let i = 1; i <= 10; i++) {
+                const canvas = document.createElement('canvas');
+                canvas.width = size * pixelRatio;
+                canvas.height = size * pixelRatio;
+                const ctx = canvas.getContext('2d');
+                ctx.scale(pixelRatio, pixelRatio);
+
+                // Rounded square background
+                const radius = 10;
+                const padding = 4;
+                ctx.beginPath();
+                ctx.moveTo(padding + radius, padding);
+                ctx.lineTo(size - padding - radius, padding);
+                ctx.quadraticCurveTo(size - padding, padding, size - padding, padding + radius);
+                ctx.lineTo(size - padding, size - padding - radius);
+                ctx.quadraticCurveTo(size - padding, size - padding, size - padding - radius, size - padding);
+                ctx.lineTo(padding + radius, size - padding);
+                ctx.quadraticCurveTo(padding, size - padding, padding, size - padding - radius);
+                ctx.lineTo(padding, padding + radius);
+                ctx.quadraticCurveTo(padding, padding, padding + radius, padding);
+                ctx.closePath();
+                ctx.fillStyle = fill;
+                ctx.fill();
+
+                // Number text
+                ctx.fillStyle = text;
+                ctx.font = `bold ${size * 0.5}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(String(i), size / 2, size / 2 + 2);
+
+                exitIcons.push({
+                    id: `exit-${name}-${i}`,
+                    imageData: ctx.getImageData(0, 0, canvas.width, canvas.height),
+                    pixelRatio
+                });
+            }
+
+            // Generate generic exit arrow icon for each color
+            const arrowCanvas = document.createElement('canvas');
+            arrowCanvas.width = size * pixelRatio;
+            arrowCanvas.height = size * pixelRatio;
+            const arrowCtx = arrowCanvas.getContext('2d');
+            arrowCtx.scale(pixelRatio, pixelRatio);
 
             // Rounded square background
-            const radius = 10;
-            const padding = 4;
-            ctx.beginPath();
-            ctx.moveTo(padding + radius, padding);
-            ctx.lineTo(size - padding - radius, padding);
-            ctx.quadraticCurveTo(size - padding, padding, size - padding, padding + radius);
-            ctx.lineTo(size - padding, size - padding - radius);
-            ctx.quadraticCurveTo(size - padding, size - padding, size - padding - radius, size - padding);
-            ctx.lineTo(padding + radius, size - padding);
-            ctx.quadraticCurveTo(padding, size - padding, padding, size - padding - radius);
-            ctx.lineTo(padding, padding + radius);
-            ctx.quadraticCurveTo(padding, padding, padding + radius, padding);
-            ctx.closePath();
-            ctx.fillStyle = '#ffffff';
-            ctx.fill();
-            ctx.strokeStyle = '#333333';
-            ctx.lineWidth = 2;
-            ctx.stroke();
+            const arrowRadius = 10;
+            const arrowPadding = 4;
+            arrowCtx.beginPath();
+            arrowCtx.moveTo(arrowPadding + arrowRadius, arrowPadding);
+            arrowCtx.lineTo(size - arrowPadding - arrowRadius, arrowPadding);
+            arrowCtx.quadraticCurveTo(size - arrowPadding, arrowPadding, size - arrowPadding, arrowPadding + arrowRadius);
+            arrowCtx.lineTo(size - arrowPadding, size - arrowPadding - arrowRadius);
+            arrowCtx.quadraticCurveTo(size - arrowPadding, size - arrowPadding, size - arrowPadding - arrowRadius, size - arrowPadding);
+            arrowCtx.lineTo(arrowPadding + arrowRadius, size - arrowPadding);
+            arrowCtx.quadraticCurveTo(arrowPadding, size - arrowPadding, arrowPadding, size - arrowPadding - arrowRadius);
+            arrowCtx.lineTo(arrowPadding, arrowPadding + arrowRadius);
+            arrowCtx.quadraticCurveTo(arrowPadding, arrowPadding, arrowPadding + arrowRadius, arrowPadding);
+            arrowCtx.closePath();
+            arrowCtx.fillStyle = fill;
+            arrowCtx.fill();
 
-            // Number text
-            ctx.fillStyle = '#333333';
-            ctx.font = `bold ${size * 0.5}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(String(i), size / 2, size / 2 + 2);
+            // Lucide log-out icon
+            // Scaled to fit within the icon area
+            const scale = (size - arrowPadding * 2) / 24; // Lucide icons are 24x24
+            const offsetX = arrowPadding;
+            const offsetY = arrowPadding;
+
+            arrowCtx.strokeStyle = text;
+            arrowCtx.lineWidth = 2.5 / scale * scale; // Maintain consistent stroke
+            arrowCtx.lineCap = 'round';
+            arrowCtx.lineJoin = 'round';
+
+            // Door frame path: M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4
+            arrowCtx.beginPath();
+            arrowCtx.moveTo(offsetX + 9 * scale, offsetY + 21 * scale);
+            arrowCtx.lineTo(offsetX + 5 * scale, offsetY + 21 * scale);
+            arrowCtx.arc(offsetX + 5 * scale, offsetY + 19 * scale, 2 * scale, Math.PI / 2, Math.PI);
+            arrowCtx.lineTo(offsetX + 3 * scale, offsetY + 5 * scale);
+            arrowCtx.arc(offsetX + 5 * scale, offsetY + 5 * scale, 2 * scale, Math.PI, -Math.PI / 2);
+            arrowCtx.lineTo(offsetX + 9 * scale, offsetY + 3 * scale);
+            arrowCtx.stroke();
+
+            // Arrow line: line x1="21" x2="9" y1="12" y2="12"
+            arrowCtx.beginPath();
+            arrowCtx.moveTo(offsetX + 9 * scale, offsetY + 12 * scale);
+            arrowCtx.lineTo(offsetX + 21 * scale, offsetY + 12 * scale);
+            arrowCtx.stroke();
+
+            // Arrow head: polyline points="16 17 21 12 16 7"
+            arrowCtx.beginPath();
+            arrowCtx.moveTo(offsetX + 16 * scale, offsetY + 17 * scale);
+            arrowCtx.lineTo(offsetX + 21 * scale, offsetY + 12 * scale);
+            arrowCtx.lineTo(offsetX + 16 * scale, offsetY + 7 * scale);
+            arrowCtx.stroke();
 
             exitIcons.push({
-                id: `exit-${i}`,
-                imageData: ctx.getImageData(0, 0, canvas.width, canvas.height),
+                id: `exit-${name}-arrow`,
+                imageData: arrowCtx.getImageData(0, 0, arrowCanvas.width, arrowCanvas.height),
                 pixelRatio
             });
-        }
-
-        // Generate generic exit arrow icon (arrow pointing out of square)
-        const arrowCanvas = document.createElement('canvas');
-        arrowCanvas.width = size * pixelRatio;
-        arrowCanvas.height = size * pixelRatio;
-        const arrowCtx = arrowCanvas.getContext('2d');
-        arrowCtx.scale(pixelRatio, pixelRatio);
-
-        // Rounded square background
-        const arrowRadius = 10;
-        const arrowPadding = 4;
-        arrowCtx.beginPath();
-        arrowCtx.moveTo(arrowPadding + arrowRadius, arrowPadding);
-        arrowCtx.lineTo(size - arrowPadding - arrowRadius, arrowPadding);
-        arrowCtx.quadraticCurveTo(size - arrowPadding, arrowPadding, size - arrowPadding, arrowPadding + arrowRadius);
-        arrowCtx.lineTo(size - arrowPadding, size - arrowPadding - arrowRadius);
-        arrowCtx.quadraticCurveTo(size - arrowPadding, size - arrowPadding, size - arrowPadding - arrowRadius, size - arrowPadding);
-        arrowCtx.lineTo(arrowPadding + arrowRadius, size - arrowPadding);
-        arrowCtx.quadraticCurveTo(arrowPadding, size - arrowPadding, arrowPadding, size - arrowPadding - arrowRadius);
-        arrowCtx.lineTo(arrowPadding, arrowPadding + arrowRadius);
-        arrowCtx.quadraticCurveTo(arrowPadding, arrowPadding, arrowPadding + arrowRadius, arrowPadding);
-        arrowCtx.closePath();
-        arrowCtx.fillStyle = '#ffffff';
-        arrowCtx.fill();
-        arrowCtx.strokeStyle = '#333333';
-        arrowCtx.lineWidth = 2;
-        arrowCtx.stroke();
-
-        // Exit arrow pointing up-right
-        arrowCtx.strokeStyle = '#333333';
-        arrowCtx.lineWidth = 4;
-        arrowCtx.lineCap = 'round';
-        arrowCtx.lineJoin = 'round';
-        const cx = size / 2;
-        const cy = size / 2;
-        const arrowSize = 14;
-        // Main line (diagonal)
-        arrowCtx.beginPath();
-        arrowCtx.moveTo(cx - arrowSize * 0.7, cy + arrowSize * 0.7);
-        arrowCtx.lineTo(cx + arrowSize * 0.7, cy - arrowSize * 0.7);
-        arrowCtx.stroke();
-        // Arrow head
-        arrowCtx.beginPath();
-        arrowCtx.moveTo(cx + arrowSize * 0.2, cy - arrowSize * 0.7);
-        arrowCtx.lineTo(cx + arrowSize * 0.7, cy - arrowSize * 0.7);
-        arrowCtx.lineTo(cx + arrowSize * 0.7, cy - arrowSize * 0.2);
-        arrowCtx.stroke();
-
-        exitIcons.push({
-            id: 'exit-arrow',
-            imageData: arrowCtx.getImageData(0, 0, arrowCanvas.width, arrowCanvas.height),
-            pixelRatio
         });
 
         return exitIcons;
@@ -852,51 +868,58 @@ export function updateStopHoverEffects(hoveredId) {
     const hoverGlowOpacity = 0.7;
 
     if (map.getLayer('stops-layer-circle')) {
+        // Use empty string as fallback for null/undefined hoveredId
+        const safeHoveredId = hoveredId ?? '';
+
         map.setPaintProperty('stops-layer-circle', 'circle-color', [
             'case',
-            ['==', ['get', 'id'], hoveredId], hoverColor,
+            ['==', ['get', 'id'], safeHoveredId], hoverColor,
             baseStopColor
         ]);
 
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', [
             'case',
-            ['==', ['get', 'id'], hoveredId], hoverStrokeColor,
+            ['==', ['get', 'id'], safeHoveredId], hoverStrokeColor,
             baseStopStrokeColor
         ]);
     }
 
     if (map.getLayer('stops-layer-glow')) {
+        const safeHoveredId = hoveredId ?? '';
+
         map.setPaintProperty('stops-layer-glow', 'circle-opacity', [
             'case',
-            ['==', ['get', 'id'], hoveredId], hoverGlowOpacity,
+            ['==', ['get', 'id'], safeHoveredId], hoverGlowOpacity,
             baseGlowOpacity
         ]);
 
         map.setPaintProperty('stops-layer-glow', 'circle-color', [
             'case',
-            ['==', ['get', 'id'], hoveredId], hoverColor,
+            ['==', ['get', 'id'], safeHoveredId], hoverColor,
             baseStopColor
         ]);
     }
 
     if (map.getLayer('stops-layer')) {
+        const safeHoveredId = hoveredId ?? '';
         map.setPaintProperty('stops-layer', 'icon-color', [
             'case',
-            ['==', ['get', 'id'], hoveredId], hoverColor,
+            ['==', ['get', 'id'], safeHoveredId], hoverColor,
             baseStopColor
         ]);
     }
 
     if (map.getLayer('metro-layer-circle')) {
+        const safeHoveredId = hoveredId ?? '';
         // Use zoom-scaled radius for hover effect
         map.setPaintProperty('metro-layer-circle', 'circle-radius', [
             'interpolate',
             ['linear'],
             ['zoom'],
-            10, ['case', ['==', ['get', 'id'], hoveredId], 8, 5],
-            12, ['case', ['==', ['get', 'id'], hoveredId], 10, 7],
-            14, ['case', ['==', ['get', 'id'], hoveredId], 14, 10],
-            16, ['case', ['==', ['get', 'id'], hoveredId], 18, 14]
+            10, ['case', ['==', ['get', 'id'], safeHoveredId], 8, 5],
+            12, ['case', ['==', ['get', 'id'], safeHoveredId], 10, 7],
+            14, ['case', ['==', ['get', 'id'], safeHoveredId], 14, 10],
+            16, ['case', ['==', ['get', 'id'], safeHoveredId], 18, 14]
         ]);
     }
 }

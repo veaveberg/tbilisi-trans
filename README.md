@@ -1,6 +1,6 @@
 # Tbilisi Transit
 
-See live live bus info and all bus routes
+See live buses and schedules for all bus routes
 
 **[Open the web app](https://veaveberg.github.io/tbilisi-trans/)**
 

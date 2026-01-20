@@ -10,6 +10,7 @@
     "prefetch:rustavi": "node scripts/prefetch-rustavi.js",
     "build": "vite build",
     "build:all": "npm run prefetch && vite build",
+    "build:cap": "VITE_BASE_URL=/ npm run build",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -27,12 +27,24 @@ export function setMapFocus(active) {
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', opacityExpr);
     }
     if (map.getLayer('metro-layer-circle')) {
-        // Opacity: Highlight selected, dim others if active
+        // Opacity: Highlight selected, dim others if active, but preserve zoom-based fade for exits
         const metroOpacity = active ? [
-            'case',
-            ['==', ['get', 'id'], selectedId], 1.0,
-            0.4
-        ] : 1.0;
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            15, ['case', ['==', ['get', 'id'], selectedId], 1.0, 0.4],
+            15.5, ['case',
+                ['==', ['get', 'id'], selectedId], 1.0,
+                ['boolean', ['get', 'hasExits'], false], 0,
+                0.4
+            ]
+        ] : [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            15, 1,
+            15.5, ['case', ['boolean', ['get', 'hasExits'], false], 0, 1]
+        ];
 
         map.setPaintProperty('metro-layer-circle', 'circle-opacity', metroOpacity);
         map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', metroOpacity);
@@ -60,7 +72,25 @@ export function setMapFocus(active) {
     if (map.getLayer('metro-layer-label')) {
         map.setPaintProperty('metro-layer-label', 'text-color', labelColor);
         map.setPaintProperty('metro-layer-label', 'text-halo-color', haloColor);
-        map.setPaintProperty('metro-layer-label', 'text-opacity', opacityExpr);
+        // Preserve zoom-based fade at high zoom while applying selection dimming
+        const labelOpacity = active ? [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            14, ['case', ['==', ['get', 'id'], selectedId], 1.0, baseOpacity],
+            15, ['case', ['==', ['get', 'id'], selectedId], 1.0, baseOpacity],
+            15.5, ['case', ['==', ['get', 'id'], selectedId], 1.0, baseOpacity],
+            16, 0  // Always fade out at high zoom
+        ] : [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            14, 1,
+            15, 1,
+            15.5, 1,
+            16, 0  // Always fade out at high zoom
+        ];
+        map.setPaintProperty('metro-layer-label', 'text-opacity', labelOpacity);
     }
 
     if (map.getLayer('metro-transfer-layer')) {
@@ -291,7 +321,7 @@ export function setupHoverHandlers(context) {
 }
 
 export function setupClickHandlers(context) {
-    const { ALL_STOP_LAYERS, filterManager, showStopInfo, applyFilter } = context;
+    const { ALL_STOP_LAYERS, filterManager, showStopInfo, applyFilter, getStopById } = context;
 
     map.on('click', ALL_STOP_LAYERS, (e) => {
         if (window.ignoreMapClicks) return;
@@ -312,6 +342,60 @@ export function setupClickHandlers(context) {
         const bestFeature = sorted ? sorted[0] : null;
 
         if (!bestFeature) return;
+
+        // Check if this is an exit marker - need to find parent station
+        if (bestFeature.layer && bestFeature.layer.id === 'metro-exits-layer') {
+            const stationId = bestFeature.properties.stationId;
+            if (stationId && getStopById) {
+                const station = getStopById(stationId);
+                if (station) {
+                    console.log('[Map] Clicked exit for station:', stationId, station.name);
+                    showStopInfo(station, true, true);
+                    return;
+                }
+            }
+            // Fallback: use stationName and stationId
+            const coords = bestFeature.geometry.coordinates;
+            const stop = {
+                id: stationId,
+                name: bestFeature.properties.stationName,
+                lon: coords[0],
+                lat: coords[1],
+                vehicleMode: 'SUBWAY'
+            };
+            console.log('[Map] Clicked exit (fallback):', stop.id, stop.name);
+            showStopInfo(stop, true, true);
+            return;
+        }
+
+        // Check if this is a segment line or segment center label - find parent station
+        if (bestFeature.layer && (bestFeature.layer.id === 'metro-lines-layer' || bestFeature.layer.id === 'metro-segment-center-label')) {
+            const stationId = bestFeature.properties.stationId;
+            const stationName = bestFeature.properties.name;
+            // Only handle segment or segment-center type (not connection lines)
+            if ((bestFeature.properties.type === 'segment' || bestFeature.properties.type === 'segment-center') && stationId) {
+                if (getStopById) {
+                    const station = getStopById(stationId);
+                    if (station) {
+                        console.log('[Map] Clicked segment/label for station:', stationId, station.name);
+                        showStopInfo(station, true, true);
+                        return;
+                    }
+                }
+                // Fallback: construct station object from properties
+                const coords = bestFeature.geometry.coordinates;
+                const stop = {
+                    id: stationId,
+                    name: stationName,
+                    lon: Array.isArray(coords[0]) ? coords[0][0] : coords[0],
+                    lat: Array.isArray(coords[0]) ? coords[0][1] : coords[1],
+                    vehicleMode: 'SUBWAY'
+                };
+                console.log('[Map] Clicked segment (fallback):', stop.id, stop.name);
+                showStopInfo(stop, true, true);
+                return;
+            }
+        }
 
         // Build stop object with coordinates from geometry (not in properties)
         const coords = bestFeature.geometry.coordinates;

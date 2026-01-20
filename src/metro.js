@@ -40,6 +40,32 @@ const STATION_TO_SEGMENT_ID = {
     'State University': 'metro_2_7'
 };
 
+// Reverse mapping: segment ID -> station name (with cleaned names)
+const SEGMENT_ID_TO_STATION = {};
+Object.entries(STATION_TO_SEGMENT_ID).forEach(([name, id]) => {
+    // Clean the name (remove " 2" suffix from Station Square)
+    let cleanName = name.replace('Station Square 2', 'Station Square');
+    // Prefer non-alternative spellings (shorter names)
+    if (!SEGMENT_ID_TO_STATION[id] || cleanName.length < SEGMENT_ID_TO_STATION[id].length) {
+        SEGMENT_ID_TO_STATION[id] = cleanName;
+    }
+});
+
+// Format station name for 2-line display if it has 2+ long words
+function formatStationLabelName(name) {
+    const words = name.split(' ');
+    // If 2+ words and both are longer than 4 chars, split to 2 lines
+    if (words.length >= 2) {
+        const longWords = words.filter(w => w.length > 4);
+        if (longWords.length >= 2) {
+            // Find best split point (roughly middle)
+            const mid = Math.ceil(words.length / 2);
+            return words.slice(0, mid).join(' ') + '\n' + words.slice(mid).join(' ');
+        }
+    }
+    return name;
+}
+
 export function startMetroTicker() {
     if (metroTicker) return;
     metroTicker = setInterval(() => {
@@ -582,6 +608,40 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
             });
             console.log('[Metro] Schematic layer added (re-add).');
         }
+
+        // Add segment center label layer (station names on platforms at high zoom)
+        if (!map.getLayer('metro-segment-center-label') && map.getSource('metro-schematic-source')) {
+            map.addLayer({
+                id: 'metro-segment-center-label',
+                type: 'symbol',
+                source: 'metro-schematic-source',
+                slot: 'top',
+                minzoom: 15.5,
+                filter: ['==', ['get', 'type'], 'segment-center'],
+                layout: {
+                    'text-field': ['get', 'name'],
+                    'text-size': 24,
+                    'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                    'text-anchor': 'center',
+                    'text-justify': 'center',
+                    'text-allow-overlap': true,
+                    'text-ignore-placement': true,
+                    'text-padding': 4
+                },
+                paint: {
+                    'text-color': ['get', 'color'],  // Colored text (red/green)
+                    'text-halo-color': '#ffffff',    // White stroke
+                    'text-halo-width': 3,
+                    'text-halo-blur': 0,
+                    'text-opacity': [
+                        'interpolate', ['linear'], ['zoom'],
+                        15.5, 0,
+                        16, 1
+                    ]
+                }
+            });  // No before-layer = placed on top
+            console.log('[Metro] Segment center label layer added.');
+        }
     };
 
     // Helper: Snap stations using segments
@@ -649,7 +709,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 _cachedExits = exits; // Cache exits!
                 console.log('[Metro] Schematic segments loaded. Midpoints:', Object.keys(midpoints).length, 'Exits:', Object.keys(exits).length);
 
-                // Annotate station features with hasExits property
+                // Annotate station features with hasExits property and segment center
                 metroFeaturesRef.forEach(f => {
                     const name = f.properties.name;
                     const color = f.properties.color;
@@ -661,6 +721,12 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     }
                     const hasExits = sid && exits[sid] && exits[sid].exits && exits[sid].exits.length > 0;
                     f.properties.hasExits = hasExits;
+
+                    // Add segment center for label repositioning
+                    if (sid && segments[sid] && segments[sid].center) {
+                        f.properties.segmentCenterLon = segments[sid].center[0];
+                        f.properties.segmentCenterLat = segments[sid].center[1];
+                    }
                 });
 
                 const features = [];
@@ -676,15 +742,42 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                         const stopObj = { id: id };
                         let seg = getSegmentForStop(stopObj, segments);
 
-                        // 1. Add Station Segment
+                        // 1. Add Station Segment (line)
                         const geom = generateSegmentGeometry(seg);
+                        const stationName = SEGMENT_ID_TO_STATION[id] || id;
+                        const colorName = color === '#22c55e' ? 'green' : 'red';
                         features.push({
                             type: 'Feature',
                             geometry: {
                                 type: 'LineString',
                                 coordinates: [geom.leftPt, geom.rightPt]
                             },
-                            properties: { color: color, type: 'segment' }
+                            properties: {
+                                color: color,
+                                colorName: colorName,
+                                type: 'segment',
+                                stationId: id,
+                                name: stationName,
+                                centerLon: seg.center[0],
+                                centerLat: seg.center[1]
+                            }
+                        });
+
+                        // 2. Add Segment Center (point for label placement)
+                        const labelName = formatStationLabelName(stationName);
+                        features.push({
+                            type: 'Feature',
+                            geometry: {
+                                type: 'Point',
+                                coordinates: seg.center
+                            },
+                            properties: {
+                                color: color,
+                                colorName: colorName,
+                                type: 'segment-center',
+                                stationId: id,
+                                name: labelName
+                            }
                         });
 
                         // 2. Add Connection to Next (with midpoints if available)
@@ -720,7 +813,8 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
 
                 addSchematicLayer();
 
-                // Skip snapping - keep stations at original locations
+                // Snap station markers to segment centers
+                snapStationsToSegments(segments, metroFeaturesRef);
 
                 // Update the source if needed
                 if (map.getSource('metro-stops')) {
@@ -740,8 +834,10 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
             addSchematicLayer();
         }
 
-        // Skip snapping - keep stations at original locations
-        console.log('[Metro] Keeping stations at original locations.');
+        // Snap station markers to segment centers (using cached segments)
+        if (_cachedSegments) {
+            snapStationsToSegments(_cachedSegments, metroFeaturesRef);
+        }
 
         // Re-annotate in case exits were updated
         if (_cachedExits) {
@@ -810,7 +906,9 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                         ['linear'],
                         ['zoom'],
                         14, ['case', ['all', ['==', ['get', 'name'], 'Station Square'], ['==', ['get', 'color'], '#22c55e']], 0, 1],
-                        15, 1
+                        15, 1,
+                        15.5, 1,
+                        16, 0  // Fade out as segment labels appear
                     ]
                 }
             });
@@ -923,14 +1021,14 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
         });
     }
 
-    // Metro Text Labels
+    // Metro Text Labels (visible from zoom 12-15.5, fades out as segment labels appear)
     if (!map.getLayer('metro-layer-label')) {
         map.addLayer({
             id: 'metro-layer-label',
             type: 'symbol',
             source: 'metro-stops',
             slot: 'top',
-            minzoom: 12, // Visible earlier
+            minzoom: 12,
             layout: {
                 'text-field': ['get', 'name'],
                 'text-size': [
@@ -940,13 +1038,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     12, 10,
                     16, 14
                 ],
-                'text-offset': [
-                    'interpolate',
-                    ['linear'],
-                    ['zoom'],
-                    12, ['literal', [0, 1]],
-                    16, ['literal', [0, 1.5]]
-                ],
+                'text-offset': [0, 1.2],
                 'text-anchor': 'top',
                 'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
                 'text-allow-overlap': true,
@@ -962,7 +1054,9 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     ['linear'],
                     ['zoom'],
                     14, ['case', ['all', ['==', ['get', 'name'], 'Station Square'], ['==', ['get', 'color'], '#22c55e']], 0, 1],
-                    15, 1
+                    15, 1,
+                    15.5, 1,
+                    16, 0  // Fade out as segment labels appear
                 ]
             }
         });
@@ -1002,6 +1096,11 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
         map.moveLayer('metro-layer-glow', 'metro-layer-circle');
     }
 
+    // Ensure segment center labels are on top of everything
+    if (map.getLayer('metro-segment-center-label')) {
+        map.moveLayer('metro-segment-center-label');  // Move to top
+    }
+
     // --- Metro Exits Layer (visible at zoom > 15) ---
     addMetroExitsLayers(map);
 }
@@ -1016,7 +1115,9 @@ function addMetroExitsLayers(map) {
         if (!stationData.exits) return;
         stationData.exits.forEach((exit, idx) => {
             // Determine line color from station ID
-            const lineColor = stationId.startsWith('metro_2_') ? '#22c55e' : '#ef4444';
+            const isGreenLine = stationId.startsWith('metro_2_');
+            const lineColor = isGreenLine ? '#22c55e' : '#ef4444';
+            const colorName = isGreenLine ? 'green' : 'red';
             exitFeatures.push({
                 type: 'Feature',
                 geometry: { type: 'Point', coordinates: exit.coords },
@@ -1025,7 +1126,8 @@ function addMetroExitsLayers(map) {
                     stationId: stationId,
                     stationName: stationData.stationName || stationId,
                     label: exit.label || '',
-                    color: lineColor
+                    color: lineColor,
+                    colorName: colorName
                 }
             });
         });
@@ -1056,13 +1158,13 @@ function addMetroExitsLayers(map) {
                 'icon-image': [
                     'case',
                     ['!=', ['get', 'label'], ''],
-                    ['concat', 'exit-', ['get', 'label']],
-                    'exit-arrow'
+                    ['concat', 'exit-', ['get', 'colorName'], '-', ['get', 'label']],
+                    ['concat', 'exit-', ['get', 'colorName'], '-arrow']
                 ],
                 'icon-size': [
                     'interpolate', ['linear'], ['zoom'],
-                    15, 0.6,
-                    18, 1.0
+                    15, 0.36,
+                    18, 0.6
                 ],
                 'icon-allow-overlap': true,
                 'icon-ignore-placement': true
