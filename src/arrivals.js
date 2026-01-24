@@ -1273,62 +1273,63 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         // We do this for BOTH live and scheduled items to get the first/last info
         // (For live items, we ignore the 'next' schedule times, but want first/last)
         if (item.data.shortName && item.data.shortName !== 'undefined') {
-            getV3Schedule(item.data.shortName, stopId, item.data.id).then(res => {
-                if (!res) return;
-                const { nextArrivals, firstTime, lastTime, serviceWindows } = res;
+            // Check if we already have this info in the DOM to avoid redundant fetches
+            const bottomEl = document.getElementById(bottomBarId);
+            const hasInfo = bottomEl && bottomEl.innerHTML.trim() !== '&nbsp;' && bottomEl.innerHTML.trim() !== '';
 
-                // 1. Update Bottom Bar (First/Last + Interval Description)
-                const bottomEl = document.getElementById(bottomBarId);
+            if (!hasInfo || item.needsFetch) {
+                getV3Schedule(item.data.shortName, stopId, item.data.id).then(res => {
+                    if (!res) return;
+                    const { nextArrivals, firstTime, lastTime, serviceWindows } = res;
 
-                // Route 174 uses serviceWindows instead of firstTime/lastTime
-                if (bottomEl && (serviceWindows || (firstTime && lastTime))) {
-                    // Resolve the full Route ID (some live items only have shortName)
-                    let routeId = item.data.id;
-                    if (!routeId || !routeId.includes(':')) {
-                        // Find matching route in global list to get full ID
-                        const matchingRoute = deps.allRoutes().find(r => String(r.shortName) === String(item.data.shortName));
-                        if (matchingRoute) routeId = matchingRoute.id;
-                    }
+                    // 1. Update Bottom Bar (First/Last + Interval Description)
+                    const currentBottomEl = document.getElementById(bottomBarId);
 
-                    const intervalDesc = getIntervalDescription(routeId)?.trim();
-
-                    let bottomHTML;
-                    // Use serviceWindows for route 174
-                    if (serviceWindows) {
-                        bottomHTML = `<span class="schedule-times">${serviceWindows}</span>`;
-                        // Add interval (skip __FULL__ handling since we're using serviceWindows)
-                        const cleanInterval = intervalDesc?.replace('__FULL__', '').trim();
-                        if (cleanInterval) {
-                            bottomHTML += `,<span class="interval-desc">&nbsp;${cleanInterval}</span>`;
+                    // Route 174 uses serviceWindows instead of firstTime/lastTime
+                    if (currentBottomEl && (serviceWindows || (firstTime && lastTime))) {
+                        // Resolve the full Route ID (some live items only have shortName)
+                        let routeId = item.data.id;
+                        if (!routeId || !routeId.includes(':')) {
+                            const matchingRoute = deps.allRoutes().find(r => String(r.shortName) === String(item.data.shortName));
+                            if (matchingRoute) routeId = matchingRoute.id;
                         }
-                    } else if (intervalDesc && intervalDesc.startsWith('__FULL__')) {
-                        // Check for __FULL__ prefix which means replace entire bottom text
-                        bottomHTML = intervalDesc.slice(8); // Remove __FULL__ prefix
-                    } else {
-                        bottomHTML = `<span class="schedule-times">${firstTime.trim()} – ${lastTime.trim()}</span>`;
-                        if (intervalDesc) {
-                            bottomHTML += `,<span class="interval-desc">&nbsp;${intervalDesc}</span>`;
-                        }
-                    }
-                    bottomEl.innerHTML = bottomHTML;
-                }
 
-                // 2. Update Primary Time (ONLY if item needed fetch i.e. was partial scheduled)
-                if (item.needsFetch && nextArrivals && nextArrivals.length > 0) {
-                    const firstArrival = nextArrivals[0];
-                    const timeEl = document.getElementById(timeElId);
-                    if (timeEl) {
-                        const timeStr = firstArrival.time;
-                        const minsFromNow = getMinutesFromNow(timeStr);
-                        div.setAttribute('data-minutes', minsFromNow);
-                        // Scheduled items always show h:mm format with ˚
-                        timeEl.textContent = timeStr.includes('˚') ? timeStr : timeStr + '˚';
+                        const intervalDesc = getIntervalDescription(routeId)?.trim();
+
+                        let bottomHTML;
+                        if (serviceWindows) {
+                            bottomHTML = `<span class="schedule-times">${serviceWindows}</span>`;
+                            const cleanInterval = intervalDesc?.replace('__FULL__', '').trim();
+                            if (cleanInterval) {
+                                bottomHTML += `,<span class="interval-desc">&nbsp;${cleanInterval}</span>`;
+                            }
+                        } else if (intervalDesc && intervalDesc.startsWith('__FULL__')) {
+                            bottomHTML = intervalDesc.slice(8);
+                        } else {
+                            bottomHTML = `<span class="schedule-times">${firstTime.trim()} – ${lastTime.trim()}</span>`;
+                            if (intervalDesc) {
+                                bottomHTML += `,<span class="interval-desc">&nbsp;${intervalDesc}</span>`;
+                            }
+                        }
+                        currentBottomEl.innerHTML = bottomHTML;
                     }
-                    setTimeout(() => sortArrivalsList(), 50);
-                }
-            }).catch(err => {
-                console.warn('[V3] Schedule Fetch Error', err);
-            });
+
+                    // 2. Update Primary Time (ONLY if item needed fetch i.e. was partial scheduled)
+                    if (item.needsFetch && nextArrivals && nextArrivals.length > 0) {
+                        const firstArrival = nextArrivals[0];
+                        const timeEl = document.getElementById(timeElId);
+                        if (timeEl) {
+                            const timeStr = firstArrival.time;
+                            const minsFromNow = getMinutesFromNow(timeStr);
+                            div.setAttribute('data-minutes', minsFromNow);
+                            timeEl.textContent = timeStr.includes('˚') ? timeStr : timeStr + '˚';
+                        }
+                        setTimeout(() => sortArrivalsList(), 50);
+                    }
+                }).catch(err => {
+                    console.warn('[V3] Schedule Fetch Error', err);
+                });
+            }
         }
     });
 

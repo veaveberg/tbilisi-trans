@@ -1,10 +1,10 @@
 import mapboxgl from 'mapbox-gl';
 import { Geolocation } from '@capacitor/geolocation';
 
-import iconLocationOff from '/public/location.svg';
-import iconLocationFollow from '/public/location.fill.svg';
-import iconLocationHeading from '/public/location.north.line.fill.svg';
-import iconLocationSlashed from '/public/location.slash.svg';
+import iconLocationOff from '/location.svg?url';
+import iconLocationFollow from '/location.fill.svg?url';
+import iconLocationHeading from '/location.north.line.fill.svg?url';
+import iconLocationSlashed from '/location.slash.svg?url';
 
 export const LOCATION_STATES = {
     OFF: 'OFF',
