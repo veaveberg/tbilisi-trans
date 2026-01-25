@@ -292,7 +292,8 @@ arrivals.initArrivals({
     filterManager,
     showRouteOnMap,
     RouteGeometry,
-    v3RoutesMap: () => v3RoutesMap
+    v3RoutesMap: () => v3RoutesMap,
+    getVirtualPatterns: api.getVirtualPatterns
 });
 
 // Initialize Hover Handlers
@@ -1871,14 +1872,33 @@ async function updateRouteView(route, options = {}) {
                 editBtn.classList.add('hidden');
             }
         }
-        // Set initial state to avoid flicker while data fetches
-        // Optimization: Only show "Loading" if we are actually switching routes OR don't have existing content
+        // Show skeleton loading state immediately
         const routeTextEl = document.getElementById('route-info-text');
-        const hasValidContent = routeTextEl.querySelector('.route-patterns-list') || routeTextEl.querySelector('.headsign-row');
-        if (route.id !== window.lastUpdatedRouteId || !hasValidContent) {
-            routeTextEl.innerHTML = '<div class="loading">Loading details...</div>';
-            window.lastUpdatedRouteId = route.id;
-        }
+        const routeBodyEl = document.getElementById('route-info-body');
+
+        routeTextEl.innerHTML = `
+            <div class="route-skeleton-details">
+                <div class="skeleton skeleton-text short"></div>
+                <div class="skeleton skeleton-text heading"></div>
+            </div>`;
+
+        routeBodyEl.innerHTML = `
+            <div class="route-skeleton-body">
+                <div class="skeleton-row">
+                    <div class="skeleton skeleton-circle"></div>
+                    <div class="skeleton skeleton-text short"></div>
+                </div>
+                <div class="skeleton-row">
+                    <div class="skeleton skeleton-circle"></div>
+                    <div class="skeleton skeleton-text short"></div>
+                </div>
+                <div class="skeleton-row">
+                    <div class="skeleton skeleton-circle"></div>
+                    <div class="skeleton skeleton-text short"></div>
+                </div>
+            </div>`;
+
+        window.lastUpdatedRouteId = route.id;
 
         if (!options.suppressPanel) {
             setSheetState(infoCard, 'half'); // Default to half open
@@ -2066,7 +2086,6 @@ async function updateRouteView(route, options = {}) {
                             <div class="sub">Switch direction to view schedule.</div>
                         </div>`;
                 } else {
-                    if (isOptimistic) routeBodyEl.innerHTML = '<div class="loading">Loading schedule...</div>';
 
                     // Helper to render schedule with tabs
                     const renderSchedule = (scheduleIndex = null) => {

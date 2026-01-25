@@ -595,3 +595,64 @@ body.dark-mode .schedule-day-tab.active {
     border-color: var(--primary);
     color: white;
 }
+
+/* --- Skeleton Loaders --- */
+.skeleton {
+    background: var(--bg-secondary);
+    background: linear-gradient(
+        90deg,
+        var(--bg-secondary) 25%,
+        var(--primary-light) 50%,
+        var(--bg-secondary) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s infinite linear;
+    border-radius: 4px;
+}
+
+@keyframes skeleton-loading {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.route-skeleton-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    margin-top: 8px;
+}
+
+.skeleton-text {
+    height: 14px;
+    width: 100%;
+}
+
+.skeleton-text.short {
+    width: 60%;
+}
+
+.skeleton-text.heading {
+    height: 20px;
+    margin-bottom: 4px;
+}
+
+.route-skeleton-body {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding-top: 12px;
+}
+
+.skeleton-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.skeleton-circle {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}

@@ -137,6 +137,16 @@ export function invalidateRouteCache(routeId) {
     }
 }
 
+/**
+ * Get cached virtual patterns for a route.
+ * Virtual patterns (_PART0, _PART1) are generated for loop routes.
+ * @param {string} routeId 
+ * @returns {Array|null} Array of virtual pattern objects or null
+ */
+export function getVirtualPatterns(routeId) {
+    return v3Cache.patterns.get(routeId) || null;
+}
+
 export async function clearAllCaches() {
     console.log('[API] Clearing all IndexedDB caches...');
     try {
@@ -206,7 +216,37 @@ export function preloadStaticRoutesDetails() {
                             });
                         }
 
-                        staticRouteDetails.set(routeId, { ...details, _sourceId: source.id });
+                        const routeData = { ...details, _sourceId: source.id, id: routeId };
+
+                        // --- Loop Virtualization for Static Routes ---
+                        if (details.patterns && details.patterns.length === 1 && RouteGeometry) {
+                            const originalPattern = details.patterns[0];
+                            const stops = originalPattern.stops;
+
+                            if (stops && RouteGeometry.isLoop(stops, details.shortName || routeId)) {
+                                try {
+                                    let forcedId = details._overrides?.terminusStopId_override ||
+                                        details._overrides?.terminusStopId ||
+                                        details._overrides?.virtualTerminusStopId;
+
+                                    const virtualPatterns = RouteGeometry.generateVirtualPatterns(
+                                        originalPattern,
+                                        stops,
+                                        details.longName,
+                                        forcedId
+                                    );
+
+                                    // Update route patterns and cache them
+                                    routeData.patterns = virtualPatterns;
+                                    v3Cache.patterns.set(routeId, virtualPatterns);
+                                    // console.log(`[API] Virtualized static loop route: ${routeId}`);
+                                } catch (e) {
+                                    console.warn(`[API] Failed to virtualize static loop route ${routeId}`, e);
+                                }
+                            }
+                        }
+
+                        staticRouteDetails.set(routeId, routeData);
 
                         // Map stops to this route
                         const stopIds = new Set();

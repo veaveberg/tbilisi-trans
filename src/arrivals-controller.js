@@ -30,12 +30,14 @@ class ArrivalsController {
      * Phase 2: Fetch live data with loading indicator
      */
     async selectStop(stopId) {
+        const isRefresh = this.stopId === stopId;
+
         // Cancel any in-flight request
         if (this.abortController) this.abortController.abort();
         this.abortController = new AbortController();
 
-        // Clear previous stop's content immediately
-        if (this.stopId && this.stopId !== stopId) {
+        // Phase 0: Cleanup (Only if switching stops)
+        if (this.stopId && !isRefresh) {
             this.arrivals = [];
             window.lastArrivals = [];
             renderArrivals([], stopId); // Clears list
@@ -44,18 +46,21 @@ class ArrivalsController {
         this.stopId = stopId;
 
         // === PHASE 1: Instant scheduled (cached) ===
-        try {
-            const scheduled = await fetchArrivalsOptimistic(stopId);
-            if (this.stopId !== stopId) return; // Stop changed during fetch
+        // SKIP Phase 1 if this is a refresh, as current live data is better than scheduled.
+        if (!isRefresh) {
+            try {
+                const scheduled = await fetchArrivalsOptimistic(stopId);
+                if (this.stopId !== stopId) return; // Stop changed during fetch
 
-            if (scheduled.length > 0) {
-                this.arrivals = scheduled;
-                this.timestamp = Date.now();
-                window.lastArrivals = scheduled;
-                renderArrivals(scheduled, stopId);
+                if (scheduled.length > 0) {
+                    this.arrivals = scheduled;
+                    this.timestamp = Date.now();
+                    window.lastArrivals = scheduled;
+                    renderArrivals(scheduled, stopId);
+                }
+            } catch (e) {
+                console.warn('[ArrivalsController] Optimistic fetch failed:', e);
             }
-        } catch (e) {
-            console.warn('[ArrivalsController] Optimistic fetch failed:', e);
         }
 
         // === PHASE 2: Live fetch (loading bar visible) ===

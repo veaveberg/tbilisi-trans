@@ -1214,6 +1214,13 @@ function addMetroExitsLayers(map) {
             }
         }, 'metro-exits-layer');
     }
+
+    if (map.getLayer('metro-exits-glow')) {
+        map.moveLayer('metro-exits-glow');
+    }
+    if (map.getLayer('metro-exits-layer')) {
+        map.moveLayer('metro-exits-layer');
+    }
 }
 
 // Export function to refresh exits (for editor)

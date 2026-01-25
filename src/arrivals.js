@@ -28,7 +28,8 @@ let deps = {
     filterManager: null,
     showRouteOnMap: null,
     RouteGeometry: null,
-    v3RoutesMap: null
+    v3RoutesMap: null,
+    getVirtualPatterns: null
 };
 
 /**
@@ -76,10 +77,27 @@ export function initArrivals(dependencies) {
  * Returns an object with { directionIndex, headsign, verifiedHeadsign, fixedDirection }.
  */
 function resolveDirectionInfo(a, matchedRoute, stopId) {
+    // Debug routes for tracing direction issues
+    const debugRoutes = ['414', '437', '336'];
+
+    // --- DIRECTION FIX LOGIC (Static Check) ---
+    const routeId = matchedRoute ? matchedRoute.id : (a.routeId || a.id);
+    const staticDetails = getStaticRouteDetails(routeId);
+
     let directionIndex = 0;
     if (a.patternSuffix) {
-        const part = a.patternSuffix.split(':')[0];
-        directionIndex = parseInt(part) || 0;
+        if (staticDetails && staticDetails.patterns) {
+            const idx = staticDetails.patterns.findIndex(p => p.patternSuffix === a.patternSuffix);
+            if (idx !== -1) {
+                directionIndex = idx;
+            } else {
+                const part = a.patternSuffix.split(':')[0];
+                directionIndex = parseInt(part) || 0;
+            }
+        } else {
+            const part = a.patternSuffix.split(':')[0];
+            directionIndex = parseInt(part) || 0;
+        }
     }
 
     const invertDirection = matchedRoute?._overrides?.invertDirection === true;
@@ -89,10 +107,6 @@ function resolveDirectionInfo(a, matchedRoute, stopId) {
 
     let verifiedHeadsign = null;
     let fixedDirection = false;
-
-    // --- DIRECTION FIX LOGIC (Static Check) ---
-    const routeId = matchedRoute ? matchedRoute.id : (a.routeId || a.id);
-    const staticDetails = getStaticRouteDetails(routeId);
 
     if (staticDetails && staticDetails._stopsOfPatterns && stopId) {
         // Find stop entry
@@ -104,113 +118,181 @@ function resolveDirectionInfo(a, matchedRoute, stopId) {
             return sId === stopId || n1 === n2;
         });
 
+        // Debug for problem routes (414, 437, etc.)
+        if (debugRoutes.includes(a.shortName)) {
+            console.log(`[${a.shortName} Init] stopId=${stopId} | stopEntry=${!!stopEntry} | patterns=${staticDetails.patterns?.length || 0} | hasDestinations=${!!matchedRoute?._overrides?.destinations} | isLoop=${matchedRoute?._overrides?.isLoop}`);
+            if (stopEntry) {
+                console.log(`[${a.shortName} Init] stopName="${stopEntry.stop?.name}" | suffixes=${JSON.stringify(stopEntry.patternSuffixes)}`);
+            }
+        }
+
+        // --- VIRTUAL PATTERN DIRECTION DETECTION ---
+        // For loop routes, check cached virtual patterns (_PART0, _PART1) to determine direction.
+        // This is the same approach used by route card in main.js.
+        const isLoopRoute = matchedRoute?._overrides?.isLoop === true;
+        const overrides = matchedRoute?._overrides;
+
+        if (isLoopRoute && deps.getVirtualPatterns) {
+            let virtualPatterns = deps.getVirtualPatterns(routeId);
+
+            // FALLBACK: If missing from cache but we have static details, generate on-the-fly
+            if ((!virtualPatterns || virtualPatterns.length === 0) && staticDetails?.patterns?.length === 1) {
+                const originalPattern = staticDetails.patterns[0];
+                const stops = originalPattern.stops;
+                if (stops && stops.length > 0 && deps.RouteGeometry) {
+                    try {
+                        let forcedId = matchedRoute?._overrides?.terminusStopId_override ||
+                            matchedRoute?._overrides?.terminusStopId ||
+                            matchedRoute?._overrides?.virtualTerminusStopId;
+
+                        virtualPatterns = deps.RouteGeometry.generateVirtualPatterns(
+                            originalPattern,
+                            stops,
+                            matchedRoute.longName,
+                            forcedId
+                        );
+                        if (debugRoutes.includes(a.shortName)) {
+                            console.log(`[${a.shortName}] Generated on-the-fly virtual patterns for ${routeId}`);
+                        }
+                    } catch (e) {
+                        console.warn(`[${a.shortName}] On-the-fly virtualization failed for ${routeId}`, e);
+                    }
+                }
+            }
+
+            if (virtualPatterns && virtualPatterns.length > 0) {
+                // Find which virtual pattern contains this stop
+                const normalizedStopId = normalizeRouteId(stopId);
+
+                for (let i = 0; i < virtualPatterns.length; i++) {
+                    const vp = virtualPatterns[i];
+                    const vpStops = vp.stops || [];
+
+                    const containsStop = vpStops.some(s => {
+                        const sId = String(s.id || s.stopId || s);
+                        return sId === stopId || normalizeRouteId(sId) === normalizedStopId;
+                    });
+
+                    if (containsStop) {
+                        // Found! Determine direction from suffix
+                        const suffix = vp.patternSuffix || '';
+                        if (suffix.endsWith('_PART0')) {
+                            directionIndex = 0;
+                        } else if (suffix.endsWith('_PART1')) {
+                            directionIndex = 1;
+                        }
+
+                        // Get headsign from pattern or overrides
+                        if (overrides?.destinations && overrides.destinations[directionIndex]) {
+                            const dest = overrides.destinations[directionIndex];
+                            const locale = new URLSearchParams(window.location.search).get('locale') || 'en';
+                            if (dest.headsign) {
+                                verifiedHeadsign = typeof dest.headsign === 'string'
+                                    ? dest.headsign
+                                    : (dest.headsign[locale] || dest.headsign.en || dest.headsign.ka || '');
+                            }
+                        }
+
+                        // If no headsign from overrides, use pattern headsign
+                        if (!verifiedHeadsign && vp.headsign) {
+                            verifiedHeadsign = vp.headsign;
+                        }
+
+                        fixedDirection = true;
+
+                        if (debugRoutes.includes(a.shortName)) {
+                            console.log(`[${a.shortName} VirtualPattern] Found stop in ${suffix} → dir=${directionIndex} headsign="${verifiedHeadsign}"`);
+                        }
+                        break;
+                    }
+                }
+
+                // If we found direction via virtual pattern, return early
+                if (fixedDirection) {
+                    const headsign = verifiedHeadsign || deps.getPatternHeadsign(matchedRoute, directionIndex, a.headsign);
+                    if (debugRoutes.includes(a.shortName)) {
+                        console.log(`[${a.shortName} Final] dir=${directionIndex} | headsign="${headsign}" | verified="${verifiedHeadsign}" | fixed=${fixedDirection}`);
+                    }
+                    return { directionIndex, headsign, verifiedHeadsign, fixedDirection };
+                }
+            } else if (debugRoutes.includes(a.shortName)) {
+                console.log(`[${a.shortName}] No virtual patterns available for ${routeId}`);
+            }
+        }
+
         if (stopEntry && stopEntry.patternSuffixes && stopEntry.patternSuffixes.length === 1) {
             // If stop is EXCLUSIVE to one pattern, trust that pattern's direction
             const uniqueSuffix = stopEntry.patternSuffixes[0];
-            const fixedPart = uniqueSuffix.split(':')[0];
-            const fixedIdx = parseInt(fixedPart) || 0;
+            const patternIndex = staticDetails.patterns ? staticDetails.patterns.findIndex(p => p.patternSuffix === uniqueSuffix) : -1;
+            let staticRawDir = patternIndex !== -1 ? patternIndex : 0;
 
-            let staticRawDir = fixedIdx;
-
-            // --- SEMANTIC MATCHING START ---
-            let semanticDir = -1;
-            const patternDef = staticDetails.patterns.find(p => p.patternSuffix === uniqueSuffix);
-            const staticHeadsign = patternDef ? patternDef.headsign : null;
-            const overrides = matchedRoute?._overrides;
-
-            if (staticHeadsign && overrides && overrides.destinations) {
-                // Helper to extract text
-                const getText = (d) => {
-                    if (!d || !d.headsign) return '';
-                    if (typeof d.headsign === 'string') return d.headsign;
-                    return d.headsign.en || d.headsign.ka || '';
-                };
-
-                const d0 = getText(overrides.destinations[0]);
-                const d1 = getText(overrides.destinations[1]);
-
-                // Simple fuzzy include check or exact match
-                const clean = s => String(s || '').toLowerCase().trim();
-                const target = clean(staticHeadsign);
-
-                // Verify d0 is not empty before matching
-                if (d0 && (clean(d0) === target || clean(d0).includes(target) || target.includes(clean(d0)))) {
-                    semanticDir = 0;
-                    verifiedHeadsign = d0;
-                } else if (d1 && (clean(d1) === target || clean(d1).includes(target) || target.includes(clean(d1)))) {
-                    semanticDir = 1;
-                    verifiedHeadsign = d1;
-                }
-
-                // Debug Semantic Match for problem routes
-                if (['305', '306', '311', '378', '541'].includes(a.shortName)) {
-                    console.log(`[Semantic Debug] ${a.shortName}:`);
-                    console.log(`   Target: "${target}"`);
-                    console.log(`   d0: "${clean(d0)}" (Match? ${semanticDir === 0})`);
-                    console.log(`   d1: "${clean(d1)}" (Match? ${semanticDir === 1})`);
-                }
-            }
-
-            if (semanticDir !== -1) {
-                staticRawDir = semanticDir; // Authoritative match found
-            } else if (invertDirection) {
+            if (invertDirection) {
                 staticRawDir = staticRawDir === 0 ? 1 : 0;
             }
 
+            // --- FORCE HEADSIGN FOR EXCLUSIVE STOPS ---
+            // If we are SURE this bus is in a specific direction because the stop is exclusive,
+            // we should also use the headsign from that static pattern (or overrides) to override ambiguous live data.
+            const patternDef = staticDetails.patterns?.find(p => p.patternSuffix === uniqueSuffix);
+            if (patternDef) {
+                // Use getPatternHeadsign to respect Convex overrides, falling back to static pattern headsign
+                verifiedHeadsign = deps.getPatternHeadsign(matchedRoute, staticRawDir, patternDef.headsign || a.headsign);
+            }
+
             if (directionIndex !== staticRawDir) {
-                console.log(`[Direction Fix] ${a.shortName} at ${stopId}:`);
-                console.log(`   Live Suffix: ${a.patternSuffix} -> Live Index: ${directionIndex}`);
-                console.log(`   Static Suffix: ${uniqueSuffix} ("${staticHeadsign || '?'}") -> Auto-Detected: ${semanticDir !== -1 ? semanticDir : 'N/A'}`);
-                console.log(`   Final Decision: ${staticRawDir}`);
+                if (debugRoutes.includes(a.shortName)) {
+                    console.log(`[Direction Fix] ${a.shortName} at ${stopId}:`);
+                    console.log(`   Live Suffix: ${a.patternSuffix} -> Live Index: ${directionIndex}`);
+                    console.log(`   Static Suffix: ${uniqueSuffix} -> Forced Index: ${staticRawDir}`);
+                    if (verifiedHeadsign) console.log(`   Forced headsign: "${verifiedHeadsign}"`);
+                }
 
                 directionIndex = staticRawDir;
                 fixedDirection = true;
-            } else {
-                // Always log for problem routes to see what's happening
-                const problemRoutes = ['305', '306', '311', '378', '541'];
-                if (problemRoutes.includes(a.shortName)) {
-                    console.log(`[Direction Debug] ${a.shortName} at ${stopId}:`);
-                    console.log(`   InvertDirection: ${invertDirection}`);
-                    console.log(`   Static Raw ${fixedIdx} -> Final ${staticRawDir}`);
-                    console.log(`   Live Raw ${invertDirection ? (1 - directionIndex) : directionIndex} -> Final ${directionIndex}`);
-                    console.log(`   Result: NO FIX (Values Match)`);
-                } else if (Math.random() < 0.01) {
-                    console.log(`[Direction Info] ${a.shortName} at ${stopId}: Match (Live ${a.patternSuffix} == Static ${uniqueSuffix})`);
-                }
+            } else if (debugRoutes.includes(a.shortName)) {
+                // Direction index matches, but we still might have verifiedHeadsign forced
+                console.log(`[${a.shortName} Dir] Match | staticRawDir=${staticRawDir} | verifiedHeadsign="${verifiedHeadsign}"`);
             }
         }
     }
 
     const headsign = verifiedHeadsign || deps.getPatternHeadsign(matchedRoute, directionIndex, a.headsign);
 
+    // Debug for problem routes
+    if (debugRoutes.includes(a.shortName)) {
+        console.log(`[${a.shortName} Final] dir=${directionIndex} | headsign="${headsign}" | verified="${verifiedHeadsign}" | fixed=${fixedDirection}`);
+    }
+
     return { directionIndex, headsign, verifiedHeadsign, fixedDirection };
 }
 
 /**
  * Returns an array of valid directionIndex values for a route at a stop based on static data.
+ * Supports multiple stop IDs (equivalent stops).
  */
-function getValidDirectionsForRoute(routeId, stopId) {
+function getValidDirectionsForRoute(routeId, stopIds) {
     const staticDetails = getStaticRouteDetails(routeId);
-    if (!staticDetails || !staticDetails._stopsOfPatterns || !stopId) return [0];
+    if (!staticDetails || !staticDetails._stopsOfPatterns || !stopIds || (Array.isArray(stopIds) && stopIds.length === 0)) return [0];
 
-    const stopEntry = staticDetails._stopsOfPatterns.find(s => {
-        const sId = String(s.stop.id || s.stop);
-        return sId === stopId || normalizeRouteId(sId) === normalizeRouteId(stopId);
-    });
-
-    if (!stopEntry || !stopEntry.patternSuffixes || stopEntry.patternSuffixes.length === 0) return [0];
-
+    const targetIds = Array.isArray(stopIds) ? stopIds.map(id => String(id)) : [String(stopIds)];
+    const finalDirs = new Set();
     const matchedRoute = deps.allRoutes().find(r => String(r.id) === String(routeId)) || { id: routeId };
 
-    // For each unique suffix, resolve what its FINAL directionIndex would be
-    const finalDirs = new Set();
-    stopEntry.patternSuffixes.forEach(suffix => {
-        // Use resolveDirectionInfo with a mock arrival to reuse the complex resolution logic
-        const info = resolveDirectionInfo({ patternSuffix: suffix }, matchedRoute, stopId);
-        finalDirs.add(info.directionIndex);
+    targetIds.forEach(id => {
+        const stopEntry = staticDetails._stopsOfPatterns.find(s => {
+            const sId = String(s.stop.id || s.stop);
+            return sId === id || normalizeRouteId(sId) === normalizeRouteId(id);
+        });
+
+        if (stopEntry && stopEntry.patternSuffixes) {
+            stopEntry.patternSuffixes.forEach(suffix => {
+                const info = resolveDirectionInfo({ patternSuffix: suffix }, matchedRoute, id);
+                finalDirs.add(info.directionIndex);
+            });
+        }
     });
 
-    return Array.from(finalDirs);
+    return finalDirs.size > 0 ? Array.from(finalDirs) : [0];
 }
 
 /**
@@ -914,29 +996,17 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     // 1. Identify "Missing" Routes
     const uniqueRoutesMap = new Map();
     const representedKeys = new Set();
+    let equivalentIds = [stopId];
 
     if (stopId) {
-        const equivalentIds = deps.getEquivalentStops(stopId, false);
+        equivalentIds = deps.getEquivalentStops(stopId, false);
 
         equivalentIds.forEach(eqId => {
             const routes = deps.stopToRoutesMap.get(eqId) || [];
             routes.forEach(r => {
-                // Deduplicate by shortName + key attributes
-                // User requirement: Keep routes that "stop twice" (loops/pseudo-twins).
-                // These often have same Number and same Destination, but distinct Route IDs (different directions in DB).
-                // So we MUST distinguish by Route ID (`r.id`).
-                // This might re-introduce "Rustavi duplicates" if they are distinct IDs but effectively same route.
-                // But hiding a valid loop stop is worse than showing a technical duplicate.
                 const key = `${r.shortName}_${r.longName || ''}_${r.id}`;
-
-                if (stopId === '1354' && String(r.shortName) === '329') {
-                    // console.log(`[Dedup Debug]1354 / 329: Key = "${key}", ID = ${ r.id }, Source LongName = "${r.longName}"`);
-                }
-
                 if (!uniqueRoutesMap.has(key)) {
                     uniqueRoutesMap.set(key, r);
-                } else if (stopId === '1354' && String(r.shortName) === '329') {
-                    // console.log(`[Dedup Debug]1354 / 329: DROPPED duplicate for key "${key}"(ID = ${ r.id })`);
                 }
             });
         });
@@ -990,7 +1060,8 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             a.displayShortName = matchedRouteForColor.customShortName || matchedRouteForColor.shortName;
         }
 
-        const { directionIndex, headsign, verifiedHeadsign } = resolveDirectionInfo(a, matchedRouteForColor, stopId);
+        const actualStopId = a._sourceStopId || stopId;
+        const { directionIndex, headsign, verifiedHeadsign } = resolveDirectionInfo(a, matchedRouteForColor, actualStopId);
         if (verifiedHeadsign) a._verifiedHeadsign = verifiedHeadsign;
 
         // Group Key: ShortName + Direction Index (or Headsign if fuzzy)
@@ -1037,19 +1108,23 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         if (deps.filterManager.state.active && !deps.filterManager.state.filteredRoutes.includes(r.id)) return;
         if (!shouldShowRoute(r.shortName, r)) return;
 
-        const validDirs = getValidDirectionsForRoute(r.id, stopId);
+        const validDirs = getValidDirectionsForRoute(r.id, equivalentIds);
         validDirs.forEach(dirIdx => {
             const key = `${r.shortName}_${dirIdx}`;
             if (!representedKeys.has(key)) {
+                // Determine headsign for this direction at this stop
+                const { headsign } = resolveDirectionInfo({ id: r.id, shortName: r.shortName, directionIndex: dirIdx }, r, stopId);
+
                 renderList.push({
                     type: 'scheduled',
                     data: r,
                     minutes: 99999,
                     color: deps.getRouteDisplayColor(r),
                     directionIndex: dirIdx,
+                    headsign: headsign,
                     needsFetch: true
                 });
-                representedKeys.add(key); // Prevent duplicates if multiple route IDs map to same shortName/dir (rare)
+                representedKeys.add(key);
             }
         });
     });
@@ -1134,6 +1209,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         div.setAttribute('data-last-active', Date.now());
 
         div.setAttribute('data-minutes', item.minutes);
+        div.setAttribute('data-minutes-original', item.minutes); // Reset original minutes for countdown
         div.style.borderLeftColor = item.color;
 
         // -- Data Prep --
@@ -1169,28 +1245,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 `1:${route.id}` === String(r.id)
             ) || r;
 
-            let overrideHeadsign = null;
-            if (freshRoute._overrides && freshRoute._overrides.destinations) {
-                const dirIdx = item.directionIndex !== undefined ? item.directionIndex : 0;
-                overrideHeadsign = deps.getPatternHeadsign(freshRoute, dirIdx, null);
-            }
-
-            if (overrideHeadsign) {
-                headsign = overrideHeadsign;
-            } else if (freshRoute._overrides && freshRoute._overrides.longName) {
-                const lng = new URLSearchParams(window.location.search).get('locale') || 'en';
-                headsign = freshRoute._overrides.longName[lng] || freshRoute._overrides.longName.en || freshRoute._overrides.longName.ka || r.longName;
-            } else if (item.headsign) {
-                headsign = item.headsign;
-            } else {
-                const parsed = deps.RouteGeometry.parseRouteName(r.longName);
-                if (parsed.destination) {
-                    headsign = parsed.destination;
-                } else {
-                    headsign = r.longName || '';
-                }
-            }
-
+            headsign = item.headsign;
             isScheduled = true;
             needsDisclaimer = true;
             timeDisplay = item.timeDisplay || '--:--';

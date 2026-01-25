@@ -30,7 +30,7 @@ export const RouteGeometry = {
         const fId = String(first.id || first.stopId).split(':')[1] || String(first.id || first.stopId);
         const lId = String(last.id || last.stopId).split(':')[1] || String(last.id || last.stopId);
 
-        return fId === lId || first.name === last.name;
+        return fId === lId || (first.name && last.name && first.name === last.name);
     },
 
     /**

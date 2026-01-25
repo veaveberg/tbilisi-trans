@@ -892,6 +892,19 @@ export function addStopsToMap(stops, options = {}) {
         map.moveLayer('stops-layer-hover');
     }
 
+    // Move metro exits even higher than bus stops
+    if (map.getLayer('metro-exits-glow')) {
+        map.moveLayer('metro-exits-glow');
+    }
+    if (map.getLayer('metro-exits-layer')) {
+        map.moveLayer('metro-exits-layer');
+    }
+
+    // Ensure segment center labels are also on top
+    if (map.getLayer('metro-segment-center-label')) {
+        map.moveLayer('metro-segment-center-label');
+    }
+
     // Move place/district labels below our transit layers
     movePlaceLabelsBelow();
 
