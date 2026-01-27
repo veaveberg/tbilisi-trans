@@ -693,13 +693,11 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     }
                 }
 
-                console.log(`[Metro] Snapped "${name}" -> in-place at [${matchedSeg.center[0].toFixed(4)}, ${matchedSeg.center[1].toFixed(4)}]`);
-            } else {
-                console.log(`[Metro] Failed to snap "${name}". TargetID: ${targetId}`);
+
             }
         });
 
-        console.log(`[Metro] Snapped ${snappedCount}/${featuresRef.length} stations to schematic centers.`);
+
     };
 
     if (!_cachedSegments) {

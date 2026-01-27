@@ -176,7 +176,25 @@ export function preloadStaticRoutesDetails() {
         await Promise.all(sourcesToLoad.map(async (source) => {
             try {
                 const filename = `${source.id}_routes_details_${locale}.json`;
-                const data = await getStaticCache(source.id, filename);
+                const stopsFilename = `${source.id}_stops_${locale}.json`;
+
+                // Parallel load
+                const [data, stopsData] = await Promise.all([
+                    getStaticCache(source.id, filename),
+                    getStaticCache(source.id, stopsFilename)
+                ]);
+
+                // Create fast lookup for stop names
+                const stopNameMap = new Map();
+                if (stopsData && Array.isArray(stopsData)) {
+                    stopsData.forEach(s => {
+                        const pid = processId(s.id, source);
+                        stopNameMap.set(pid, s.name);
+                        // Also index raw ID just in case
+                        stopNameMap.set(s.id, s.name);
+                    });
+                }
+
                 if (data) {
                     Object.entries(data).forEach(([rawRouteId, details]) => {
                         const routeId = processId(rawRouteId, source);
@@ -203,14 +221,20 @@ export function preloadStaticRoutesDetails() {
                             details.patterns.forEach(p => {
                                 if (p.stops) {
                                     p.stops = p.stops.map(s => {
-                                        if (typeof s === 'object') return processStop(s, source);
+                                        if (typeof s === 'object') {
+                                            // If object already, ensure it has name
+                                            const processed = processStop(s, source);
+                                            // If name missing, try lookup? 
+                                            // Usually static object stops might be partial.
+                                            // But if it is from _stopsOfPatterns, it might be just {id:...}
+                                            if (!processed.name && stopNameMap.has(processed.id)) {
+                                                processed.name = stopNameMap.get(processed.id);
+                                            }
+                                            return processed;
+                                        }
                                         const pid = processId(s, source);
-                                        // If it was just a string ID, keep it as an object with ID for consistency if needed, 
-                                        // but FilterManager expects p.stops to be objects with an .id property in some paths.
-                                        // Let's check FilterManager usage...
-                                        // idxO = p.stops.findIndex(s => originEq.has(redirectMap.get(s.id) || s.id));
-                                        // It expects objects with .id
-                                        return { id: pid };
+                                        const name = stopNameMap.get(pid);
+                                        return { id: pid, name: name };
                                     });
                                 }
                             });
@@ -1225,120 +1249,163 @@ export async function fetchV3Routes() {
     console.log('[API DEBUG] fetchV3Routes: Delegating to fetchRoutes()');
     return fetchRoutes({ strategy: 'cache-first' });
 }
+// --- Global Overrides Cache ---
+let globalOverridesCache = null;
+let overridesPromise = null;
+
+export async function fetchAllOverrides() {
+    if (globalOverridesCache) return globalOverridesCache;
+    if (overridesPromise) return overridesPromise;
+
+    overridesPromise = (async () => {
+        try {
+            console.log('[API] Fetching all global overrides...');
+            const data = await convex.query("transit:getAllOverrides");
+            globalOverridesCache = new Map(data.map(o => [o.routeId, o]));
+            console.log(`[API] Loaded ${globalOverridesCache.size} overrides.`);
+            return globalOverridesCache;
+        } catch (e) {
+            console.error('[API] Failed to fetch global overrides', e);
+            throw e;
+        } finally {
+            overridesPromise = null;
+        }
+    })();
+    return overridesPromise;
+}
+
+function matchOverride(routeId) {
+    if (!globalOverridesCache) return null;
+
+    // Exact match
+    if (globalOverridesCache.has(routeId)) return globalOverridesCache.get(routeId);
+
+    // Stripped ID match (for "1:520" vs "520")
+    // Try variations:
+    const variations = [
+        String(routeId).replace(/^[12]:/, ''), // 1:520 -> 520
+        `1:${String(routeId).replace(/^[12]:/, '')}`, // 520 -> 1:520
+        `2:${String(routeId).replace(/^[12]:/, '')}`  // 520 -> 2:520
+    ];
+
+    // Handle 'r' prefix for Rustavi
+    if (String(routeId).includes('r')) {
+        // ... logic already covered by exact match if IDs match, but in case of mismatches
+    }
+
+    for (const v of variations) {
+        if (globalOverridesCache.has(v)) return globalOverridesCache.get(v);
+    }
+    return null;
+}
 
 export async function fetchRouteDetailsV3(routeId, options = {}) {
     if (!routeId) return null;
 
     // console.log(`[API DEBUG] fetchRouteDetailsV3: ${routeId}`);
 
-    // Try Convex first (contains live overrides)
-    try {
-        // Determine source from options or infer from ID prefix
-        let sourceId = options.sourceId || 'tbilisi';
-        if (String(routeId).startsWith('r') && String(routeId).length > 1 && String(routeId)[1] === 'R') {
-            sourceId = 'rustavi';
+    // 2. Fetch Overrides (Lazy Load Global Cache)
+    if (!globalOverridesCache) {
+        try {
+            await fetchAllOverrides();
+        } catch (e) {
+            console.warn('[API] Failed to load global overrides, proceeding with static data only', e);
         }
+    }
 
-        const source = sources.find(s => s.id === sourceId) || sources[0];
+    // 3. Get Base Static Data
+    // Ensure static routes are loaded
+    await preloadStaticRoutesDetails();
 
-        // Convert frontend ID to DB format using restoreApiId
-        const dbRouteId = restoreApiId(String(routeId), source);
+    let route = getStaticRouteDetails(routeId);
+    if (!route) {
+        // console.warn(`[API] fetchRouteDetailsV3: Route ${routeId} not found in static index.`);
+        return null;
+    }
 
-        // Query Convex
-        // console.log(`[API DEBUG] fetchRouteDetailsV3: Calling Convex for ${routeId} (db: ${dbRouteId}, source: ${sourceId})...`);
-        const data = await convex.query("transit:getRouteDetails", {
-            sourceId: sourceId,
-            locale: options.locale || 'en',
-            routeId: dbRouteId
-        });
+    // Clone to avoid mutating shared static cache
+    // Deep clone needed because we might modify patterns/stops
+    route = JSON.parse(JSON.stringify(route));
 
-        console.log(`[API Debug] fetchRouteDetailsV3(${routeId}) Convex data:`, data);
-        if (data && data._overrides) {
-            console.log(`[API Debug] fetchRouteDetailsV3(${routeId}) Found _overrides:`, data._overrides);
-        }
+    // 4. Apply Overrides
+    if (globalOverridesCache) {
+        const overrides = matchOverride(routeId);
+        if (overrides) {
+            // console.log(`[API] Applied overrides for ${routeId}`, overrides);
+            if (overrides.shortName_override) route.shortName = overrides.shortName_override;
+            if (overrides.isLoop !== undefined) route.isLoop = overrides.isLoop;
+            if (overrides.invertDirection !== undefined) route.invertDirection = overrides.invertDirection;
 
-        if (data) {
-            // Tag with source
-            data._source = sourceId;
+            // Locale specific names
+            const locale = options.locale || 'en';
+            if (locale === 'en' && overrides.longName_en_override) route.longName = overrides.longName_en_override;
+            else if (locale === 'ka' && overrides.longName_ka_override) route.longName = overrides.longName_ka_override;
+            else if (locale === 'ru' && overrides.longName_ru_override) route.longName = overrides.longName_ru_override;
 
-            // Populate Side-Loaded Data into v3Cache
-            if (data._schedules) {
-                data._schedules.forEach(s => {
-                    const key = `${routeId}:${s.suffix}`;
-                    v3Cache.schedules.set(key, s.data);
-                });
-            }
-            // Note: Polylines are loaded from static files, not Convex (better for caching)
-
-            // Inject Stops into Patterns if available
-            if (data.patterns && data._stopsOfPatterns) {
-                const stopsMap = new Map();
-                if (Array.isArray(data._stopsOfPatterns)) {
-                    data._stopsOfPatterns.forEach(item => {
-                        if (item.patternSuffix) stopsMap.set(item.patternSuffix, item.stops);
-                    });
-                }
-                data.patterns.forEach(p => {
-                    if (stopsMap.has(p.patternSuffix)) {
-                        p.stops = stopsMap.get(p.patternSuffix);
-                    }
-                });
-            }
-
-            const procSource = sources.find(s => s.id === (data._source || 'tbilisi'));
-            const route = processRoute(data, procSource);
-
-            // --- Loop Virtualization Integration ---
-            if (route.patterns && route.patterns.length === 1) {
-                const originalPattern = route.patterns[0];
-                try {
-                    // Start with injected stops if available
-                    let stops = originalPattern.stops;
-
-                    // If no injected stops, maybe fetch them? (Recursive call to fetchRouteStopsV3)
-                    if (!stops) {
-                        stops = await fetchRouteStopsV3(route.id, originalPattern.patternSuffix, options);
-                    } else {
-                        // Ensure stops are processed (IDs etc)
-                        stops = stops.map(s => processStop(s, procSource));
-                    }
-
-                    if (stops && RouteGeometry.isLoop(stops, route.shortName)) {
-                        let forcedId = null;
-                        if (data._overrides) {
-                            forcedId = data._overrides.terminusStopId_override ||
-                                data._overrides.terminusStopId ||
-                                data._overrides.virtualTerminusStopId;
+            // Attach _overrides object
+            route._overrides = {
+                isLoop: overrides.isLoop,
+                invertDirection: overrides.invertDirection,
+                destinations: [
+                    {
+                        headsign: {
+                            en: overrides.dest0_en_override || overrides.dest0_en,
+                            ka: overrides.dest0_ka_override || overrides.dest0_ka,
+                            ru: overrides.dest0_ru_override || overrides.dest0_ru
                         }
-                        const virtualPatterns = RouteGeometry.generateVirtualPatterns(
-                            originalPattern,
-                            stops,
-                            route.longName,
-                            forcedId
-                        );
-                        route.patterns = virtualPatterns;
-                        v3Cache.patterns.set(route.id, virtualPatterns);
+                    },
+                    {
+                        headsign: {
+                            en: overrides.dest1_en_override || overrides.dest1_en,
+                            ka: overrides.dest1_ka_override || overrides.dest1_ka,
+                            ru: overrides.dest1_ru_override || overrides.dest1_ru
+                        }
                     }
-                } catch (e) {
-                    console.warn(`[API] Failed to check loop status for ${route.id}`, e);
+                ],
+                terminusStopId: overrides.terminusStopId,
+                terminusStopId_override: overrides.terminusStopId_override,
+                virtualTerminusStopId: overrides.virtualTerminusStopId
+            };
+        }
+    }
+
+    // 5. Loop Virtualization (Client-Side Logic)
+    if (route.patterns && route.patterns.length === 1) {
+        const originalPattern = route.patterns[0];
+        try {
+            // Ensure stops are processed
+            let stops = originalPattern.stops;
+
+            // Unloop if geometry detects loop OR if override explicitly says so
+            if (stops && (RouteGeometry.isLoop(stops, route.shortName) || route._overrides?.isLoop === true)) {
+                let forcedId = null;
+                if (route._overrides) {
+                    forcedId = route._overrides.terminusStopId_override ||
+                        route._overrides.terminusStopId ||
+                        route._overrides.virtualTerminusStopId;
+                }
+                const virtualPatterns = RouteGeometry.generateVirtualPatterns(
+                    originalPattern,
+                    stops,
+                    route.longName,
+                    forcedId
+                );
+                route.patterns = virtualPatterns;
+                v3Cache.patterns.set(route.id, virtualPatterns);
+            } else {
+                if (stops && stops.length > 5 && route._overrides?.isLoop) {
+                    console.warn(`[API] Loop Detection FAILED for ${route.id} despite override saying isLoop=true. Stops: ${stops.length}, First: ${stops[0]?.id}, Last: ${stops[stops.length - 1]?.id}`);
                 }
             }
-
-            // Cache full details for future calls
-            staticRouteDetails.set(routeId, route);
-            return route;
+        } catch (e) {
+            console.warn(`[API] Failed to check loop status for ${route.id}`, e);
         }
-    } catch (e) {
-        console.warn(`[API] Convex fetchRouteDetailsV3 failed for ${routeId}`, e);
     }
 
-    // 2. Fallback to Memory/Static Cache (Preloaded Details)
-    if (staticRouteDetails.has(routeId)) {
-        // console.log(`[API] fetchRouteDetailsV3 fallback to static for ${routeId}`);
-        return staticRouteDetails.get(routeId);
-    }
+    return route;
 
-    return null;
+
+
 }
 
 export async function fetchRouteStopsV3(routeId, patternSuffix, options = {}) {

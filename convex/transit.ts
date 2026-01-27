@@ -365,9 +365,10 @@ export const syncSource = action({
 export const getRoutes = query({
     args: {
         sourceId: v.string(),
-        locale: v.string()
+        locale: v.string(),
+        onlyWithOverrides: v.optional(v.boolean())
     },
-    handler: async (ctx, { sourceId, locale }): Promise<any> => {
+    handler: async (ctx, { sourceId, locale, onlyWithOverrides }): Promise<any> => {
         const routes = await ctx.db
             .query("routes")
             .withIndex("by_source_locale", q => q.eq("source", sourceId).eq("locale", locale))
@@ -381,7 +382,7 @@ export const getRoutes = query({
         const convexTimestamp = Date.now();
         console.log(`[getRoutes] Time: ${convexTimestamp}, Overrides: ${overrides.length}`);
 
-        const results = routes.map(r => {
+        let results = routes.map(r => {
             const routeData = { ...r.data };
 
             // Robust lookup: try with and without '1:'/'2:' prefixes
@@ -411,8 +412,6 @@ export const getRoutes = query({
             }
 
             if (ov) {
-                // console.log(`[getRoutes] Matched override for ${r.routeId} using ${ov.routeId}`);
-                console.log(`[getRoutes] Matched override for ${r.routeId} using ${ov.routeId}`);
                 // Apply immediate top-level overrides
                 if (ov.shortName_override) routeData.shortName = ov.shortName_override;
                 if (ov.isLoop !== undefined) routeData.isLoop = ov.isLoop;
@@ -454,6 +453,10 @@ export const getRoutes = query({
             }
             return routeData;
         });
+
+        if (onlyWithOverrides) {
+            results = results.filter(r => r._overrides);
+        }
 
         return {
             routes: results,
@@ -702,5 +705,13 @@ export const getOverride = query({
         }
 
         return override || null;
+    }
+});
+
+export const getAllOverrides = query({
+    args: {},
+    handler: async (ctx): Promise<any> => {
+        const overrides = await ctx.db.query("overrides").collect();
+        return overrides;
     }
 });

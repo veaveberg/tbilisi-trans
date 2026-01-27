@@ -8,6 +8,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Override point for customization after application launch.
+        
+        ApplicationDelegateProxy.shared.application(application, didFinishLaunchingWithOptions: launchOptions)
+        
+        self.window = UIWindow(frame: UIScreen.main.bounds)
+        
+        let viewController = CAPBridgeViewController()
+        self.window?.rootViewController = viewController
+        self.window?.makeKeyAndVisible()
+        
         return true
     }
 
