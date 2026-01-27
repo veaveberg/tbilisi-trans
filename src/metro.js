@@ -833,6 +833,9 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 if (map.getSource('metro-stops')) {
                     map.getSource('metro-stops').setData({ type: 'FeatureCollection', features: metroFeaturesRef });
                 }
+
+                // Ensure exits are added after data is loaded
+                addMetroExitsLayers(map);
             })
             .catch(err => {
                 _isFetchingSchematic = false;
