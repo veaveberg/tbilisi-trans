@@ -17,7 +17,7 @@ const { handleMetroStop } = metro;
 import { setupGeolocation, isTrackingActive, stopTracking, isUserInteractingWithMap, LOCATION_STATES } from './geolocation.js';
 import { map, getMapHash } from './map-setup.js';
 import { setupVisuals, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, setMapLightPreset } from './map-visuals.js';
-import { setMapFocus, setupHoverHandlers, setupClickHandlers, addMetroHoverLogic } from './map-interactions.js';
+import { setMapFocus, setupHoverHandlers, setupClickHandlers, addMetroHoverLogic, clearStopHoverState } from './map-interactions.js';
 import stopRotations from './data/stop_bearings.json';
 import { db } from './db.js';
 import { historyManager, addToHistory, popHistory, clearHistory, updateBackButtons, peekHistory } from './history.js';
@@ -25,6 +25,8 @@ import { hydrateRouteDetails } from './fetch.js';
 import { setupEditTools, getEditState, setEditPickMode } from './dev-tools.js';
 import * as arrivals from './arrivals.js';
 import { arrivalsController } from './arrivals-controller.js';
+import { getIntervalDescription } from './intervals.js';
+import { initMinibusSegmentsEditor, loadMinibusSegmentEditsFromFile } from './minibus-segments-editor.js';
 
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
@@ -75,6 +77,21 @@ initSettings({
 // Setup Geolocation & Map Interactions
 setupGeolocation(map);
 setupVisuals();
+
+document.addEventListener('sheet:closed', () => {
+    try { clearStopHoverState(); } catch (err) { console.error('Clear Hover Error', err); }
+
+    const infoPanel = document.getElementById('info-panel');
+    const routePanel = document.getElementById('route-info');
+    const infoHidden = infoPanel ? infoPanel.classList.contains('hidden') : true;
+    const routeHidden = routePanel ? routePanel.classList.contains('hidden') : true;
+
+    if (infoHidden && routeHidden) {
+        window.currentStopId = null;
+        window.currentStopMode = null;
+        try { setMapFocus(false); } catch (err) { console.error('Reset Focus Error', err); }
+    }
+});
 
 // Initial Router State Handling
 Router.init();
@@ -219,6 +236,7 @@ function handleBack() {
         closeAllPanels();
         // Reset Map Focus
         setMapFocus(false);
+        clearStopHoverState();
         // Clear Route
         clearRoute();
         // Clear Highlight
@@ -530,17 +548,31 @@ async function loadMinibusSegments() {
         const response = await fetch(`${basePath}data/long_segments.geojson`);
         if (!response.ok) return;
         const data = await response.json();
+        // Determine starting ID based on existing traffic (to avoid conflicts)? Safe enough to use large numbers or just local 0-index since source is specific.
+        data.features.forEach((f, i) => {
+            f.id = i;
+        });
+
+        const editsFromFile = await loadMinibusSegmentEditsFromFile(basePath);
+        const renderedData = initMinibusSegmentsEditor(map, data, {
+            sourceId: 'minibus-segments',
+            layerId: 'minibus-segments-layer',
+            edits: editsFromFile || undefined
+        });
 
         if (map.getSource('minibus-segments')) {
-            map.getSource('minibus-segments').setData(data);
+            map.getSource('minibus-segments').setData(renderedData);
         } else {
             map.addSource('minibus-segments', {
                 type: 'geojson',
-                data: data
+                data: renderedData
             });
 
             // 1. Check Initial Setting (Default: Hidden)
             const isVisible = localStorage.getItem('showMinibusSegments') === 'true';
+
+            // Add minibus layer BEFORE stops to ensure it's underneath
+            const beforeId = map.getLayer('stops-layer-glow') ? 'stops-layer-glow' : undefined;
 
             map.addLayer({
                 id: 'minibus-segments-layer',
@@ -552,27 +584,230 @@ async function loadMinibusSegments() {
                     'visibility': isVisible ? 'visible' : 'none'
                 },
                 paint: {
-                    'line-color': '#FF4500', // Orange-Red
-                    'line-width': 4,
-                    'line-opacity': 0.8
+                    // Much brighter blue for dark mode (#80caff) with emissive strength to pop against dark map
+                    'line-color': document.body.classList.contains('dark-mode') ? '#80caff' : '#2563eb',
+                    'line-emissive-strength': document.body.classList.contains('dark-mode') ? 0.8 : 0,
+                    'line-width': [
+                        'case',
+                        ['boolean', ['feature-state', 'hover'], false],
+                        12,
+                        8
+                    ],
+                    'line-opacity': [
+                        'case',
+                        ['boolean', ['feature-state', 'hover'], false],
+                        0.8,
+                        0.5
+                    ]
                 }
+            }, beforeId);
+
+            // Hover listeners are now handled centrally in map-interactions.js via setupHoverHandlers
+            // to ensure mutual exclusivity with stops.
+
+            // Add popup on click (Radius Search)
+            map.on('click', (e) => {
+                if (window.minibusSegmentsEditor && window.minibusSegmentsEditor.isActive()) return;
+                // Check if we hit a stop first - prioritize stops!
+                const stopFeatures = map.queryRenderedFeatures(e.point, { layers: ALL_STOP_LAYERS });
+                if (stopFeatures.length > 0) return;
+
+                // Restrict to Hover: Only open if we are currently hovering a segment
+                // This check is now handled by the central hover handler in map-interactions.js
+                // which sets window.hoveredMinibusSegmentId
+                if (window.hoveredMinibusSegmentId === null) return;
+
+                console.log('[Map Click] at', e.point);
+                // Radius in pixels (approx 25m at zoom 15 is ~10px, zoom 16 ~20px)
+                // Let's use 20px for a generous touch area.
+                const bbox = [
+                    [e.point.x - 20, e.point.y - 20],
+                    [e.point.x + 20, e.point.y + 20]
+                ];
+
+                const features = map.queryRenderedFeatures(bbox, { layers: ['minibus-segments-layer'] });
+                console.log('[Map Click] features found:', features.length);
+
+                if (features.length === 0) return;
+
+                // Stop prop if we found something (optional, but good if other clicks exist)
+                // e.originalEvent.stopPropagation(); 
+
+                // Aggregate Routes
+                const allRoutes = [];
+                const seenRoutes = new Set();
+
+                features.forEach(f => {
+                    const props = f.properties;
+                    if (props.routeRoutes) {
+                        try {
+                            const routes = typeof props.routeRoutes === 'string' ? JSON.parse(props.routeRoutes) : props.routeRoutes;
+                            routes.forEach(r => {
+                                const key = `${r.routeNumber}_${r.from}_${r.to}`;
+                                if (!seenRoutes.has(key)) {
+                                    seenRoutes.add(key);
+                                    allRoutes.push(r);
+                                }
+                            });
+                        } catch (err) { }
+                    } else if (props.routeNumber) {
+                        // Fallback for single route
+                        // routeNumber might be "402, 503" string in merged props?
+                        // If merged logic from previous steps holds:
+                        // routeRoutes handles "merged".
+                        // If not merged, routeNumber is single.
+                        // But we reverted to unmerged data?
+                        // Wait, user's request came AFTER I reverted to unmerged.
+                        // So we have UNMERGED segments.
+                        // Each feature has ONE routeNumber.
+                        // So we aggregate features.
+                        const key = `${props.routeNumber}_${props.from}_${props.to}`;
+                        if (!seenRoutes.has(key)) {
+                            seenRoutes.add(key);
+                            allRoutes.push({
+                                routeNumber: props.routeNumber,
+                                from: props.from,
+                                to: props.to
+                            });
+                        }
+                    }
+                });
+
+                if (allRoutes.length === 0) return;
+
+                // Open Segment Card instead of Popup
+                console.log('[Map Click] Opening Segment Card with routes:', allRoutes);
+                showSegmentCard(allRoutes);
             });
 
-            // Add popup on click
-            map.on('click', 'minibus-segments-layer', (e) => {
-                const props = e.features[0].properties;
-                new mapboxgl.Popup()
-                    .setLngLat(e.lngLat)
-                    .setHTML(`
-                        <div style="color:black">
-                            <strong>Route ${props.routeNumber}</strong><br>
-                            Gap: ${props.gapLength}m<br>
-                            From: ${props.from}<br>
-                            To: ${props.to}
-                        </div>
-                    `)
-                    .addTo(map);
-            });
+            function showSegmentCard(routes) {
+                console.log('[showSegmentCard] Invoked with:', routes.length, 'routes');
+
+                // --- CLEANUP STOP STATE ---
+                if (window.busUpdateInterval) { // It seems busUpdateInterval is global
+                    clearInterval(window.busUpdateInterval);
+                    window.busUpdateInterval = null;
+                }
+                // Also clear the singleton controller which manages Phase 2 + Refresh
+                if (arrivalsController) {
+                    arrivalsController.clear();
+                }
+
+                stopTracking(); // Stop GPS if active on stop
+                window.currentStopId = null;
+
+                const panel = document.getElementById('info-panel');
+                const nameEl = document.getElementById('stop-name');
+                const listEl = document.getElementById('arrivals-list');
+                const filterBtn = document.getElementById('filter-routes-toggle');
+                const editBtn = document.getElementById('btn-edit-stop');
+
+                // 1. Open Sheet
+                setSheetState(document.getElementById('route-info'), 'hidden'); // Close route info if open
+                setSheetState(panel, 'half');
+
+                // 2. Set Title & Hide Controls
+                nameEl.textContent = 'Minibus Segment';
+                if (filterBtn) filterBtn.classList.add('hidden');
+                if (editBtn) editBtn.classList.add('hidden');
+
+                // 3. Render Route Chips (Use renderAllRoutes which finds real colors)
+                // Map to format expected by renderAllRoutes
+                const routeObjects = routes.map(r => ({ shortName: r.routeNumber }));
+                renderAllRoutes(routeObjects, []);
+
+                // 4. Render Virtual Arrivals with Stop Card UI
+                listEl.innerHTML = '';
+
+                // Sort routes again just in case
+                routes.sort((a, b) => parseInt(a.routeNumber) - parseInt(b.routeNumber));
+
+                routes.forEach(r => {
+                    const item = document.createElement('div');
+                    item.className = 'arrival-item'; // Use 'arrival-item' class from CSS not 'arrival-card'
+                    item.style.display = 'flex'; // Ensure flex layout if CSS relies on it
+                    item.style.opacity = '1';
+
+                    // Find color
+                    // Find color and real info
+                    let color = 'gray'; // Default
+                    let intervalDesc = '';
+                    let prettyTo = r.to;
+
+                    const realRoute = allRoutes.find(x => x.shortName === r.routeNumber); // allRoutes is global
+                    if (realRoute) {
+                        if (realRoute.color) color = `#${realRoute.color}`;
+
+                        // 1. Get Interval Description
+                        if (realRoute.id) {
+                            const desc = getIntervalDescription(realRoute.id);
+                            if (desc) intervalDesc = desc;
+                        }
+
+                        // 2. Resolve Headsign with Overrides
+                        // We have r.to (segment destination). Let's see if it matches direction 0 or 1 overrides.
+                        // getPatternHeadsign(route, directionIndex, default) - it is local in main.js
+                        const h0 = getPatternHeadsign(realRoute, 0, '');
+                        const h1 = getPatternHeadsign(realRoute, 1, '');
+
+                        // Simple fuzzy match strategy:
+                        // if r.to is very similar to h0, use h0 (which has overrides)
+                        // if r.to is very similar to h1, use h1
+                        const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                        const nTo = normalize(r.to);
+
+                        if (h0 && (nTo.includes(normalize(h0)) || normalize(h0).includes(nTo))) {
+                            prettyTo = h0;
+                        } else if (h1 && (nTo.includes(normalize(h1)) || normalize(h1).includes(nTo))) {
+                            prettyTo = h1;
+                        }
+                    }
+
+                    // Format Interval
+                    let bottomContent = `<span class="schedule-times">From: ${r.from}</span>`;
+                    if (intervalDesc) {
+                        // Clean up __FULL__ prefix if present (internal marker in intervals.js)
+                        const cleanDesc = intervalDesc.replace('__FULL__', '').trim();
+                        bottomContent += ` <span class="interval-desc" style="color:#888; font-size:11px;">• ${cleanDesc}</span>`;
+                    }
+
+                    // Use exact structure from arrivals.js
+                    item.innerHTML = `
+                         <div class="arrival-card-left">
+                             <div class="arrival-card-top">
+                                 <div class="route-number" style="color: ${color}">${r.routeNumber}</div>
+                                 <div class="destination" title="${prettyTo}">${prettyTo}</div>
+                             </div>
+                             <div class="arrival-card-bottom">
+                                 ${bottomContent}
+                             </div>
+                         </div>
+                         <div class="arrival-card-right">
+                             <div class="time-container">
+                                 <div class="led-text scheduled-time" style="color:#d9534f">-:--</div>
+                             </div>
+                         </div>
+                     `;
+
+                    // Click behavior: Show route on map
+                    if (realRoute) {
+                        item.onclick = () => {
+                            showRouteOnMap(realRoute, true, {
+                                targetHeadsign: r.to
+                                // We don't have stop ID or direction index easily, so just show pattern
+                            });
+                        };
+                    }
+
+                    listEl.appendChild(item);
+                });
+
+                // Clear any selected stop Highlight if we were on one
+                if (map.getSource('selected-stop')) {
+                    map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
+                }
+                window.currentStopId = null;
+            }
 
             // Change cursor
             map.on('mouseenter', 'minibus-segments-layer', () => {
@@ -593,6 +828,9 @@ window.addEventListener('minibusSegmentsChange', (e) => {
     const visible = e.detail;
     if (map.getLayer('minibus-segments-layer')) {
         map.setLayoutProperty('minibus-segments-layer', 'visibility', visible ? 'visible' : 'none');
+    }
+    if (window.minibusSegmentsEditor) {
+        window.minibusSegmentsEditor.setShowMinibusMode(visible);
     }
 });
 
@@ -2491,6 +2729,7 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
 
         // Always try to reset map focus
         try { setMapFocus(false); } catch (err) { console.error('Reset Focus Error', err); }
+        try { clearStopHoverState(); } catch (err) { console.error('Clear Hover Error', err); }
 
         // Remove highlight
         if (map.getSource('selected-stop')) {
@@ -2513,6 +2752,7 @@ document.getElementById('close-route-info').addEventListener('click', (e) => {
     triggerMapClickLock();
 
     setSheetState(document.getElementById('route-info'), 'hidden');
+    try { clearStopHoverState(); } catch (err) { console.error('Clear Hover Error', err); }
     clearHistory(); // Clear history on close
     clearRoute(); // Helper to clear route layers (modified to also reset focus)
 
@@ -3294,4 +3534,3 @@ window.addEventListener('keydown', (e) => {
 loadRoutesConfig();
 
 /* Map Menu & Simplify Logic */
-

@@ -4,6 +4,8 @@ import { map } from './map-setup.js';
 export function setSheetState(panel, state) {
     if (!panel) return;
 
+    const wasHidden = panel.classList.contains('hidden');
+
     // states: hidden, collapsed, peek, half, full
     panel.classList.remove('hidden', 'sheet-half', 'sheet-full', 'sheet-collapsed', 'sheet-peek');
     document.body.classList.remove('sheet-half', 'sheet-full', 'sheet-collapsed', 'sheet-peek');
@@ -11,6 +13,9 @@ export function setSheetState(panel, state) {
     if (state === 'hidden') {
         panel.classList.add('hidden');
         panel.style.display = 'none'; // Force hide
+        if (!wasHidden) {
+            document.dispatchEvent(new CustomEvent('sheet:closed', { detail: { panelId: panel.id } }));
+        }
 
         // Only clear stop highlight when explicitly closing info-panel (not when switching to route)
         if (panel.id === 'info-panel' && map.getSource('selected-stop')) {

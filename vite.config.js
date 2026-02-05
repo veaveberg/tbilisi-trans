@@ -357,6 +357,11 @@ export default defineConfig({
             registerType: 'autoUpdate',
             includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg', 'data/*.json'], // Include fallback data!
             workbox: {
+                // Force SW update + cleanup to evict old cached behavior
+                skipWaiting: true,
+                clientsClaim: true,
+                cleanupOutdatedCaches: true,
+                cacheId: 'ttc-pwa-2026-02-05',
                 maximumFileSizeToCacheInBytes: 20 * 1024 * 1024, // 20MB (Fix size limit error)
                 globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'], // Cache everything
                 runtimeCaching: [
@@ -367,7 +372,7 @@ export default defineConfig({
                             url.pathname.includes('/positions'),
                         handler: 'NetworkOnly',
                         options: {
-                            cacheName: 'api-realtime-v1',
+                            cacheName: 'api-realtime-v2',
                             expiration: {
                                 maxEntries: 10,
                                 maxAgeSeconds: 10 // Very short just in case
@@ -382,7 +387,7 @@ export default defineConfig({
                             !url.pathname.includes('/positions'),
                         handler: 'StaleWhileRevalidate',
                         options: {
-                            cacheName: 'api-static-v2',
+                            cacheName: 'api-static-v3',
                             expiration: {
                                 maxEntries: 100,
                                 maxAgeSeconds: 60 * 60 * 24 * 30 // 30 Days

@@ -280,9 +280,7 @@
         "from": "Vake Park",
         "to": "Vake Park",
         "snapped_v9": true,
-        "color": "#8cfea2",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8cfea2"
       }
     },
     {
@@ -768,9 +766,7 @@
         "from": "Dariali Street",
         "to": "Bazaleti Street",
         "snapped_v9": true,
-        "color": "#8cfea2",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8cfea2"
       }
     },
     {
@@ -1080,9 +1076,7 @@
         "from": "Lado Kavsadze Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#8cfea2",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8cfea2"
       }
     },
     {
@@ -2008,9 +2002,7 @@
         "from": "ნაფეტვრებისკენ მიმავალი გზა (კლუბამდე)",
         "to": "Bagebi Cable Road",
         "snapped_v9": true,
-        "color": "#8e2dbf",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8e2dbf"
       }
     },
     {
@@ -2476,9 +2468,7 @@
         "from": "Special Penitentiary Service",
         "to": "ნაფეტვრებისკენ მიმავალი გზა (კლუბამდე)",
         "snapped_v9": true,
-        "color": "#8e2dbf",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8e2dbf"
       }
     },
     {
@@ -3272,9 +3262,7 @@
         "from": "შოთა ნადირაშვილის ქ",
         "to": "მეველეს ქ. 1",
         "snapped_v9": true,
-        "color": "#1174e9",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#1174e9"
       }
     },
     {
@@ -3616,9 +3604,7 @@
         "from": "მეველეს ქ. 1",
         "to": "Shota Nadirashvili Street",
         "snapped_v9": true,
-        "color": "#1174e9",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#1174e9"
       }
     },
     {
@@ -3852,9 +3838,7 @@
         "from": "M/S \"Rustaveli\"",
         "to": "Mikheil Zandukeli Street",
         "snapped_v9": true,
-        "color": "#928bf7",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#928bf7"
       }
     },
     {
@@ -4580,9 +4564,7 @@
         "from": "Marneuli Street",
         "to": "Ponichala III M/D, #28",
         "snapped_v9": true,
-        "color": "#13a305",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#13a305"
       }
     },
     {
@@ -5168,9 +5150,7 @@
         "from": "Levan Ghoghoberidze St #3",
         "to": "Marneuli Street",
         "snapped_v9": true,
-        "color": "#13a305",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#13a305"
       }
     },
     {
@@ -5824,9 +5804,7 @@
         "from": "ლევან ღოღობერიძის ქ. #47",
         "to": "Marneuli Street",
         "snapped_v9": true,
-        "color": "#29a83b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#29a83b"
       }
     },
     {
@@ -6140,9 +6118,7 @@
         "from": "Konstantine Gamsakhurdia Street",
         "to": "Public School #218",
         "snapped_v9": true,
-        "color": "#29a83b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#29a83b"
       }
     },
     {
@@ -6608,9 +6584,7 @@
         "from": "Marneuli Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#29a83b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#29a83b"
       }
     },
     {
@@ -6904,9 +6878,7 @@
         "from": "Kvemo Ponichala Center",
         "to": "ე. მცხეთელის ქ.",
         "snapped_v9": true,
-        "color": "#aabf49",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#aabf49"
       }
     },
     {
@@ -7212,9 +7184,7 @@
         "from": "ე. მცხეთელის ქ.",
         "to": "Kvemo Ponichala Center",
         "snapped_v9": true,
-        "color": "#aabf49",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#aabf49"
       }
     },
     {
@@ -7476,9 +7446,7 @@
         "from": "Marneuli Street",
         "to": "ალექსანდრე ბერიძის ქ. #28",
         "snapped_v9": true,
-        "color": "#aabf49",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#aabf49"
       }
     },
     {
@@ -7660,9 +7628,7 @@
         "from": "ალექსანდრე ბერიძის ქ. #28",
         "to": "Marneuli Street",
         "snapped_v9": true,
-        "color": "#aabf49",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#aabf49"
       }
     },
     {
@@ -7796,9 +7762,7 @@
         "from": "Public School #218",
         "to": "Guram Pataraia Street",
         "snapped_v9": true,
-        "color": "#2bd757",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2bd757"
       }
     },
     {
@@ -8092,9 +8056,7 @@
         "from": "ვარკეთილი-3, მე-2 მ/რ, კორპუსი N32",
         "to": "Street of Heroes Fighting for Territorial Integrity",
         "snapped_v9": true,
-        "color": "#acee65",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#acee65"
       }
     },
     {
@@ -8336,9 +8298,7 @@
         "from": "Street of Heroes Fighting for Territorial Integrity",
         "to": "ვარკეთილი-3, მე-2 მ/რ, კორპუსი #34",
         "snapped_v9": true,
-        "color": "#acee65",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#acee65"
       }
     },
     {
@@ -8592,9 +8552,7 @@
         "from": "გადასასავლელი ხიდი",
         "to": "რეზო ინანიშვილის #20",
         "snapped_v9": true,
-        "color": "#2d0674",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2d0674"
       }
     },
     {
@@ -8864,9 +8822,7 @@
         "from": "რეზო ინანიშვილის #20",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#2d0674",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2d0674"
       }
     },
     {
@@ -9292,9 +9248,7 @@
         "from": "Kiziki Street #22",
         "to": "Military City",
         "snapped_v9": true,
-        "color": "#ae1d82",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ae1d82"
       }
     },
     {
@@ -9604,9 +9558,7 @@
         "from": "Military City",
         "to": "Mikheil Gakhokidze Street",
         "snapped_v9": true,
-        "color": "#ae1d82",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ae1d82"
       }
     },
     {
@@ -10048,9 +10000,7 @@
         "from": "Giorgi Abashvili Street",
         "to": "Kiziki Street #5",
         "snapped_v9": true,
-        "color": "#ae1d82",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ae1d82"
       }
     },
     {
@@ -10824,9 +10774,7 @@
         "from": "Public School #11",
         "to": "Public School #11",
         "snapped_v9": true,
-        "color": "#2f3590",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2f3590"
       }
     },
     {
@@ -11132,9 +11080,7 @@
         "from": "დავით აღმაშენებლის #100",
         "to": "Giorgitsminda Lane",
         "snapped_v9": true,
-        "color": "#b04c9e",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#b04c9e"
       }
     },
     {
@@ -11436,9 +11382,7 @@
         "from": "Giorgitsminda Lane",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#b04c9e",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#b04c9e"
       }
     },
     {
@@ -12148,9 +12092,7 @@
         "from": "მერი შერვაშიძის ქ.",
         "to": "Nikoloz Agiashvili Street",
         "snapped_v9": true,
-        "color": "#3164ac",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#3164ac"
       }
     },
     {
@@ -12920,9 +12862,7 @@
         "from": "Revaz Uridia Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#3164ac",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#3164ac"
       }
     },
     {
@@ -13520,9 +13460,7 @@
         "from": "Avto Varazi St #67a",
         "to": "სოფ. აგარაკები",
         "snapped_v9": true,
-        "color": "#b27bba",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#b27bba"
       }
     },
     {
@@ -14260,9 +14198,7 @@
         "from": "სოფ. აგარაკები",
         "to": "Avto Varazi St #30",
         "snapped_v9": true,
-        "color": "#b27bba",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#b27bba"
       }
     },
     {
@@ -14496,9 +14432,7 @@
         "from": "M/S \"Rustaveli\"",
         "to": "Mikheil Zandukeli Street",
         "snapped_v9": true,
-        "color": "#c880f0",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#c880f0"
       }
     },
     {
@@ -14888,9 +14822,7 @@
         "from": "13 Asureli Mama Street",
         "to": "Mirian Mepe St #17",
         "snapped_v9": true,
-        "color": "#caaf0c",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#caaf0c"
       }
     },
     {
@@ -16020,9 +15952,7 @@
         "from": "Tarieli Street",
         "to": "წმინდა გიორგის უბანი",
         "snapped_v9": true,
-        "color": "#caaf0c",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#caaf0c"
       }
     },
     {
@@ -16580,9 +16510,7 @@
         "from": "წმინდა გიორგის უბანი",
         "to": "Tarieli Street",
         "snapped_v9": true,
-        "color": "#caaf0c",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#caaf0c"
       }
     },
     {
@@ -16920,9 +16848,7 @@
         "from": "Mirian Mepe St #46",
         "to": "Tbilisi City Court",
         "snapped_v9": true,
-        "color": "#caaf0c",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#caaf0c"
       }
     },
     {
@@ -17060,9 +16986,7 @@
         "from": "Davit Aghmashenebeli Alley #44",
         "to": "Dighomi Masivi I Block",
         "snapped_v9": true,
-        "color": "#caaf0c",
-        "overlapIndex": 0,
-        "overlapCount": 5
+        "color": "#caaf0c"
       }
     },
     {
@@ -17544,9 +17468,7 @@
         "from": "Shuamta Street",
         "to": "Shuamta Street",
         "snapped_v9": true,
-        "color": "#ccde28",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ccde28"
       }
     },
     {
@@ -17868,9 +17790,7 @@
         "from": "კონსტანტინე ამირაჯიბის ქ. #71",
         "to": "Public School #74",
         "snapped_v9": true,
-        "color": "#4df636",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4df636"
       }
     },
     {
@@ -18448,9 +18368,7 @@
         "from": "Petre Khvedeliani Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#4df636",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4df636"
       }
     },
     {
@@ -18804,9 +18722,7 @@
         "from": "Route Start",
         "to": "Vladimer Naneishvili Street",
         "snapped_v9": true,
-        "color": "#ce0d45",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ce0d45"
       }
     },
     {
@@ -19384,9 +19300,7 @@
         "from": "Bejan Kalandadze Street",
         "to": "Alexandre Shimkevich Street",
         "snapped_v9": true,
-        "color": "#4f2553",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4f2553"
       }
     },
     {
@@ -19880,9 +19794,7 @@
         "from": "300 Aragveli Memorial",
         "to": "Ioseb Grishashvili Street",
         "snapped_v9": true,
-        "color": "#4f2553",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4f2553"
       }
     },
     {
@@ -21016,9 +20928,7 @@
         "from": "Route Start",
         "to": "Vake-Saburatlo Police Sixth Department",
         "snapped_v9": true,
-        "color": "#6759a5",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6759a5"
       }
     },
     {
@@ -21532,9 +21442,7 @@
         "from": "წმინდა გიორგის უბანი",
         "to": "წმინდა გიორგის უბანი",
         "snapped_v9": true,
-        "color": "#6759a5",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6759a5"
       }
     },
     {
@@ -22212,9 +22120,7 @@
         "from": "Mikheil Meskhi Street",
         "to": "Tetri Dukani Street",
         "snapped_v9": true,
-        "color": "#6759a5",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6759a5"
       }
     },
     {
@@ -22604,9 +22510,7 @@
         "from": "Tetri Dukani Street",
         "to": "Village Dighomi Lane",
         "snapped_v9": true,
-        "color": "#6759a5",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6759a5"
       }
     },
     {
@@ -22980,9 +22884,7 @@
         "from": "ნუგზარ შანავას ქუჩა, #26",
         "to": "Zghvis Ubani XI M/D III Block",
         "snapped_v9": true,
-        "color": "#6988c1",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6988c1"
       }
     },
     {
@@ -23296,9 +23198,7 @@
         "from": "M/S Sarajishvili",
         "to": "Zghvis Ubani Block X",
         "snapped_v9": true,
-        "color": "#6988c1",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6988c1"
       }
     },
     {
@@ -23648,9 +23548,7 @@
         "from": "Zghvis Ubani Lane",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#6988c1",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6988c1"
       }
     },
     {
@@ -24040,9 +23938,7 @@
         "from": "კვანტალიანის ქ",
         "to": "Vaso Godziashvili St #4",
         "snapped_v9": true,
-        "color": "#ea9fcf",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ea9fcf"
       }
     },
     {
@@ -24360,9 +24256,7 @@
         "from": "Dighomi Masivi V Block",
         "to": "Village Dighomi Lane",
         "snapped_v9": true,
-        "color": "#ea9fcf",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#ea9fcf"
       }
     },
     {
@@ -24580,9 +24474,7 @@
         "from": "Vaso Godziashvili St #7",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#ea9fcf",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ea9fcf"
       }
     },
     {
@@ -25308,9 +25200,7 @@
         "from": "Route Start",
         "to": "გუმბრის ქუჩა #14",
         "snapped_v9": true,
-        "color": "#6bb7dd",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6bb7dd"
       }
     },
     {
@@ -26028,9 +25918,7 @@
         "from": "გუმბრის ქუჩა #25",
         "to": "ნიაბის I შესახვევი 39",
         "snapped_v9": true,
-        "color": "#6bb7dd",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6bb7dd"
       }
     },
     {
@@ -26532,9 +26420,7 @@
         "from": "Route Start",
         "to": "Tamuna Dolidze Street",
         "snapped_v9": true,
-        "color": "#ecceeb",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ecceeb"
       }
     },
     {
@@ -26996,9 +26882,7 @@
         "from": "Tamuna Dolidze Street",
         "to": "დავით იოსელიანის #204",
         "snapped_v9": true,
-        "color": "#ecceeb",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ecceeb"
       }
     },
     {
@@ -27416,9 +27300,7 @@
         "from": "ჯავის ქუჩა 73",
         "to": "Java Street",
         "snapped_v9": true,
-        "color": "#6de6f9",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6de6f9"
       }
     },
     {
@@ -27984,9 +27866,7 @@
         "from": "სამღერეთის ქუჩა #26 (მოპირდაპირედ)",
         "to": "Public School #112",
         "snapped_v9": true,
-        "color": "#eefd07",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#eefd07"
       }
     },
     {
@@ -28400,9 +28280,7 @@
         "from": "Avtandil Managadze Street",
         "to": "სამღერეთის ქუჩა  #26",
         "snapped_v9": true,
-        "color": "#eefd07",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#eefd07"
       }
     },
     {
@@ -29104,9 +28982,7 @@
         "from": "Frone Street",
         "to": "სადგური ველი",
         "snapped_v9": true,
-        "color": "#6f1516",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6f1516"
       }
     },
     {
@@ -29920,9 +29796,7 @@
         "from": "სადგური ველი",
         "to": "Frone Street",
         "snapped_v9": true,
-        "color": "#6f1516",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6f1516"
       }
     },
     {
@@ -30204,9 +30078,7 @@
         "from": "რომან ჭელიძის ქუჩა #25",
         "to": "Hero Cursants Street",
         "snapped_v9": true,
-        "color": "#f02c24",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#f02c24"
       }
     },
     {
@@ -30500,9 +30372,7 @@
         "from": "Alley of Brotherhood between Georgians and Jews",
         "to": "Angia Bochorishvili Street",
         "snapped_v9": true,
-        "color": "#f02c24",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#f02c24"
       }
     },
     {
@@ -30676,9 +30546,7 @@
         "from": "Alley of Brotherhood between Georgians and Jews",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#f02c24",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#f02c24"
       }
     },
     {
@@ -31680,9 +31548,7 @@
         "from": "გედევანიშვილის ქ.#27",
         "to": "Samreklo Street",
         "snapped_v9": true,
-        "color": "#06325a",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#06325a"
       }
     },
     {
@@ -32744,9 +32610,7 @@
         "from": "Samreklo Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#06325a",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#06325a"
       }
     },
     {
@@ -33508,9 +33372,7 @@
         "from": "წმინდა გიორგის უბანი",
         "to": "ყაზბეგის ქუჩა #35",
         "snapped_v9": true,
-        "color": "#874968",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#874968"
       }
     },
     {
@@ -34260,9 +34122,7 @@
         "from": "ჯავახიშვილისა და ფიროსმანის ქუჩების გადაკვეთა",
         "to": "წმინდა გიორგის უბანი",
         "snapped_v9": true,
-        "color": "#874968",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#874968"
       }
     },
     {
@@ -34344,9 +34204,7 @@
         "from": "Tbilisi City Court",
         "to": "National Enforcement Bureau",
         "snapped_v9": true,
-        "color": "#086176",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#086176"
       }
     },
     {
@@ -34488,9 +34346,7 @@
         "from": "Davit Aghmashenebeli Alley 12th Kilometer",
         "to": "Dighomi Bridges",
         "snapped_v9": true,
-        "color": "#086176",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#086176"
       }
     },
     {
@@ -34628,9 +34484,7 @@
         "from": "Davit Aghmashenebeli Alley #44",
         "to": "Dighomi Masivi I Block",
         "snapped_v9": true,
-        "color": "#086176",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#086176"
       }
     },
     {
@@ -35856,9 +35710,7 @@
         "from": "Route Start",
         "to": "სოფ. დიდგორი",
         "snapped_v9": true,
-        "color": "#897884",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#897884"
       }
     },
     {
@@ -36784,9 +36636,7 @@
         "from": "სოფ. დიდგორი",
         "to": "Village Dighomi Center",
         "snapped_v9": true,
-        "color": "#897884",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#897884"
       }
     },
     {
@@ -36940,9 +36790,7 @@
         "from": "კვირაცხოველის ქუჩა #2",
         "to": "Didgori St #73",
         "snapped_v9": true,
-        "color": "#897884",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#897884"
       }
     },
     {
@@ -37644,9 +37492,7 @@
         "from": "Didgori St #107",
         "to": "სოფ. დიდგორი",
         "snapped_v9": true,
-        "color": "#897884",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#897884"
       }
     },
     {
@@ -38780,9 +38626,7 @@
         "from": "სოფ. დიდგორი",
         "to": "სოფ. თელოვანი",
         "snapped_v9": true,
-        "color": "#897884",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#897884"
       }
     },
     {
@@ -39072,9 +38916,7 @@
         "from": "ზღვის უბნის, IV მ/რ,კორპ. 10",
         "to": "Abai St #47",
         "snapped_v9": true,
-        "color": "#0a9092",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0a9092"
       }
     },
     {
@@ -39680,9 +39522,7 @@
         "from": "Abai St #47",
         "to": "Zghvis Ubani, Block 10a",
         "snapped_v9": true,
-        "color": "#0a9092",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0a9092"
       }
     },
     {
@@ -39976,9 +39816,7 @@
         "from": "Abai St #47",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#0a9092",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0a9092"
       }
     },
     {
@@ -40136,9 +39974,7 @@
         "from": "Tbilisi City Court",
         "to": "13 Asureli Mama Street",
         "snapped_v9": true,
-        "color": "#8ba7a0",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8ba7a0"
       }
     },
     {
@@ -41032,9 +40868,7 @@
         "from": "13 Asureli Mama Street",
         "to": "ბარონ დე ბაის ქუჩა #77",
         "snapped_v9": true,
-        "color": "#8ba7a0",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8ba7a0"
       }
     },
     {
@@ -41692,9 +41526,7 @@
         "from": "ბარონ დე ბაის ქუჩა #77",
         "to": "Tbilisi City Court",
         "snapped_v9": true,
-        "color": "#8ba7a0",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8ba7a0"
       }
     },
     {
@@ -41832,9 +41664,7 @@
         "from": "Davit Aghmashenebeli Alley #44",
         "to": "Dighomi Masivi I Block",
         "snapped_v9": true,
-        "color": "#8ba7a0",
-        "overlapIndex": 1,
-        "overlapCount": 5
+        "color": "#8ba7a0"
       }
     },
     {
@@ -43100,9 +42930,7 @@
         "from": "კლარა კვეესის და თეთრი ტბის კვეთა",
         "to": "Vladimer Naneishvili Street",
         "snapped_v9": true,
-        "color": "#0cbfae",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0cbfae"
       }
     },
     {
@@ -44504,9 +44332,7 @@
         "from": "Heros of Worl War II Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#0cbfae",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0cbfae"
       }
     },
     {
@@ -44864,9 +44690,7 @@
         "from": "აბულაძის და დელისის ქუჩების კვეთა",
         "to": "M/S Delisi",
         "snapped_v9": true,
-        "color": "#8dd6bc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8dd6bc"
       }
     },
     {
@@ -45064,9 +44888,7 @@
         "from": "Alexandre Kazbegi Avenue #44",
         "to": "Alexandre Kazbegi Avenue",
         "snapped_v9": true,
-        "color": "#8dd6bc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8dd6bc"
       }
     },
     {
@@ -45380,9 +45202,7 @@
         "from": "M/S Delisi",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#8dd6bc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8dd6bc"
       }
     },
     {
@@ -45752,9 +45572,7 @@
         "from": "Efrem Zakariadze Street",
         "to": "გომარეთის ქუჩა მოპირდაპირე",
         "snapped_v9": true,
-        "color": "#0eeeca",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0eeeca"
       }
     },
     {
@@ -47728,9 +47546,7 @@
         "from": "Route Start",
         "to": "National Bureau of Expertise",
         "snapped_v9": true,
-        "color": "#a50a0f",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a50a0f"
       }
     },
     {
@@ -50756,9 +50572,7 @@
         "from": "Turtle Lake Lane",
         "to": "კაკლების დასახლება (ივანე მაჩაბლის ქუჩა #5)",
         "snapped_v9": true,
-        "color": "#a50a0f",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a50a0f"
       }
     },
     {
@@ -51104,9 +50918,7 @@
         "from": "Lami Street",
         "to": "Petre Bagrationi Street",
         "snapped_v9": true,
-        "color": "#26221d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#26221d"
       }
     },
     {
@@ -51432,9 +51244,7 @@
         "from": "Petre Bagrationi Street",
         "to": "Lami Street",
         "snapped_v9": true,
-        "color": "#26221d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#26221d"
       }
     },
     {
@@ -52320,9 +52130,7 @@
         "from": "M/S Sarajishvili",
         "to": "ელვერ კუპატაძის გასასვლელი (ყოფილი სასტუმრო\" ბახტრიონი\"-ს მიმდებარედ, წყალსადენის ქ. #7)",
         "snapped_v9": true,
-        "color": "#a7392b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a7392b"
       }
     },
     {
@@ -52756,9 +52564,7 @@
         "from": "ელვერ კუპატაძის გასასვლელი (ყოფილი სასტუმრო\" ბახტრიონი\"-ს მიმდებარედ, წყალსადენის ქ. #7)",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#a7392b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a7392b"
       }
     },
     {
@@ -53032,9 +52838,7 @@
         "from": "ზღვის უბნის IV მ/რ, კორპუსი #4-ის მიმდებარედ",
         "to": "Levan Rcheulishvili St #14",
         "snapped_v9": true,
-        "color": "#285139",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#285139"
       }
     },
     {
@@ -53340,9 +53144,7 @@
         "from": "Levan Rcheulishvili St #15",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#285139",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#285139"
       }
     },
     {
@@ -53980,9 +53782,7 @@
         "from": "ვარკეთილის III ა მ/რ, რაფიელ დვალის # 3",
         "to": "Rafiel Dvali Street",
         "snapped_v9": true,
-        "color": "#a96847",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a96847"
       }
     },
     {
@@ -54212,9 +54012,7 @@
         "from": "Rafiel Dvali Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#a96847",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a96847"
       }
     },
     {
@@ -54332,9 +54130,7 @@
         "from": "Kakheti Highway #3a",
         "to": "Eldari Street",
         "snapped_v9": true,
-        "color": "#ab9763",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#ab9763"
       }
     },
     {
@@ -54880,9 +54676,7 @@
         "from": "Tsinubani Lane",
         "to": "Lilo",
         "snapped_v9": true,
-        "color": "#ab9763",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#ab9763"
       }
     },
     {
@@ -54940,9 +54734,7 @@
         "from": "Kakheti Highway #99",
         "to": "Mikheil Grigorashvili Street",
         "snapped_v9": true,
-        "color": "#ab9763",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#ab9763"
       }
     },
     {
@@ -55076,9 +54868,7 @@
         "from": "Orkhevi, Niko Pirosmani Street",
         "to": "Alexandre Tvalchrelidze Turn",
         "snapped_v9": true,
-        "color": "#ab9763",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#ab9763"
       }
     },
     {
@@ -55200,9 +54990,7 @@
         "from": "Eldari Street",
         "to": "Samgori Park",
         "snapped_v9": true,
-        "color": "#ab9763",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#ab9763"
       }
     },
     {
@@ -55536,9 +55324,7 @@
         "from": "M/S \"Rustaveli\"",
         "to": "მთაწმინდის ქ. #2",
         "snapped_v9": true,
-        "color": "#2caf71",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2caf71"
       }
     },
     {
@@ -55844,9 +55630,7 @@
         "from": "მთაწმინდის ქ. #2",
         "to": "M/S \"Rustaveli\"",
         "snapped_v9": true,
-        "color": "#2caf71",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2caf71"
       }
     },
     {
@@ -57268,9 +57052,7 @@
         "from": "Tskaltubo Street",
         "to": "სადგურის მოედანი (მიკროავტობუსები)",
         "snapped_v9": true,
-        "color": "#adc67f",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#adc67f"
       }
     },
     {
@@ -58696,9 +58478,7 @@
         "from": "სადგურის მოედანი (მიკროავტობუსები)",
         "to": "Tskaltubo Street",
         "snapped_v9": true,
-        "color": "#adc67f",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#adc67f"
       }
     },
     {
@@ -58984,9 +58764,7 @@
         "from": "Route Start",
         "to": "Bob Walsh Street",
         "snapped_v9": true,
-        "color": "#2ede8d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2ede8d"
       }
     },
     {
@@ -59068,9 +58846,7 @@
         "from": "Bob Walsh Street",
         "to": "Tskalsadeni Street",
         "snapped_v9": true,
-        "color": "#2ede8d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2ede8d"
       }
     },
     {
@@ -59324,9 +59100,7 @@
         "from": "M/S Sarajishvili",
         "to": "Tskalsadeni Street",
         "snapped_v9": true,
-        "color": "#2ede8d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2ede8d"
       }
     },
     {
@@ -59448,9 +59222,7 @@
         "from": "Bob Walsh Street",
         "to": "ბობ უოლშის ქ. (კორპუსებთან)",
         "snapped_v9": true,
-        "color": "#2ede8d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2ede8d"
       }
     },
     {
@@ -59752,9 +59524,7 @@
         "from": "Parnavaz Mepe Ave #47",
         "to": "Mukhatgverdi Lane",
         "snapped_v9": true,
-        "color": "#44e3c3",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#44e3c3"
       }
     },
     {
@@ -60456,9 +60226,7 @@
         "from": "რაჭისუბნის და ვარდისუბნის ქუჩების გადაკვეთა",
         "to": "Metro Station Akhmeteli Theatre",
         "snapped_v9": true,
-        "color": "#c5fad1",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#c5fad1"
       }
     },
     {
@@ -61088,9 +60856,7 @@
         "from": "Metro Station Akhmeteli Theatre",
         "to": "მუხიანი II დას. ვარდისუბნის ქ. N152",
         "snapped_v9": true,
-        "color": "#c5fad1",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#c5fad1"
       }
     },
     {
@@ -61276,9 +61042,7 @@
         "from": "Nikoloz Baratashvili Street",
         "to": "Wine Rise",
         "snapped_v9": true,
-        "color": "#4612e0",
-        "overlapIndex": 0,
-        "overlapCount": 5
+        "color": "#4612e0"
       }
     },
     {
@@ -61744,9 +61508,7 @@
         "from": "Giorgi Shervashidze Street",
         "to": "M/S Isani",
         "snapped_v9": true,
-        "color": "#4612e0",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#4612e0"
       }
     },
     {
@@ -62012,9 +61774,7 @@
         "from": "ენერგეტიკის ქუჩა",
         "to": "Public School #208",
         "snapped_v9": true,
-        "color": "#c729ee",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#c729ee"
       }
     },
     {
@@ -62256,9 +62016,7 @@
         "from": "Public School #208",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#c729ee",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#c729ee"
       }
     },
     {
@@ -63556,9 +63314,7 @@
         "from": "Route Start",
         "to": "Zoo",
         "snapped_v9": true,
-        "color": "#4841fc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4841fc"
       }
     },
     {
@@ -64104,9 +63860,7 @@
         "from": "Giorgi Saakadze Square",
         "to": "სადგურის მოედანი (მიკროავტობუსები)",
         "snapped_v9": true,
-        "color": "#4841fc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4841fc"
       }
     },
     {
@@ -64868,9 +64622,7 @@
         "from": "Abastumani Street",
         "to": "Giorgi Saakadze Square",
         "snapped_v9": true,
-        "color": "#4841fc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4841fc"
       }
     },
     {
@@ -66256,9 +66008,7 @@
         "from": "Simon Chikovani Street",
         "to": "ლ. ბილფელდის ქ.",
         "snapped_v9": true,
-        "color": "#4841fc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4841fc"
       }
     },
     {
@@ -66564,9 +66314,7 @@
         "from": "Heroes Square (Saburtalo direction)",
         "to": "ფალიაშვილის ქუჩა #11ა",
         "snapped_v9": true,
-        "color": "#4a7018",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4a7018"
       }
     },
     {
@@ -66820,9 +66568,7 @@
         "from": "Route Start",
         "to": "Nodar Dumbadze Ave #10",
         "snapped_v9": true,
-        "color": "#cb8726",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#cb8726"
       }
     },
     {
@@ -67124,9 +66870,7 @@
         "from": "Nodar Dumbadze Ave #9",
         "to": "შოვის და მუხურას ქუჩების გადაკვეთა",
         "snapped_v9": true,
-        "color": "#cb8726",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#cb8726"
       }
     },
     {
@@ -67628,9 +67372,7 @@
         "from": "ნინო ჟვანიას ქუჩა #67",
         "to": "Simon Janashia Street",
         "snapped_v9": true,
-        "color": "#4c9f34",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4c9f34"
       }
     },
     {
@@ -68472,9 +68214,7 @@
         "from": "Heroes Square (Saburtalo direction)",
         "to": "ნინო ჟვანიას ქუჩა #67",
         "snapped_v9": true,
-        "color": "#4c9f34",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4c9f34"
       }
     },
     {
@@ -69012,9 +68752,7 @@
         "from": "მუხათგვერდის სასაფლაო",
         "to": "მუხათგვერდის ძმათა სასაფლაო",
         "snapped_v9": true,
-        "color": "#cdb642",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#cdb642"
       }
     },
     {
@@ -69664,9 +69402,7 @@
         "from": "მუხათგვერდის ძმათა სასაფლაო",
         "to": "Parnavaz Mepe Avenue",
         "snapped_v9": true,
-        "color": "#cdb642",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#cdb642"
       }
     },
     {
@@ -69804,9 +69540,7 @@
         "from": "Davit Aghmashenebeli Alley #44",
         "to": "Dighomi Masivi I Block",
         "snapped_v9": true,
-        "color": "#cdb642",
-        "overlapIndex": -1,
-        "overlapCount": 5
+        "color": "#cdb642"
       }
     },
     {
@@ -70004,9 +69738,7 @@
         "from": "Davit Aghmashenebeli Alley 12th Kilometer",
         "to": "Dighomi Bridges",
         "snapped_v9": true,
-        "color": "#cdb642",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#cdb642"
       }
     },
     {
@@ -71824,9 +71556,7 @@
         "from": "Parnavaz Mepe Ave #47",
         "to": "მუხათგვერდის სასაფლაო",
         "snapped_v9": true,
-        "color": "#cdb642",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#cdb642"
       }
     },
     {
@@ -72096,9 +71826,7 @@
         "from": "მ/ს ავლაბარი  (2)",
         "to": "Nikoloz Baratashvili Street",
         "snapped_v9": true,
-        "color": "#e5ea94",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#e5ea94"
       }
     },
     {
@@ -72352,9 +72080,7 @@
         "from": "Zoo",
         "to": "Simon Janashia Street",
         "snapped_v9": true,
-        "color": "#e5ea94",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#e5ea94"
       }
     },
     {
@@ -72540,9 +72266,7 @@
         "from": "Nikoloz Baratashvili Street",
         "to": "Wine Rise",
         "snapped_v9": true,
-        "color": "#e5ea94",
-        "overlapIndex": 1,
-        "overlapCount": 5
+        "color": "#e5ea94"
       }
     },
     {
@@ -72776,9 +72500,7 @@
         "from": "Route Start",
         "to": "Railway Passage Bridge",
         "snapped_v9": true,
-        "color": "#6602a3",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6602a3"
       }
     },
     {
@@ -73112,9 +72834,7 @@
         "from": "Railway Passage Bridge",
         "to": "მეუნარგიას ქ 72",
         "snapped_v9": true,
-        "color": "#6602a3",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6602a3"
       }
     },
     {
@@ -73920,9 +73640,7 @@
         "from": "Gudamakari Street",
         "to": "ელვერ კუპატაძის გასასვლელი (ყოფილი სასტუმრო\" ბახტრიონი\"-ს მიმდებარედ, წყალსადენის ქ. #7)",
         "snapped_v9": true,
-        "color": "#e719b1",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#e719b1"
       }
     },
     {
@@ -74940,9 +74658,7 @@
         "from": "ელვერ კუპატაძის გასასვლელი (ყოფილი სასტუმრო\" ბახტრიონი\"-ს მიმდებარედ, წყალსადენის ქ. #7)",
         "to": "M/S Ghrmaghele",
         "snapped_v9": true,
-        "color": "#e719b1",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#e719b1"
       }
     },
     {
@@ -75240,9 +74956,7 @@
         "from": "Tbilisi City Hall",
         "to": "M/S \"Tsereteli\"",
         "snapped_v9": true,
-        "color": "#e948cd",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#e948cd"
       }
     },
     {
@@ -75876,9 +75590,7 @@
         "from": "Abastumani Street",
         "to": "Tbilisi City Hall",
         "snapped_v9": true,
-        "color": "#e948cd",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#e948cd"
       }
     },
     {
@@ -76236,9 +75948,7 @@
         "from": "ნიაბის ქ. (#55-ის მიმდებარედ)",
         "to": "რომან გვენცაძის ქ. N32",
         "snapped_v9": true,
-        "color": "#eb77e9",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#eb77e9"
       }
     },
     {
@@ -76488,9 +76198,7 @@
         "from": "რომან გვენცაძის ქ. N32",
         "to": "Roman Gventsadze Street",
         "snapped_v9": true,
-        "color": "#eb77e9",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#eb77e9"
       }
     },
     {
@@ -78956,9 +78664,7 @@
         "from": "Vladimer Lobjanidze St #16",
         "to": "მეველეს ქ. 1",
         "snapped_v9": true,
-        "color": "#eb77e9",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#eb77e9"
       }
     },
     {
@@ -80720,9 +80426,7 @@
         "from": "მეველეს ქ. 1",
         "to": "Ekimi Lan",
         "snapped_v9": true,
-        "color": "#eb77e9",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#eb77e9"
       }
     },
     {
@@ -81328,9 +81032,7 @@
         "from": "Melaani 3rd Turn",
         "to": "აბულის I ჩიხი",
         "snapped_v9": true,
-        "color": "#eb77e9",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#eb77e9"
       }
     },
     {
@@ -81436,9 +81138,7 @@
         "from": "აბულის I ჩიხი",
         "to": "შილდის ქუჩა",
         "snapped_v9": true,
-        "color": "#eb77e9",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#eb77e9"
       }
     },
     {
@@ -82384,9 +82084,7 @@
         "from": "M/S \"Avlabari\"",
         "to": "M/S Isani",
         "snapped_v9": true,
-        "color": "#6c8ff7",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6c8ff7"
       }
     },
     {
@@ -83324,9 +83022,7 @@
         "from": "M/S Isani",
         "to": "M/S \"Avlabari\"",
         "snapped_v9": true,
-        "color": "#6c8ff7",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6c8ff7"
       }
     },
     {
@@ -83656,9 +83352,7 @@
         "from": "Kiketi, 9 Dzma Kherkheulidze Street",
         "to": "Kiketi, #26 May Street",
         "snapped_v9": true,
-        "color": "#03ac3b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#03ac3b"
       }
     },
     {
@@ -83936,9 +83630,7 @@
         "from": "Dideba, Dideba Street",
         "to": "Kiketi, Ekvtime Takaishvili St #9a",
         "snapped_v9": true,
-        "color": "#03ac3b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#03ac3b"
       }
     },
     {
@@ -84128,9 +83820,7 @@
         "from": "Kiketi, Ekvtime Takaishvili St #9a",
         "to": "Kiketi Turnout (request stop)",
         "snapped_v9": true,
-        "color": "#03ac3b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#03ac3b"
       }
     },
     {
@@ -84920,9 +84610,7 @@
         "from": "Kiketi Turnout (request stop)",
         "to": "Batu Kraveishvili Street",
         "snapped_v9": true,
-        "color": "#03ac3b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#03ac3b"
       }
     },
     {
@@ -85876,9 +85564,7 @@
         "from": "Shota Rustaveli St #103",
         "to": "Kiketi Turnout (request stop)",
         "snapped_v9": true,
-        "color": "#03ac3b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#03ac3b"
       }
     },
     {
@@ -86168,9 +85854,7 @@
         "from": "Kiketi Turnout (request stop)",
         "to": "Kiketi, Ekvtime Takaishvili St #25",
         "snapped_v9": true,
-        "color": "#03ac3b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#03ac3b"
       }
     },
     {
@@ -86804,9 +86488,7 @@
         "from": "Kiketi, Ekvtime Takaishvili St #25",
         "to": "Kiketi, #26 May Street",
         "snapped_v9": true,
-        "color": "#03ac3b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#03ac3b"
       }
     },
     {
@@ -87144,9 +86826,7 @@
         "from": "Kiketi, #26 May Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#03ac3b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#03ac3b"
       }
     },
     {
@@ -87996,9 +87676,7 @@
         "from": "გურამიშვილის ქუჩა #18-ის მოპირდაპირედ",
         "to": "სოფელი ახალდაბა",
         "snapped_v9": true,
-        "color": "#84c349",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#84c349"
       }
     },
     {
@@ -88868,9 +88546,7 @@
         "from": "სოფელი ახალდაბა",
         "to": "Guramishvili Street #31",
         "snapped_v9": true,
-        "color": "#84c349",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#84c349"
       }
     },
     {
@@ -89660,9 +89336,7 @@
         "from": "დ. ამილახვრის III ჩიხი",
         "to": "ა. ჭავჭავაძის I შეს. (წყნეთი)",
         "snapped_v9": true,
-        "color": "#86f265",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#86f265"
       }
     },
     {
@@ -90212,9 +89886,7 @@
         "from": "ა. ჭავჭავაძის I შეს. (წყნეთი)",
         "to": "სულხან-საბა ორბელიანის ქუჩა",
         "snapped_v9": true,
-        "color": "#86f265",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#86f265"
       }
     },
     {
@@ -90564,9 +90236,7 @@
         "from": "Tskneti Center",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#86f265",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#86f265"
       }
     },
     {
@@ -90832,9 +90502,7 @@
         "from": "Route Start",
         "to": "წყნეთი საირმის ქ. 60",
         "snapped_v9": true,
-        "color": "#070a74",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#070a74"
       }
     },
     {
@@ -91128,9 +90796,7 @@
         "from": "წყნეთი საირმის ქ. 60",
         "to": "Tskneti Center",
         "snapped_v9": true,
-        "color": "#070a74",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#070a74"
       }
     },
     {
@@ -92484,9 +92150,7 @@
         "from": "Kerchi St #18",
         "to": "Gldanula Bridge",
         "snapped_v9": true,
-        "color": "#882182",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#882182"
       }
     },
     {
@@ -92700,9 +92364,7 @@
         "from": "Gela Chedia Street",
         "to": "ფ. მოსულიშვილის ქუჩა",
         "snapped_v9": true,
-        "color": "#882182",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#882182"
       }
     },
     {
@@ -93568,9 +93230,7 @@
         "from": "Route Start",
         "to": "Qaqutsa Cholokashvili Street",
         "snapped_v9": true,
-        "color": "#093990",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#093990"
       }
     },
     {
@@ -93912,9 +93572,7 @@
         "from": "Tskneti Center",
         "to": "იოსებ გრიშაშვილის ქ. #49",
         "snapped_v9": true,
-        "color": "#093990",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#093990"
       }
     },
     {
@@ -94580,9 +94238,7 @@
         "from": "Route Start",
         "to": "სამეგრელოს ქუჩა #57",
         "snapped_v9": true,
-        "color": "#8a509e",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8a509e"
       }
     },
     {
@@ -95144,9 +94800,7 @@
         "from": "სამეგრელოს ქუჩა #57",
         "to": "Metro Station Akhmeteli Theatre",
         "snapped_v9": true,
-        "color": "#8a509e",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8a509e"
       }
     },
     {
@@ -95264,9 +94918,7 @@
         "from": "Kakheti Highway #3a",
         "to": "Eldari Street",
         "snapped_v9": true,
-        "color": "#0b68ac",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#0b68ac"
       }
     },
     {
@@ -95968,9 +95620,7 @@
         "from": "Military City",
         "to": "ისთ ფოინთი (მიკროავტობუსები)",
         "snapped_v9": true,
-        "color": "#0b68ac",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0b68ac"
       }
     },
     {
@@ -96092,9 +95742,7 @@
         "from": "Eldari Street",
         "to": "Samgori Park",
         "snapped_v9": true,
-        "color": "#0b68ac",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#0b68ac"
       }
     },
     {
@@ -96236,9 +95884,7 @@
         "from": "სადგურის მოედანი (მიკროავტობუსები)",
         "to": "Public School #29",
         "snapped_v9": true,
-        "color": "#216de2",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#216de2"
       }
     },
     {
@@ -96424,9 +96070,7 @@
         "from": "ნავთლუღის დასახლება, V ქუჩა #21ა",
         "to": "ნავთლუღის II დასახლება, V ქუჩა #59ა-ს მოპირდაპირედ",
         "snapped_v9": true,
-        "color": "#a284f0",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a284f0"
       }
     },
     {
@@ -96676,9 +96320,7 @@
         "from": "Route Start",
         "to": "Niko Ketskhoveli Street",
         "snapped_v9": true,
-        "color": "#239cfe",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#239cfe"
       }
     },
     {
@@ -97704,9 +97346,7 @@
         "from": "Public School #177",
         "to": "Public School #177",
         "snapped_v9": true,
-        "color": "#239cfe",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#239cfe"
       }
     },
     {
@@ -97924,9 +97564,7 @@
         "from": "Niko Ketskhoveli Street",
         "to": "Metro Station Akhmeteli Theatre",
         "snapped_v9": true,
-        "color": "#239cfe",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#239cfe"
       }
     },
     {
@@ -98996,9 +98634,7 @@
         "from": "Route Start",
         "to": "Sandor Petefi St #21a",
         "snapped_v9": true,
-        "color": "#a4b30c",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a4b30c"
       }
     },
     {
@@ -100016,9 +99652,7 @@
         "from": "Sandor Petefi Street #63",
         "to": "Tbilisi Sea Plaza",
         "snapped_v9": true,
-        "color": "#a4b30c",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a4b30c"
       }
     },
     {
@@ -100348,9 +99982,7 @@
         "from": "ხანძთის I შესახვევი",
         "to": "Nodar Dumbadze Ave #10",
         "snapped_v9": true,
-        "color": "#25cb1a",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#25cb1a"
       }
     },
     {
@@ -100700,9 +100332,7 @@
         "from": "Nodar Dumbadze Ave #9",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#25cb1a",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#25cb1a"
       }
     },
     {
@@ -100832,9 +100462,7 @@
         "from": "Varketili Farming, Rustaveli St #5",
         "to": "Varketili Farming #215 Public School",
         "snapped_v9": true,
-        "color": "#a6e228",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a6e228"
       }
     },
     {
@@ -101012,9 +100640,7 @@
         "from": "Varketili Farming #215 Public School",
         "to": "Varketili Farming, Rustaveli St #12",
         "snapped_v9": true,
-        "color": "#a6e228",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a6e228"
       }
     },
     {
@@ -101304,9 +100930,7 @@
         "from": "Alley of Brotherhood between Georgians and Jews",
         "to": "Angia Bochorishvili Street",
         "snapped_v9": true,
-        "color": "#27fa36",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#27fa36"
       }
     },
     {
@@ -101516,9 +101140,7 @@
         "from": "Simon Kandelaki Street",
         "to": "ვეძისი, ვარდენ წულუკიძის ქუჩა #4",
         "snapped_v9": true,
-        "color": "#a81145",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a81145"
       }
     },
     {
@@ -102092,9 +101714,7 @@
         "from": "ვეძისი, ვარდენ წულუკიძის ქუჩა #4",
         "to": "საირმის ქ. კორპ. N6",
         "snapped_v9": true,
-        "color": "#a81145",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#a81145"
       }
     },
     {
@@ -102368,9 +101988,7 @@
         "from": "Otar Chiladze Street",
         "to": "ილია ოდიშელიძის ქუჩა #82",
         "snapped_v9": true,
-        "color": "#292953",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#292953"
       }
     },
     {
@@ -102624,9 +102242,7 @@
         "from": "ილია ოდიშელიძის ქუჩა #82",
         "to": "National Archive",
         "snapped_v9": true,
-        "color": "#292953",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#292953"
       }
     },
     {
@@ -102988,9 +102604,7 @@
         "from": "შოვის და მუხურას ქუჩების გადაკვეთა",
         "to": "Nodar Dumbadze Ave #10",
         "snapped_v9": true,
-        "color": "#aa4061",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#aa4061"
       }
     },
     {
@@ -103396,9 +103010,7 @@
         "from": "Nodar Dumbadze Ave #9",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#aa4061",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#aa4061"
       }
     },
     {
@@ -103884,9 +103496,7 @@
         "from": "Route Start",
         "to": "Metro Station Akhmeteli Theatre",
         "snapped_v9": true,
-        "color": "#cb0a6d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#cb0a6d"
       }
     },
     {
@@ -104572,9 +104182,7 @@
         "from": "Metro Station Akhmeteli Theatre",
         "to": "მუხიანი II დას. ტაძრის ქ. N18",
         "snapped_v9": true,
-        "color": "#cb0a6d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#cb0a6d"
       }
     },
     {
@@ -105292,9 +104900,7 @@
         "from": "Niko Pirosmani Square",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#4c227b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4c227b"
       }
     },
     {
@@ -105540,9 +105146,7 @@
         "from": "Ivertubani, Rekhi Street",
         "to": "მახათას მთა # 6 კორპუსი",
         "snapped_v9": true,
-        "color": "#cd3989",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#cd3989"
       }
     },
     {
@@ -107452,9 +107056,7 @@
         "from": "Shota Rustaveli St #103",
         "to": "ბეთანიის დასახლება, სალბიერის ქუჩა",
         "snapped_v9": true,
-        "color": "#4e5197",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4e5197"
       }
     },
     {
@@ -109364,9 +108966,7 @@
         "from": "ბეთანიის დასახლება, სალბიერის ქუჩა",
         "to": "Batu Kraveishvili Street",
         "snapped_v9": true,
-        "color": "#4e5197",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4e5197"
       }
     },
     {
@@ -109688,9 +109288,7 @@
         "from": "Batu Kraveishvili Street",
         "to": "Alexandre Kazbegi Street",
         "snapped_v9": true,
-        "color": "#4e5197",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4e5197"
       }
     },
     {
@@ -109864,9 +109462,7 @@
         "from": "Shio Gugeshashvili Street",
         "to": "მუხრანის #78 მიმდებარედ",
         "snapped_v9": true,
-        "color": "#cf68a5",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#cf68a5"
       }
     },
     {
@@ -110096,9 +109692,7 @@
         "from": "მუხრანის #78 მიმდებარედ",
         "to": "Public School #15",
         "snapped_v9": true,
-        "color": "#cf68a5",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#cf68a5"
       }
     },
     {
@@ -110416,9 +110010,7 @@
         "from": "Leo Kvachadze St #9",
         "to": "ჩხიკვაძის ქუჩა კორპ. #5",
         "snapped_v9": true,
-        "color": "#5080b3",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#5080b3"
       }
     },
     {
@@ -110700,9 +110292,7 @@
         "from": "Kindergarten #142",
         "to": "Lisi Lake Settlement",
         "snapped_v9": true,
-        "color": "#5080b3",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#5080b3"
       }
     },
     {
@@ -111080,9 +110670,7 @@
         "from": "Poultry Farming Street",
         "to": "Chirnakhuli Street",
         "snapped_v9": true,
-        "color": "#d197c1",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#d197c1"
       }
     },
     {
@@ -111628,9 +111216,7 @@
         "from": "Tsinubani Lane",
         "to": "Lilo",
         "snapped_v9": true,
-        "color": "#d197c1",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#d197c1"
       }
     },
     {
@@ -111824,9 +111410,7 @@
         "from": "Chirnakhuli Street",
         "to": "Evgeni Apkhazava 1st Turn",
         "snapped_v9": true,
-        "color": "#d197c1",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#d197c1"
       }
     },
     {
@@ -111972,9 +111556,7 @@
         "from": "Depo Street",
         "to": "Public School #11",
         "snapped_v9": true,
-        "color": "#52afcf",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#52afcf"
       }
     },
     {
@@ -112144,9 +111726,7 @@
         "from": "ავშნის ქ. III შესახვევი",
         "to": "Levan Rcheulishvili Street",
         "snapped_v9": true,
-        "color": "#d3c6dd",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#d3c6dd"
       }
     },
     {
@@ -112688,9 +112268,7 @@
         "from": "Avetik Isaakiani Street",
         "to": "ვახტანგ ფირცხალავას ქ. N39",
         "snapped_v9": true,
-        "color": "#d3c6dd",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#d3c6dd"
       }
     },
     {
@@ -113048,9 +112626,7 @@
         "from": "გლდანის მე-3ა მ/რ კორპ. N23",
         "to": "Angia Bochorishvili Street",
         "snapped_v9": true,
-        "color": "#6ae321",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6ae321"
       }
     },
     {
@@ -113328,9 +112904,7 @@
         "from": "Metro Station Akhmeteli Theatre",
         "to": "Alex Gobronidze St #17",
         "snapped_v9": true,
-        "color": "#6ae321",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6ae321"
       }
     },
     {
@@ -113572,9 +113146,7 @@
         "from": "Abai St #47",
         "to": "Abai Street #7",
         "snapped_v9": true,
-        "color": "#6ae321",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6ae321"
       }
     },
     {
@@ -113908,9 +113480,7 @@
         "from": "Metro Station Akhmeteli Theatre",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#6ae321",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6ae321"
       }
     },
     {
@@ -114184,9 +113754,7 @@
         "from": "გლდანის III \"ა\" მ/რ, კორპ. #20",
         "to": "Niko Ketskhoveli Street",
         "snapped_v9": true,
-        "color": "#ebfa2f",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ebfa2f"
       }
     },
     {
@@ -114496,9 +114064,7 @@
         "from": "Heros of Worl War II Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#ebfa2f",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ebfa2f"
       }
     },
     {
@@ -116020,9 +115586,7 @@
         "from": "Giorgi Saakadze Square",
         "to": "Tskaltubo Street",
         "snapped_v9": true,
-        "color": "#6c123e",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6c123e"
       }
     },
     {
@@ -116232,9 +115796,7 @@
         "from": "Heros of Worl War II Street",
         "to": "გლდანი IV მ/რ, კორპ #105",
         "snapped_v9": true,
-        "color": "#6c123e",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6c123e"
       }
     },
     {
@@ -118136,9 +117698,7 @@
         "from": "Tskaltubo Street",
         "to": "Giorgi Saakadze Square",
         "snapped_v9": true,
-        "color": "#6c123e",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6c123e"
       }
     },
     {
@@ -118684,9 +118244,7 @@
         "from": "ავჭალა 2-ის დასახლება, ერეკლე II-ის ქუჩა",
         "to": "ლიბანის ქუჩა, #118 სკოლა",
         "snapped_v9": true,
-        "color": "#ed294c",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ed294c"
       }
     },
     {
@@ -119356,9 +118914,7 @@
         "from": "Public School #118",
         "to": "ავჭალა 2-ის დასახლება, ერეკლე II-ის ქუჩა",
         "snapped_v9": true,
-        "color": "#ed294c",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ed294c"
       }
     },
     {
@@ -120824,9 +120380,7 @@
         "from": "Public School #118",
         "to": "ავჭალა 2-ის დასახლება, სვანეთის II შესახვევი",
         "snapped_v9": true,
-        "color": "#6e415a",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6e415a"
       }
     },
     {
@@ -121428,9 +120982,7 @@
         "from": "ავჭალა 2-ის დასახლება, სვანეთის II შესახვევი",
         "to": "ლიბანის ქუჩა, #118 სკოლა",
         "snapped_v9": true,
-        "color": "#6e415a",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6e415a"
       }
     },
     {
@@ -121688,9 +121240,7 @@
         "from": "Route Start",
         "to": "26 May Street #148",
         "snapped_v9": true,
-        "color": "#ef5868",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ef5868"
       }
     },
     {
@@ -122208,9 +121758,7 @@
         "from": "Opposite to Tbilisi Bypass Road",
         "to": "ავჭალა 2-ის დასახლება, სულხან-საბა ორბელიანის ქუჩა #30",
         "snapped_v9": true,
-        "color": "#ef5868",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ef5868"
       }
     },
     {
@@ -122748,9 +122296,7 @@
         "from": "ავჭალა 2-ის დასახლება, სულხან-საბა ორბელიანის ქუჩა #30",
         "to": "26 May Street #133",
         "snapped_v9": true,
-        "color": "#ef5868",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ef5868"
       }
     },
     {
@@ -123028,9 +122574,7 @@
         "from": "26 May Street #151",
         "to": "სოფელი გლდანი, წყაროს ქუჩა, #36",
         "snapped_v9": true,
-        "color": "#ef5868",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ef5868"
       }
     },
     {
@@ -123252,9 +122796,7 @@
         "from": "Giga Chikhladze Street",
         "to": "Grigol Lortkipanidze St #9",
         "snapped_v9": true,
-        "color": "#707076",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#707076"
       }
     },
     {
@@ -123540,9 +123082,7 @@
         "from": "Luka Razikashvili Street",
         "to": "Luka Razikashvili Street",
         "snapped_v9": true,
-        "color": "#707076",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#707076"
       }
     },
     {
@@ -123684,9 +123224,7 @@
         "from": "Giorgi Balanchini St #26",
         "to": "Tskalsadeni Street",
         "snapped_v9": true,
-        "color": "#729f92",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#729f92"
       }
     },
     {
@@ -123844,9 +123382,7 @@
         "from": "Tskalsadeni Street",
         "to": "Georgian-American Friendship Ave #33",
         "snapped_v9": true,
-        "color": "#729f92",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#729f92"
       }
     },
     {
@@ -124100,9 +123636,7 @@
         "from": "Public School #74",
         "to": "Zurab Begiashvili Street",
         "snapped_v9": true,
-        "color": "#f3b6a0",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#f3b6a0"
       }
     },
     {
@@ -124848,9 +124382,7 @@
         "from": "Niko Muskhelishvili St #7",
         "to": "Hualing Settlement #9",
         "snapped_v9": true,
-        "color": "#f3b6a0",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#f3b6a0"
       }
     },
     {
@@ -125384,9 +124916,7 @@
         "from": "მიხეილ გახოკიძის ქუჩა #4",
         "to": "ისთ ფოინთი (მიკროავტობუსები)",
         "snapped_v9": true,
-        "color": "#f3b6a0",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#f3b6a0"
       }
     },
     {
@@ -126476,9 +126006,7 @@
         "from": "Hualing Settlement #9",
         "to": "Niko Muskhelishvili St #7",
         "snapped_v9": true,
-        "color": "#f3b6a0",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#f3b6a0"
       }
     },
     {
@@ -126620,9 +126148,7 @@
         "from": "Kote Marjanishvili Street",
         "to": "Saint Nikoloz Street",
         "snapped_v9": true,
-        "color": "#0bebf2",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0bebf2"
       }
     },
     {
@@ -126808,9 +126334,7 @@
         "from": "Nikoloz Baratashvili Street",
         "to": "Wine Rise",
         "snapped_v9": true,
-        "color": "#0bebf2",
-        "overlapIndex": -1,
-        "overlapCount": 5
+        "color": "#0bebf2"
       }
     },
     {
@@ -127032,9 +126556,7 @@
         "from": "Bogdan Khmelnitski St #7",
         "to": "Moscow Avenue #38",
         "snapped_v9": true,
-        "color": "#8c0201",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8c0201"
       }
     },
     {
@@ -127568,9 +127090,7 @@
         "from": "მიხეილ გახოკიძის ქუჩა #4",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#0d1a0f",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0d1a0f"
       }
     },
     {
@@ -128988,9 +128508,7 @@
         "from": "M/S \"Avlabari\"",
         "to": "Elia Lane",
         "snapped_v9": true,
-        "color": "#8e311d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8e311d"
       }
     },
     {
@@ -130056,9 +129574,7 @@
         "from": "Elia Lane",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#8e311d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#8e311d"
       }
     },
     {
@@ -130256,9 +129772,7 @@
         "from": "Parnavaz Mepe Ave #47",
         "to": "ზურგოვანა",
         "snapped_v9": true,
-        "color": "#0f492b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0f492b"
       }
     },
     {
@@ -130460,9 +129974,7 @@
         "from": "ზურგოვანა",
         "to": "Parnavaz Mepe Ave #2",
         "snapped_v9": true,
-        "color": "#0f492b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0f492b"
       }
     },
     {
@@ -130556,9 +130068,7 @@
         "from": "Davit Aghmashenebeli Alley #264",
         "to": "Davit Aghmashenebeli Alley 13th Kilometer",
         "snapped_v9": true,
-        "color": "#906039",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#906039"
       }
     },
     {
@@ -130696,9 +130206,7 @@
         "from": "Davit Aghmashenebeli Alley #44",
         "to": "Dighomi Masivi I Block",
         "snapped_v9": true,
-        "color": "#906039",
-        "overlapIndex": 2,
-        "overlapCount": 5
+        "color": "#906039"
       }
     },
     {
@@ -131060,9 +130568,7 @@
         "from": "Galaktion Tabidze Bridge",
         "to": "Public Service Hall",
         "snapped_v9": true,
-        "color": "#117847",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#117847"
       }
     },
     {
@@ -131248,9 +130754,7 @@
         "from": "Nikoloz Baratashvili Street",
         "to": "Wine Rise",
         "snapped_v9": true,
-        "color": "#117847",
-        "overlapIndex": 2,
-        "overlapCount": 5
+        "color": "#117847"
       }
     },
     {
@@ -131464,9 +130968,7 @@
         "from": "მ/ს ავლაბარი  (2)",
         "to": "Nikoloz Baratashvili Street",
         "snapped_v9": true,
-        "color": "#117847",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#117847"
       }
     },
     {
@@ -131756,9 +131258,7 @@
         "from": "Nikoloz Baratashvili Street",
         "to": "Mikheil Javakhishvili Street",
         "snapped_v9": true,
-        "color": "#117847",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#117847"
       }
     },
     {
@@ -131920,9 +131420,7 @@
         "from": "Public School #11",
         "to": "ბეჟანიშვილის ქ",
         "snapped_v9": true,
-        "color": "#928f55",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#928f55"
       }
     },
     {
@@ -132080,9 +131578,7 @@
         "from": "ბეჟანიშვილის ქ",
         "to": "Public School #11",
         "snapped_v9": true,
-        "color": "#928f55",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#928f55"
       }
     },
     {
@@ -132860,9 +132356,7 @@
         "from": "Gabriel ISakadze Street",
         "to": "Iasamani Street",
         "snapped_v9": true,
-        "color": "#29ac99",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#29ac99"
       }
     },
     {
@@ -133284,9 +132778,7 @@
         "from": "Evgeni Mikeladze Street",
         "to": "Village Dighomi Lane",
         "snapped_v9": true,
-        "color": "#29ac99",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#29ac99"
       }
     },
     {
@@ -133396,9 +132888,7 @@
         "from": "Iasamani Street",
         "to": "Iuri Gagarini St number #24",
         "snapped_v9": true,
-        "color": "#29ac99",
-        "overlapIndex": 0,
-        "overlapCount": 3
+        "color": "#29ac99"
       }
     },
     {
@@ -133536,9 +133026,7 @@
         "from": "Ilia State University",
         "to": "Vake Park",
         "snapped_v9": true,
-        "color": "#29ac99",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#29ac99"
       }
     },
     {
@@ -134040,9 +133528,7 @@
         "from": "Alexi Gobronidze St #2",
         "to": "M/S Sarajishvili",
         "snapped_v9": true,
-        "color": "#aac3a7",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#aac3a7"
       }
     },
     {
@@ -134340,9 +133826,7 @@
         "from": "Giorgi Chkondideli Street",
         "to": "Tskaltubo Street",
         "snapped_v9": true,
-        "color": "#aac3a7",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#aac3a7"
       }
     },
     {
@@ -134672,9 +134156,7 @@
         "from": "Rajden Gvetadze Street",
         "to": "Giorgi Saakadze Square",
         "snapped_v9": true,
-        "color": "#aac3a7",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#aac3a7"
       }
     },
     {
@@ -134928,9 +134410,7 @@
         "from": "Zoo",
         "to": "Simon Janashia Street",
         "snapped_v9": true,
-        "color": "#aac3a7",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#aac3a7"
       }
     },
     {
@@ -135356,9 +134836,7 @@
         "from": "M/S Sarajishvili",
         "to": "Ioseb Noneshvili St, #2",
         "snapped_v9": true,
-        "color": "#aac3a7",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#aac3a7"
       }
     },
     {
@@ -136480,9 +135958,7 @@
         "from": "Railway Passage Bridge",
         "to": "Railway Passage Bridge",
         "snapped_v9": true,
-        "color": "#2bdbb5",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2bdbb5"
       }
     },
     {
@@ -137460,9 +136936,7 @@
         "from": "მ/ს ავლაბარი  (2)",
         "to": "Simon Chikovani Street",
         "snapped_v9": true,
-        "color": "#acf2c3",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#acf2c3"
       }
     },
     {
@@ -138240,9 +137714,7 @@
         "from": "Gabriel ISakadze Street",
         "to": "Iasamani Street",
         "snapped_v9": true,
-        "color": "#acf2c3",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#acf2c3"
       }
     },
     {
@@ -138560,9 +138032,7 @@
         "from": "Dighomi Masivi V Block",
         "to": "Village Dighomi Lane",
         "snapped_v9": true,
-        "color": "#acf2c3",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#acf2c3"
       }
     },
     {
@@ -138672,9 +138142,7 @@
         "from": "Iasamani Street",
         "to": "Iuri Gagarini St number #24",
         "snapped_v9": true,
-        "color": "#acf2c3",
-        "overlapIndex": 1,
-        "overlapCount": 3
+        "color": "#acf2c3"
       }
     },
     {
@@ -139192,9 +138660,7 @@
         "from": "Zoo",
         "to": "Public Service Hall",
         "snapped_v9": true,
-        "color": "#acf2c3",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#acf2c3"
       }
     },
     {
@@ -139548,9 +139014,7 @@
         "from": "Saarbrücken Square",
         "to": "M/S \"Marjanishvili\"",
         "snapped_v9": true,
-        "color": "#ae21e0",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ae21e0"
       }
     },
     {
@@ -139892,9 +139356,7 @@
         "from": "Europe Square",
         "to": "Noe Jordania Bank",
         "snapped_v9": true,
-        "color": "#b050fc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#b050fc"
       }
     },
     {
@@ -140224,9 +139686,7 @@
         "from": "Noe Jordania Bank",
         "to": "M/S \"Marjanishvili\"",
         "snapped_v9": true,
-        "color": "#b050fc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#b050fc"
       }
     },
     {
@@ -141932,9 +141392,7 @@
         "from": "Abastumani Street",
         "to": "Tskaltubo Street",
         "snapped_v9": true,
-        "color": "#b050fc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#b050fc"
       }
     },
     {
@@ -143072,9 +142530,7 @@
         "from": "M/S \"Didube\"",
         "to": "Rajden Gvetadze Street",
         "snapped_v9": true,
-        "color": "#b050fc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#b050fc"
       }
     },
     {
@@ -144048,9 +143504,7 @@
         "from": "Saint Nikoloz Street",
         "to": "Abanotubani",
         "snapped_v9": true,
-        "color": "#b050fc",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#b050fc"
       }
     },
     {
@@ -144828,9 +144282,7 @@
         "from": "Gabriel ISakadze Street",
         "to": "Iasamani Street",
         "snapped_v9": true,
-        "color": "#31680a",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#31680a"
       }
     },
     {
@@ -144972,9 +144424,7 @@
         "from": "Davit Aghmashenebeli Alley 12th Kilometer",
         "to": "Dighomi Bridges",
         "snapped_v9": true,
-        "color": "#31680a",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#31680a"
       }
     },
     {
@@ -145052,9 +144502,7 @@
         "from": "Davit Aghmashenebeli Alley #44",
         "to": "Village Dighomi Lane",
         "snapped_v9": true,
-        "color": "#31680a",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#31680a"
       }
     },
     {
@@ -145164,9 +144612,7 @@
         "from": "Iasamani Street",
         "to": "Iuri Gagarini St number #24",
         "snapped_v9": true,
-        "color": "#31680a",
-        "overlapIndex": -1,
-        "overlapCount": 3
+        "color": "#31680a"
       }
     },
     {
@@ -145632,9 +145078,7 @@
         "from": "Giorgi Shervashidze Street",
         "to": "M/S Isani",
         "snapped_v9": true,
-        "color": "#476d40",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#476d40"
       }
     },
     {
@@ -145904,9 +145348,7 @@
         "from": "მ/ს ავლაბარი  (2)",
         "to": "Nikoloz Baratashvili Street",
         "snapped_v9": true,
-        "color": "#476d40",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#476d40"
       }
     },
     {
@@ -146092,9 +145534,7 @@
         "from": "Nikoloz Baratashvili Street",
         "to": "Wine Rise",
         "snapped_v9": true,
-        "color": "#476d40",
-        "overlapIndex": -2,
-        "overlapCount": 5
+        "color": "#476d40"
       }
     },
     {
@@ -146628,9 +146068,7 @@
         "from": "მიხეილ გახოკიძის ქუჩა #4",
         "to": "ისთ ფოინთი (მიკროავტობუსები)",
         "snapped_v9": true,
-        "color": "#476d40",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#476d40"
       }
     },
     {
@@ -146984,9 +146422,7 @@
         "from": "Davit Aghmashenebeli Alley #44",
         "to": "Robert Bardzimashvili Street",
         "snapped_v9": true,
-        "color": "#c8844e",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#c8844e"
       }
     },
     {
@@ -147276,9 +146712,7 @@
         "from": "Heroes Square (Saburtalo direction)",
         "to": "Simon Janashia Street",
         "snapped_v9": true,
-        "color": "#c8844e",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#c8844e"
       }
     },
     {
@@ -147476,9 +146910,7 @@
         "from": "Davit Aghmashenebeli Alley 12th Kilometer",
         "to": "Dighomi Bridges",
         "snapped_v9": true,
-        "color": "#c8844e",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#c8844e"
       }
     },
     {
@@ -148000,9 +147432,7 @@
         "from": "Route Start",
         "to": "Revaz Uridia Street",
         "snapped_v9": true,
-        "color": "#499c5c",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#499c5c"
       }
     },
     {
@@ -148524,9 +147954,7 @@
         "from": "Revaz Uridia Street",
         "to": "დარკვეთის ქუჩა #30",
         "snapped_v9": true,
-        "color": "#499c5c",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#499c5c"
       }
     },
     {
@@ -148840,9 +148268,7 @@
         "from": "M/S Sarajishvili",
         "to": "Zghvis Ubani Block X",
         "snapped_v9": true,
-        "color": "#cab36a",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#cab36a"
       }
     },
     {
@@ -149240,9 +148666,7 @@
         "from": "M/S \"300 Aragveli\"",
         "to": "Bejan Kalandadze Street",
         "snapped_v9": true,
-        "color": "#4bcb78",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#4bcb78"
       }
     },
     {
@@ -149820,9 +149244,7 @@
         "from": "Bejan Kalandadze Street",
         "to": "M/S \"300 Aragveli\"",
         "snapped_v9": true,
-        "color": "#4bcb78",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4bcb78"
       }
     },
     {
@@ -150200,9 +149622,7 @@
         "from": "Mikheil Gakhokidze Street",
         "to": "Kaloubani Street  #38",
         "snapped_v9": true,
-        "color": "#ce11a3",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ce11a3"
       }
     },
     {
@@ -151240,9 +150660,7 @@
         "from": "Kaloubani Street  #38",
         "to": "ისთ ფოინთი (მიკროავტობუსები)",
         "snapped_v9": true,
-        "color": "#ce11a3",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ce11a3"
       }
     },
     {
@@ -151644,9 +151062,7 @@
         "from": "Elefter Andronikashvili St #83",
         "to": "Mikheil Ipolitov-Ivanov Street #111",
         "snapped_v9": true,
-        "color": "#4f29b1",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4f29b1"
       }
     },
     {
@@ -152048,9 +151464,7 @@
         "from": "Mikheil Ipolitov-Ivanov Street #109",
         "to": "Elefter Andronikashvili St #83",
         "snapped_v9": true,
-        "color": "#4f29b1",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#4f29b1"
       }
     },
     {
@@ -152440,9 +151854,7 @@
         "from": "წინანაურის ქ. #93",
         "to": "Ortachala Street",
         "snapped_v9": true,
-        "color": "#d040bf",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#d040bf"
       }
     },
     {
@@ -153116,9 +152528,7 @@
         "from": "Dimitri Gulia Square",
         "to": "Bejan Kalandadze Street",
         "snapped_v9": true,
-        "color": "#d040bf",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#d040bf"
       }
     },
     {
@@ -153704,9 +153114,7 @@
         "from": "Bejan Kalandadze Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#d040bf",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#d040bf"
       }
     },
     {
@@ -153968,9 +153376,7 @@
         "from": "Giorgi Shervashidze Street",
         "to": "M/S Isani",
         "snapped_v9": true,
-        "color": "#e645f5",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#e645f5"
       }
     },
     {
@@ -154112,9 +153518,7 @@
         "from": "Europe Square",
         "to": "Elene Akhvlediani Rise",
         "snapped_v9": true,
-        "color": "#e645f5",
-        "overlapIndex": 0,
-        "overlapCount": 2
+        "color": "#e645f5"
       }
     },
     {
@@ -154208,9 +153612,7 @@
         "from": "Davit Aghmashenebeli Alley #264",
         "to": "Davit Aghmashenebeli Alley 13th Kilometer",
         "snapped_v9": true,
-        "color": "#675d03",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#675d03"
       }
     },
     {
@@ -154348,9 +153750,7 @@
         "from": "Davit Aghmashenebeli Alley #44",
         "to": "Dighomi Masivi I Block",
         "snapped_v9": true,
-        "color": "#675d03",
-        "overlapIndex": -2,
-        "overlapCount": 5
+        "color": "#675d03"
       }
     },
     {
@@ -154748,9 +154148,7 @@
         "from": "M/S \"300 Aragveli\"",
         "to": "Bejan Kalandadze Street",
         "snapped_v9": true,
-        "color": "#e87411",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#e87411"
       }
     },
     {
@@ -155812,9 +155210,7 @@
         "from": "Bejan Kalandadze Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#e87411",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#e87411"
       }
     },
     {
@@ -157664,9 +157060,7 @@
         "from": "გვაზაურის II შესახვევი, N 67",
         "to": "Liakhvi Street",
         "snapped_v9": true,
-        "color": "#698c1f",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#698c1f"
       }
     },
     {
@@ -158608,9 +158002,7 @@
         "from": "Liakhvi Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#698c1f",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#698c1f"
       }
     },
     {
@@ -158900,9 +158292,7 @@
         "from": "Shuamta Street",
         "to": "Giorgi Beriashvili Street",
         "snapped_v9": true,
-        "color": "#eaa32d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#eaa32d"
       }
     },
     {
@@ -159552,9 +158942,7 @@
         "from": "მიხეილ გახოკიძის ქუჩა #4",
         "to": "Alexandre Tvalchrelidze Turn",
         "snapped_v9": true,
-        "color": "#eaa32d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#eaa32d"
       }
     },
     {
@@ -159684,9 +159072,7 @@
         "from": "Shuamta Street",
         "to": "Kaloubani Street #12",
         "snapped_v9": true,
-        "color": "#eaa32d",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#eaa32d"
       }
     },
     {
@@ -160904,9 +160290,7 @@
         "from": "Route Start",
         "to": "M/S \"300 Aragveli\"",
         "snapped_v9": true,
-        "color": "#6bbb3b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6bbb3b"
       }
     },
     {
@@ -161540,9 +160924,7 @@
         "from": "M/S \"300 Aragveli\"",
         "to": "Melaani 3rd Turn",
         "snapped_v9": true,
-        "color": "#6bbb3b",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6bbb3b"
       }
     },
     {
@@ -161708,9 +161090,7 @@
         "from": "Niko Pirosmani Square",
         "to": "Mikha Khelashvili Street",
         "snapped_v9": true,
-        "color": "#ecd249",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ecd249"
       }
     },
     {
@@ -162444,9 +161824,7 @@
         "from": "Larekhi Deadlock",
         "to": "Artvini Street #54",
         "snapped_v9": true,
-        "color": "#ecd249",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ecd249"
       }
     },
     {
@@ -162640,9 +162018,7 @@
         "from": "Rostovi Street",
         "to": "Gigo Zaziashvili Street",
         "snapped_v9": true,
-        "color": "#ecd249",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#ecd249"
       }
     },
     {
@@ -162968,9 +162344,7 @@
         "from": "Dimitri Gulia Street",
         "to": "Bejan Kalandadze Street",
         "snapped_v9": true,
-        "color": "#6dea57",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6dea57"
       }
     },
     {
@@ -163144,9 +162518,7 @@
         "from": "გივი ამილახვარის ქ. N17",
         "to": "Alexandre Tvalchrelidze Turn",
         "snapped_v9": true,
-        "color": "#6f1974",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6f1974"
       }
     },
     {
@@ -163320,9 +162692,7 @@
         "from": "Orkhevi, Niko Pirosmani Street",
         "to": "Orkhevi Bridge",
         "snapped_v9": true,
-        "color": "#6f1974",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6f1974"
       }
     },
     {
@@ -163488,9 +162858,7 @@
         "from": "Iason Lortkipanidze Street",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#6f1974",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#6f1974"
       }
     },
     {
@@ -164308,9 +163676,7 @@
         "from": "Giorgi Shervashidze Street",
         "to": "M/S Isani",
         "snapped_v9": true,
-        "color": "#0cc30c",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#0cc30c"
       }
     },
     {
@@ -164536,9 +163902,7 @@
         "from": "ნიაბის ქ. (#55-ის მიმდებარედ)",
         "to": "შილდის ქუჩა",
         "snapped_v9": true,
-        "color": "#2a84b3",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2a84b3"
       }
     },
     {
@@ -164804,9 +164168,7 @@
         "from": "საინგილოს ქუჩა #10",
         "to": "Route End",
         "snapped_v9": true,
-        "color": "#2a84b3",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#2a84b3"
       }
     },
     {
@@ -164948,9 +164310,7 @@
         "from": "Europe Square",
         "to": "Elene Akhvlediani Rise",
         "snapped_v9": true,
-        "color": "#c3cf13",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#c3cf13"
       }
     },
     {
@@ -165584,9 +164944,7 @@
         "from": "Evgeni Apkhazava 1st Turn",
         "to": "Saqnavtobi Settlement",
         "snapped_v9": true,
-        "color": "#c5fe2f",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#c5fe2f"
       }
     },
     {
@@ -165644,9 +165002,7 @@
         "from": "Kakheti Highway #99",
         "to": "Mikheil Grigorashvili Street",
         "snapped_v9": true,
-        "color": "#c5fe2f",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#c5fe2f"
       }
     },
     {
@@ -165780,9 +165136,7 @@
         "from": "Orkhevi, Niko Pirosmani Street",
         "to": "Alexandre Tvalchrelidze Turn",
         "snapped_v9": true,
-        "color": "#c5fe2f",
-        "overlapIndex": 1,
-        "overlapCount": 2
+        "color": "#c5fe2f"
       }
     },
     {
@@ -166500,9 +165854,7 @@
         "from": "Saqnavtobi Settlement",
         "to": "Evgeni Apkhazava 1st Turn",
         "snapped_v9": true,
-        "color": "#c5fe2f",
-        "overlapIndex": 0,
-        "overlapCount": 1
+        "color": "#c5fe2f"
       }
     }
   ]

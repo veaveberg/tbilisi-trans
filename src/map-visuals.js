@@ -634,6 +634,14 @@ export function updateMapTheme() {
         const highlightImage = ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-${theme.suffix}`, `stop-icon-${theme.suffix}`];
         map.setLayoutProperty('stops-highlight', 'icon-image', highlightImage);
     }
+
+    // Update Minibus Segments Color
+    if (map.getLayer('minibus-segments-layer')) {
+        const minibusColor = isDark ? '#80caff' : '#2563eb';
+        const emissive = isDark ? 0.8 : 0;
+        map.setPaintProperty('minibus-segments-layer', 'line-color', minibusColor);
+        map.setPaintProperty('minibus-segments-layer', 'line-emissive-strength', emissive);
+    }
 }
 
 export function addStopsToMap(stops, options = {}) {

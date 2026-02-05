@@ -216,88 +216,162 @@ function proximitySort(features, point) {
 export function setupHoverHandlers(context) {
     const { ALL_STOP_LAYERS, setFilterOpacity, filterManager, updateConnectionLine } = context;
 
-    map.on('mousemove', ALL_STOP_LAYERS, (e) => {
-        if (window.ignoreMapClicks || window.isPickModeActive) return;
+    // Unified Hover Target: Stops + Segments
+    const HOVER_TARGETS = [...ALL_STOP_LAYERS, 'minibus-segments-layer'];
+    let hoveredSegmentId = null; // Local state for segment hover
 
-        // Filter out unreachable stops if Filter is Active
-        let features = e.features;
-        if (filterManager && (filterManager.state.active || filterManager.state.picking)) {
-            const reachable = filterManager.state.reachableStopIds;
-            // Filter features to what's relevant
-            features = features.filter(f => {
-                const id = f.properties.id;
-                // Keep Origin, Reachable, or Target (though targets are usually reachable)
-                return id === filterManager.state.originId || reachable.has(id);
-            });
+    map.on('mousemove', HOVER_TARGETS, (e) => {
+        if (window.isPickModeActive) return;
 
-            // Dedupe by stop ID (same stop can appear in multiple layers)
-            const seenIds = new Set();
-            features = features.filter(f => {
-                if (seenIds.has(f.properties.id)) return false;
-                seenIds.add(f.properties.id);
-                return true;
-            });
+        // 1. Check for Stops First (Priority)
+        // We query broadly to catch stops near the cursor even if we technically hovered the segment line first
 
-            if (features.length === 0) {
-                map.getCanvas().style.cursor = '';
-                // Clear any pending leave timeout
-                if (hoverTimeout) clearTimeout(hoverTimeout);
-                // Delay clearing to avoid flicker when moving between stops
-                hoverTimeout = setTimeout(() => {
-                    if (updateConnectionLine && filterManager.state.picking) {
-                        updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
-                    }
-                    if (setFilterOpacity) setFilterOpacity(false);
-                    lastHoveredStopId = null;
-                }, 100);
-                return;
+        // SAFEGUARD: Only query layers that actually exist to prevent Mapbox errors
+        const validStopLayers = ALL_STOP_LAYERS.filter(id => map.getLayer(id));
+        const stopFeatures = validStopLayers.length > 0
+            ? map.queryRenderedFeatures(e.point, { layers: validStopLayers })
+            : [];
+
+        let bestStopFeature = null;
+
+        if (stopFeatures.length > 0) {
+            // Filter locally for relevant stops if using specific logic
+            // But generally, any stop means we should unhover segment
+            bestStopFeature = stopFeatures[0]; // Simplest priority
+        }
+
+        // 2. Handle Stop Hover Logic
+        if (bestStopFeature) {
+            // Force Clear Segment Hover if active
+            if (hoveredSegmentId !== null) {
+                map.setFeatureState({ source: 'minibus-segments', id: hoveredSegmentId }, { hover: false });
+                hoveredSegmentId = null;
+                window.hoveredMinibusSegmentId = null;
             }
 
-            // Sort by proximity
-            const sorted = proximitySort(features, e.point);
-            const selectedFeature = sorted ? sorted[0] : null;
+            // ... Existing Stop Hover Logic ...
+            // Filter out unreachable stops if Filter is Active
+            let features = stopFeatures; // Use the stop features we found
+            if (filterManager && (filterManager.state.active || filterManager.state.picking)) {
+                // ... (logic from before) ...
+                const reachable = filterManager.state.reachableStopIds;
+                features = features.filter(f => {
+                    const id = f.properties.id;
+                    return id === filterManager.state.originId || reachable.has(id);
+                });
 
-            if (selectedFeature) {
-                if (updateConnectionLine && filterManager.state.picking) {
-                    // Show preview line to this stop
-                    updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, true, selectedFeature.properties.id);
+                // Dedupe
+                const seenIds = new Set();
+                features = features.filter(f => {
+                    if (seenIds.has(f.properties.id)) return false;
+                    seenIds.add(f.properties.id);
+                    return true;
+                });
+
+                if (features.length === 0) {
+                    // Nothing purely clickable found in stop land
+                    // But we still don't want to highlight segments if we are "near" an excluded stop?
+                    // Or maybe we do? Let's say if we are near ANY stop, we block segment.
+                    // So we fall through here.
+                    map.getCanvas().style.cursor = '';
+                    if (hoverTimeout) clearTimeout(hoverTimeout);
+                    hoverTimeout = setTimeout(() => {
+                        if (updateConnectionLine && filterManager.state.picking) {
+                            updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
+                        }
+                        if (setFilterOpacity) setFilterOpacity(false);
+                        lastHoveredStopId = null;
+                    }, 100);
+                    return;
                 }
             }
 
-            // Continue to standard hover effects...
+            // Normal Stop Hover Processing
+            map.getCanvas().style.cursor = 'pointer';
+
+            // Prioritize Metro Features
+            const metroFeature = features.find(f => f.layer.id.startsWith('metro-'));
+            let bestFeature;
+            if (metroFeature) {
+                bestFeature = metroFeature;
+            } else {
+                const sorted = proximitySort(features, e.point);
+                bestFeature = sorted ? sorted[0] : null;
+            }
+
+            if (!bestFeature) return;
+
+            const currentId = bestFeature.properties.id;
+
+            if (lastHoveredStopId !== currentId) {
+                lastHoveredStopId = currentId;
+                updateStopHoverEffects(currentId);
+                if (setFilterOpacity) setFilterOpacity(true);
+            }
+
+            if (hoverTimeout) {
+                clearTimeout(hoverTimeout);
+                hoverTimeout = null;
+            }
+            return; // Stop processing (don't do segment logic)
         }
 
-        map.getCanvas().style.cursor = 'pointer';
+        // 3. If No Stop Found, Check Segment
+        // Clear Stop Hover effects if we left a stop
+        if (lastHoveredStopId !== null) {
+            lastHoveredStopId = null;
+            updateStopHoverEffects(null);
+            if (setFilterOpacity) setFilterOpacity(false);
+        }
 
-        // Prioritize Metro Features
-        const metroFeature = features.find(f => f.layer.id.startsWith('metro-'));
+        // Segment Logic
+        const segmentFeatures = e.features.filter(f => f.layer.id === 'minibus-segments-layer');
+        if (segmentFeatures.length > 0) {
+            map.getCanvas().style.cursor = 'pointer';
+            const feature = segmentFeatures[0];
+            if (feature.id === undefined || feature.id === null) {
+                return;
+            }
 
-        let bestFeature;
-        if (metroFeature) {
-            bestFeature = metroFeature;
+            // If strictly hovering segment and NOT stop
+            if (hoveredSegmentId !== feature.id) {
+                if (hoveredSegmentId !== null) {
+                    map.setFeatureState({ source: 'minibus-segments', id: hoveredSegmentId }, { hover: false });
+                }
+                hoveredSegmentId = feature.id;
+
+                // EXPOSE GLOBAL FOR CLICK HANDLER
+                window.hoveredMinibusSegmentId = hoveredSegmentId;
+
+                map.setFeatureState({ source: 'minibus-segments', id: hoveredSegmentId }, { hover: true });
+            }
         } else {
-            const sorted = proximitySort(features, e.point);
-            bestFeature = sorted ? sorted[0] : null;
+            // We fired on HOVER_TARGETS but nothing matched?
+            // Could happen if we left one and entered another?
+            // Reset Segment
+            if (hoveredSegmentId !== null) {
+                map.setFeatureState({ source: 'minibus-segments', id: hoveredSegmentId }, { hover: false });
+                hoveredSegmentId = null;
+                window.hoveredMinibusSegmentId = null;
+            }
+            map.getCanvas().style.cursor = '';
         }
 
-        if (!bestFeature) return;
-
-        const currentId = bestFeature.properties.id;
-
-        if (lastHoveredStopId !== currentId) {
-            lastHoveredStopId = currentId;
-            updateStopHoverEffects(currentId);
-            if (setFilterOpacity) setFilterOpacity(true);
-        }
-
-        if (hoverTimeout) {
-            clearTimeout(hoverTimeout);
-            hoverTimeout = null;
-        }
     });
 
-    map.on('mouseleave', ALL_STOP_LAYERS, () => {
+    map.on('mouseleave', HOVER_TARGETS, () => {
+        // We need to be careful here. Mouseleave fires when leaving layer A to enter layer B.
+        // So we might leave Segment to enter Stop.
+        // queryRenderedFeatures is the source of truth.
+        const point = map.project(map.getCenter()); // Dummy point? No we can't trust point here.
+
+        // Just rely on the fact that if we really left everything, the next mousemove (on map) 
+        // OR this event should clear things.
+        // Ideally we check if we are still over any target.
+
         map.getCanvas().style.cursor = '';
+
+        // Clear Stop Hover
         if (hoverTimeout) clearTimeout(hoverTimeout);
         hoverTimeout = setTimeout(() => {
             if (updateConnectionLine && filterManager && filterManager.state.picking) {
@@ -307,11 +381,18 @@ export function setupHoverHandlers(context) {
             updateStopHoverEffects(null);
             if (setFilterOpacity) setFilterOpacity(false);
         }, 50);
+
+        // Clear Segment Hover
+        if (hoveredSegmentId !== null) {
+            map.setFeatureState({ source: 'minibus-segments', id: hoveredSegmentId }, { hover: false });
+            hoveredSegmentId = null;
+            window.hoveredMinibusSegmentId = null;
+        }
     });
 
     // Broad Pointer cursor for POIs
     map.on('mousemove', (e) => {
-        if (window.ignoreMapClicks || window.isPickModeActive) return;
+        if (window.isPickModeActive) return;
 
         let features = [];
         try {
@@ -338,6 +419,15 @@ export function setupHoverHandlers(context) {
             map.getCanvas().style.cursor = '';
         }
     });
+}
+
+export function clearStopHoverState() {
+    if (hoverTimeout) {
+        clearTimeout(hoverTimeout);
+        hoverTimeout = null;
+    }
+    lastHoveredStopId = null;
+    updateStopHoverEffects(null);
 }
 
 export function setupClickHandlers(context) {
@@ -431,6 +521,7 @@ export function setupClickHandlers(context) {
             applyFilter(stop.id);
         } else {
             // Normal selection
+            clearStopHoverState();
             showStopInfo(stop, true, true);
         }
     });
