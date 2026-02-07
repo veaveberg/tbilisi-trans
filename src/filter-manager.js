@@ -80,13 +80,13 @@ export class FilterManager {
             }
             // Normal toggle behavior - turn off
             if (!forceEnable) {
-                this.clearFilter(currentStopId);
+                this.clearFilter(currentStopId, { restoreStop: true });
                 const btn = document.getElementById('filter-routes-toggle');
                 if (btn) btn.classList.remove('active');
                 return;
             }
             // forceEnable but different origin - clear and re-enable for new origin
-            this.clearFilter(currentStopId);
+            this.clearFilter(currentStopId, { restoreStop: true });
         }
 
         if (!currentStopId) {
@@ -145,7 +145,7 @@ export class FilterManager {
 
         if (this.state.reachableStopIds.size === 0) {
             alert("No route data available for filtering (Stops list empty).");
-            this.clearFilter(currentStopId);
+            this.clearFilter(currentStopId, { restoreStop: true });
             return;
         }
 
@@ -531,7 +531,8 @@ export class FilterManager {
         }
     }
 
-    clearFilter(currentStopId) {
+    clearFilter(currentStopId, options = {}) {
+        const { restoreStop = false } = options;
         this.state.active = false;
         this.state.picking = false;
         this.state.originId = null;
@@ -540,7 +541,7 @@ export class FilterManager {
         RouteFilterColorManager.reset();
         window.isFilterModeActive = false;
 
-        if (currentStopId) {
+        if (restoreStop && currentStopId) {
             const allStops = this.dataProvider.getAllStops();
             const stop = allStops.find(s => String(s.id) === String(currentStopId));
             if (stop) {
@@ -610,7 +611,7 @@ export class FilterManager {
         }
 
         // Refresh View
-        if (currentStopId) {
+        if (restoreStop && currentStopId) {
             const allStops = this.dataProvider.getAllStops();
             const stop = allStops.find(s => s.id === currentStopId);
             if (stop) this.uiCallbacks.showStopInfo(stop, false, true); // Restore zoom

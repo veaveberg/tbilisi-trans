@@ -234,7 +234,7 @@ async function handleBack() {
                 await filterManager.refreshRouteFilter(previous.data.id, window.lastArrivals, window.lastRoutes);
                 fitFilterBounds(previous.data, filterState.targetIds);
             } else {
-                await showStopInfo(previous.data, false, true); // false = no history, true = flyTo
+                await showStopInfo(previous.data, false, true, true, { forceRoutesRefresh: true }); // ensure route chips render
             }
         } else if (previous.type === 'route') {
             showRouteOnMap(previous.data, false, { preserveBounds: true });
@@ -348,19 +348,27 @@ setupHoverHandlers({
 addMetroHoverLogic(map, filterManager);
 
 
+const getActiveStopId = () => (
+    window.currentStopId ||
+    arrivalsController?.stopId ||
+    window._lastRenderedStopId ||
+    (window.lastArrivals && window.lastArrivals[0] && (window.lastArrivals[0]._sourceStopId || window.lastArrivals[0].stopId)) ||
+    null
+);
+
 // Initialize Click Handlers
 setupClickHandlers({
     ALL_STOP_LAYERS,
     filterManager,
     showStopInfo,
-    applyFilter: (targetId) => filterManager.applyFilter(targetId, window.currentStopId, window.lastArrivals, window.lastRoutes),
+    applyFilter: (targetId) => filterManager.applyFilter(targetId, getActiveStopId(), window.lastArrivals, window.lastRoutes),
     getStopById: (id) => allStops.find(s => s.id === id)
 });
 
 // Forwarding functions for UI event handlers
-window.toggleFilterMode = () => filterManager.toggleFilterMode(window.currentStopId, window.isPickModeActive, setEditPickMode);
-window.applyFilter = (targetId) => filterManager.applyFilter(targetId, window.currentStopId, window.lastArrivals, window.lastRoutes);
-window.clearFilter = () => filterManager.clearFilter(window.currentStopId);
+window.toggleFilterMode = () => filterManager.toggleFilterMode(getActiveStopId(), window.isPickModeActive, setEditPickMode);
+window.applyFilter = (targetId) => filterManager.applyFilter(targetId, getActiveStopId(), window.lastArrivals, window.lastRoutes);
+window.clearFilter = (stopId = getActiveStopId(), options = {}) => filterManager.clearFilter(stopId, options);
 
 import { RouteFilterColorManager } from './color-manager.js';
 
@@ -1145,7 +1153,8 @@ async function handleDeepLinks() {
                             fromStopId: stop.id,
                             startZoom: intendedStopZoom,
                             routeSource: 'deepLink',
-                            centerOnStop: { lat: stop.lat, lon: stop.lon } // Fly to stop on deep link
+                            centerOnStop: { lat: stop.lat, lon: stop.lon }, // Fly to stop on deep link
+                            preserveBounds: true
                         });
                     } else {
                         console.warn(`[DeepLink] Route ${state.shortName} not found in allRoutes.`);
@@ -1206,7 +1215,7 @@ map.on('moveend', () => {
 
 
 async function showStopInfo(stop, addToStack = true, flyToStop = false, updateURL = true, options = {}) {
-    const { suppressPanel = false } = options;
+    const { suppressPanel = false, forceRoutesRefresh = false } = options;
 
     // Stop location tracking if we are selecting something specific
     stopTracking();
@@ -1419,7 +1428,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     // --- UNIFIED ARRIVALS LOADING ---
     // Route chips (static, instant)
     const isDifferentStop = String(prevStopId) !== String(stop.id);
-    if (isDifferentStop) {
+    if (isDifferentStop || forceRoutesRefresh) {
         const equivalentIds = getEquivalentStops(stop.id, false);
         const staticIdsSet = new Set();
         equivalentIds.forEach(id => {
@@ -2299,10 +2308,18 @@ async function updateRouteView(route, options = {}) {
                     const matchedIndex = processedPatterns.findIndex(p => {
                         const data = allStopsData.find(d => d.suffix === p.patternSuffix);
                         return data && data.stops.some(s => {
+                            const normalizeStopId = id => String(id)
+                                .replace(/^rustavi:/i, '')
+                                .replace(/^[rR]/, '')
+                                .replace(/^\d+:/, '');
+
                             const sId = String(s.id || s.stopId);
                             const normId = redirectMap.get(sId) || sId;
                             const equivs = getEquivalentStops(options.fromStopId);
-                            return equivs.includes(normId);
+
+                            if (equivs.includes(normId)) return true;
+                            const normNormId = normalizeStopId(normId);
+                            return equivs.some(e => normalizeStopId(e) === normNormId);
                         });
                     });
 
@@ -2363,10 +2380,17 @@ async function updateRouteView(route, options = {}) {
             // --- FULL SCHEDULE DISPLAY ---
             const routeBodyEl = document.getElementById('route-info-body');
             if (options.fromStopId) {
+                const normalize = id => String(id)
+                    .replace(/^rustavi:/i, '')
+                    .replace(/^[rR]/, '')
+                    .replace(/^\d+:/, '');
+                const equivs = new Set(getEquivalentStops(options.fromStopId));
+                const equivsNorm = new Set(Array.from(equivs).map(e => normalize(e)));
+
                 const hasStop = currentPatternStops && currentPatternStops.some(s => {
-                    const sId = String(s.id);
+                    const sId = String(s.id || s.stopId);
                     if (sId === String(options.fromStopId)) return true;
-                    const normalize = id => String(id).replace(/^[rR]/, '').replace(/^\d+:/, '');
+                    if (equivs.has(sId) || equivsNorm.has(normalize(sId))) return true;
                     return normalize(sId) === normalize(options.fromStopId);
                 });
 
@@ -2526,7 +2550,7 @@ async function updateRouteView(route, options = {}) {
                     }
 
                     const forceFit = options.fitToRoute || options.routeSource === 'deepLink' || options.routeSource === 'search';
-                    const shouldFit = forceFit || !isRouteOnScreen;
+                    const shouldFit = !options.preserveBounds && (forceFit || !isRouteOnScreen);
 
                     if (shouldFit && coordinates.length > 0) {
                         const bounds = new mapboxgl.LngLatBounds();
@@ -2806,7 +2830,7 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
 
         if (window.selectDevStop) window.selectDevStop(null); // Notify DevTools
 
-        try { clearFilter(); } catch (err) { console.error('Clear Filter Error', err); }
+        try { clearFilter(getActiveStopId(), { restoreStop: false }); } catch (err) { console.error('Clear Filter Error', err); }
 
         // Always try to reset map focus
         try { setMapFocus(false); } catch (err) { console.error('Reset Focus Error', err); }
