@@ -420,6 +420,9 @@ export default defineConfig({
         })
     ],
     base: process.env.VITE_BASE_URL || '/tbilisi-trans/', // Defaults to GH Pages, override for Capacitor
+    build: {
+        outDir: process.env.VITE_OUT_DIR || 'dist'
+    },
     server: {
         watch: {
             // Ignore the JSON/CSV data files to avoid infinite reload loops when script updates them

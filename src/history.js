@@ -157,7 +157,11 @@ const historyStack = [];
 export function addToHistory(type, data) {
     // Don't add if it's the same as the current top
     const top = historyStack[historyStack.length - 1];
-    if (top && top.type === type && top.data.id === data.id) return;
+    if (top && top.type === type && top.data.id === data.id) {
+        top.data = data;
+        updateBackButtons();
+        return;
+    }
 
     historyStack.push({ type, data });
     updateBackButtons();

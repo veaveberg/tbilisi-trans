@@ -1,4 +1,5 @@
 import { onApiStatusChange, getApiStatusColor } from './api.js';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 
 export const settings = {
     simplifyNumbers: false,
@@ -7,6 +8,225 @@ export const settings = {
     showPoiLabels: false,
     pageScale: 1.0
 };
+
+let onUpdateCallback = null;
+let nativeSettingsInitialized = false;
+
+const NativeSettingsPlugin = registerPlugin('NativeSettings');
+
+function isNativeSettingsAvailable() {
+    if (typeof Capacitor === 'undefined') return false;
+    if (typeof Capacitor.isNativePlatform === 'function' && !Capacitor.isNativePlatform()) return false;
+    if (typeof Capacitor.isPluginAvailable === 'function') {
+        return Capacitor.isPluginAvailable('NativeSettings');
+    }
+    return typeof window !== 'undefined' &&
+        window.Capacitor &&
+        window.Capacitor.Plugins &&
+        window.Capacitor.Plugins.NativeSettings;
+}
+
+function getNativeSettingsPlugin() {
+    if (!isNativeSettingsAvailable()) return null;
+    return NativeSettingsPlugin;
+}
+
+function getStoredBoolean(key, defaultValue) {
+    const stored = localStorage.getItem(key);
+    if (stored === null) return defaultValue;
+    return stored === 'true';
+}
+
+function isIOSAppOnMac() {
+    if (typeof navigator === 'undefined') return false;
+    return navigator.userAgent.includes('Macintosh') && navigator.maxTouchPoints > 1;
+}
+
+function syncCheckbox(id, value) {
+    const el = document.getElementById(id);
+    if (el && typeof el.checked !== 'undefined') {
+        el.checked = !!value;
+    }
+}
+
+function applyNativeSetting(key, value) {
+    switch (key) {
+        case 'simplifyNumbers':
+            settings.simplifyNumbers = !!value;
+            localStorage.setItem('simplifyNumbers', settings.simplifyNumbers);
+            syncCheckbox('simplify-switch', settings.simplifyNumbers);
+            if (onUpdateCallback) onUpdateCallback();
+            break;
+        case 'showMinibuses':
+            settings.showMinibuses = !!value;
+            localStorage.setItem('showMinibuses', settings.showMinibuses);
+            syncCheckbox('minibus-switch', settings.showMinibuses);
+            if (onUpdateCallback) onUpdateCallback();
+            break;
+        case 'showRustaviBuses':
+            settings.showRustaviBuses = !!value;
+            localStorage.setItem('showRustaviBuses', settings.showRustaviBuses);
+            syncCheckbox('rustavi-switch', settings.showRustaviBuses);
+            if (onUpdateCallback) onUpdateCallback();
+            break;
+        case 'show3DBuildings':
+            localStorage.setItem('show3DBuildings', !!value);
+            syncCheckbox('buildings-3d-switch', !!value);
+            window.dispatchEvent(new CustomEvent('map3DBuildingsChange', { detail: !!value }));
+            break;
+        case 'show3DTerrain':
+            localStorage.setItem('show3DTerrain', !!value);
+            syncCheckbox('terrain-3d-switch', !!value);
+            window.dispatchEvent(new CustomEvent('map3DTerrainChange', { detail: !!value }));
+            break;
+        case 'exaggerateTerrain':
+            localStorage.setItem('exaggerateTerrain', !!value);
+            syncCheckbox('exaggerate-switch', !!value);
+            window.dispatchEvent(new CustomEvent('mapExaggerateChange', { detail: !!value }));
+            break;
+        case 'showPoiLabels':
+            settings.showPoiLabels = !!value;
+            localStorage.setItem('showPoiLabels', settings.showPoiLabels);
+            syncCheckbox('poi-switch', settings.showPoiLabels);
+            window.dispatchEvent(new CustomEvent('mapPoiLabelsChange', { detail: settings.showPoiLabels }));
+            break;
+        case 'theme':
+            if (typeof value === 'string' && ['system', 'light', 'dark'].includes(value)) {
+                localStorage.setItem('theme', value);
+                window.dispatchEvent(new CustomEvent('manualThemeChange', { detail: value }));
+            }
+            break;
+        case 'pageScale':
+            const scaleVal = parseFloat(value);
+            if (!isNaN(scaleVal) && scaleVal >= 0.8 && scaleVal <= 1.5) {
+                settings.pageScale = scaleVal;
+                localStorage.setItem('pageScale', scaleVal);
+                // On iOS, the native side handles zoom via WKWebView.pageZoom
+                // Only dispatch for non-native (web) scaling
+                if (!isNativeSettingsAvailable()) {
+                    window.dispatchEvent(new CustomEvent('pageScaleChange', { detail: scaleVal }));
+                }
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+function initNativeSettingsBridge() {
+    if (!isNativeSettingsAvailable() || nativeSettingsInitialized) return;
+    nativeSettingsInitialized = true;
+
+    const plugin = getNativeSettingsPlugin();
+    if (!plugin) return;
+    plugin.addListener('settingsChanged', ({ key, value }) => {
+        applyNativeSetting(key, value);
+    });
+    plugin.addListener('settingsClosed', ({ settings: newSettings }) => {
+        if (!newSettings) return;
+        Object.entries(newSettings).forEach(([key, value]) => {
+            applyNativeSetting(key, value);
+        });
+    });
+
+    // Apply initial zoom on iOS
+    applyInitialNativeZoom();
+}
+
+async function applyInitialNativeZoom() {
+    if (!isNativeSettingsAvailable()) return;
+
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const defaultScale = isMobile ? 1.25 : 1.0;
+    const storedScale = localStorage.getItem('pageScale');
+    let currentScale = storedScale ? parseFloat(storedScale) : defaultScale;
+    if (isIOSAppOnMac()) {
+        currentScale = 1.0;
+        if (storedScale !== '1') {
+            localStorage.setItem('pageScale', '1');
+        }
+    }
+
+    try {
+        const plugin = getNativeSettingsPlugin();
+        if (!plugin) return;
+        await plugin.setPageZoom({ zoom: currentScale });
+    } catch (err) {
+        console.warn('[NativeSettings] Failed to apply initial zoom via native, using CSS fallback', err);
+        // CSS fallback
+        applyZoomCSS(currentScale);
+    }
+}
+
+function applyZoomCSS(scale) {
+    const html = document.documentElement;
+    const body = document.body;
+    if (scale === 1) {
+        html.style.transform = '';
+        html.style.transformOrigin = '';
+        html.style.width = '';
+        html.style.height = '';
+        html.style.overflow = '';
+        html.style.removeProperty('--page-scale');
+        html.style.removeProperty('--inv-page-scale');
+        if (body) {
+            body.style.width = '';
+            body.style.height = '';
+            body.style.overflow = '';
+        }
+    } else {
+        const inverseScale = 1.0 / scale;
+        html.style.transform = `scale(${scale})`;
+        html.style.transformOrigin = 'top left';
+        html.style.width = `${inverseScale * 100}%`;
+        html.style.height = `${inverseScale * 100}%`;
+        html.style.overflow = 'hidden';
+        html.style.setProperty('--page-scale', String(scale));
+        html.style.setProperty('--inv-page-scale', String(inverseScale));
+        if (body) {
+            body.style.width = '100%';
+            body.style.height = '100%';
+            body.style.overflow = 'hidden';
+        }
+    }
+    // Trigger Mapbox resize after transform
+    if (window.map && typeof window.map.resize === 'function') {
+        setTimeout(() => window.map.resize(), 50);
+    }
+}
+
+async function openNativeSettings() {
+    const plugin = getNativeSettingsPlugin();
+    if (!plugin) return false;
+    // Load scale with mobile defaults
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    const defaultScale = isMobile ? 1.25 : 1.0;
+    const storedScale = localStorage.getItem('pageScale');
+    let currentScale = storedScale ? parseFloat(storedScale) : defaultScale;
+    if (isIOSAppOnMac()) {
+        currentScale = 1.0;
+    }
+
+    const payload = {
+        simplifyNumbers: getStoredBoolean('simplifyNumbers', false),
+        showMinibuses: getStoredBoolean('showMinibuses', true),
+        showRustaviBuses: getStoredBoolean('showRustaviBuses', true),
+        show3DBuildings: getStoredBoolean('show3DBuildings', false),
+        show3DTerrain: getStoredBoolean('show3DTerrain', false),
+        exaggerateTerrain: getStoredBoolean('exaggerateTerrain', false),
+        showPoiLabels: getStoredBoolean('showPoiLabels', false),
+        theme: localStorage.getItem('theme') || 'system',
+        pageScale: currentScale
+    };
+
+    try {
+        await plugin.open({ settings: payload });
+        return true;
+    } catch (err) {
+        console.warn('[NativeSettings] Failed to open', err);
+        return false;
+    }
+}
 
 // Start logic
 export function shouldShowRoute(routeShortName, route = null) {
@@ -58,6 +278,8 @@ export function simplifyNumber(numStr) {
 }
 
 export function initSettings({ onUpdate }) {
+    onUpdateCallback = onUpdate;
+    initNativeSettingsBridge();
     const menuBtn = document.getElementById('menu-btn');
     const menuPopup = document.getElementById('map-menu-popup');
     const simplifySwitch = document.getElementById('simplify-switch');
@@ -66,6 +288,11 @@ export function initSettings({ onUpdate }) {
     if (menuBtn && menuPopup) {
         menuBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (isNativeSettingsAvailable()) {
+                menuPopup.classList.add('hidden');
+                openNativeSettings();
+                return;
+            }
             menuPopup.classList.toggle('hidden');
         });
 

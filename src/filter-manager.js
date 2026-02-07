@@ -1,5 +1,6 @@
 import mapboxgl from 'mapbox-gl';
 import { RouteFilterColorManager } from './color-manager.js';
+import { addToHistory } from './history.js';
 import * as api from './api.js';
 import { hydrateRouteDetails } from './fetch.js';
 import { shouldShowRoute } from './settings.js';
@@ -225,16 +226,153 @@ export class FilterManager {
             mergeSourcesMap.get(this.state.originId).forEach(s => originIdsForRoutes.add(s));
         }
 
-        await this.ensureLazyRoutesForStop(this.state.originId, originIdsForRoutes);
-
         const stopToRoutesMap = this.dataProvider.getStopToRoutesMap();
 
-        const originRoutesSet = new Set();
-        originIdsForRoutes.forEach(oid => {
-            const routes = stopToRoutesMap.get(oid) || [];
-            routes.forEach(r => originRoutesSet.add(r));
-        });
-        const originRoutes = Array.from(originRoutesSet).filter(r => shouldShowRoute(r.shortName, r));
+        const buildOriginRoutes = () => {
+            const originRoutesSet = new Set();
+            originIdsForRoutes.forEach(oid => {
+                const routes = stopToRoutesMap.get(oid) || [];
+                routes.forEach(r => originRoutesSet.add(r));
+            });
+            return Array.from(originRoutesSet).filter(r => shouldShowRoute(r.shortName, r));
+        };
+
+        let originRoutes = buildOriginRoutes();
+
+        const computeCommonRoutes = () => {
+            return originRoutes.filter(r => {
+                let routeStopsNormalized = null;
+                let globalMatch = false;
+
+                for (const tid of this.state.targetIds) {
+                    const targetEq = new Set(this.getEquivalentStops(tid));
+                    let matches = false;
+
+                    if (r._details && r._details.patterns) {
+                        matches = r._details.patterns.some(p => {
+                            if (!p.stops) return false;
+                            const idxO = p.stops.findIndex(s => originIdsForRoutes.has(redirectMap.get(s.id) || s.id));
+                            if (idxO === -1) return false;
+
+                            // Check if this is a loop route:
+                            // 1. CSV override flag isLoop
+                            // 2. Virtual split pattern (has _PART in suffix)
+                            const isLoopRoute = r._overrides?.isLoop === true ||
+                                r._overrides?.isLoop === 'true' ||
+                                (p.patternSuffix && p.patternSuffix.includes('_PART'));
+
+                            // Normal case: target after origin
+                            const idxT = p.stops.findIndex((s, i) => i > idxO && targetEq.has(redirectMap.get(s.id) || s.id));
+                            if (idxT !== -1) {
+                                // Fix: If it's a virtual pattern (_PART), it's already sliced linearly. Treat as standard.
+                                if (isLoopRoute && !p.patternSuffix.includes('_PART')) {
+                                    // Find terminus index: prefer CSV override, fall back to midpoint
+                                    let terminusIdx = -1;
+                                    const terminusStopId = r._overrides?.terminusStopIdOverride || r._overrides?.terminusStopId;
+                                    if (terminusStopId) {
+                                        terminusIdx = p.stops.findIndex(s => {
+                                            const normId = redirectMap.get(s.id) || s.id;
+                                            return normId === terminusStopId || s.id === terminusStopId;
+                                        });
+                                    }
+                                    if (terminusIdx === -1) {
+                                        terminusIdx = Math.ceil(p.stops.length * 0.5) - 1;
+                                    }
+
+                                    // If origin is before terminus, target must be at or before terminus + 1
+                                    if (idxO <= terminusIdx) {
+                                        if (idxT > terminusIdx + 1) {
+                                            return false; // Target is past terminus - not reachable via this route
+                                        }
+                                    }
+                                    // If origin is on return leg (after terminus), target must be after origin
+                                    // (which is already satisfied by idxT > idxO check above)
+                                }
+                                return true;
+                            }
+
+                            // Wrapped route case: target is at index 0 (first stop)
+                            // Special case for circular routes 387/397: bus continues from last to first stop
+                            const CIRCULAR_ROUTES = ['387', '397'];
+                            if (CIRCULAR_ROUTES.includes(String(r.shortName)) && idxO > 0 && p.stops.length >= 5) {
+                                const firstStop = p.stops[0];
+                                const firstNormId = redirectMap.get(firstStop.id) || firstStop.id;
+                                if (targetEq.has(firstNormId)) {
+                                    return true;
+                                }
+                            }
+
+                            return false;
+                        });
+                    } else if (r.stops) {
+                        if (!routeStopsNormalized) routeStopsNormalized = r.stops.map(sid => redirectMap.get(sid) || sid);
+                        const stops = routeStopsNormalized;
+                        const idxO = stops.findIndex(sid => originIdsForRoutes.has(sid));
+                        if (idxO !== -1) {
+                            const idxT = stops.findIndex((sid, i) => i > idxO && targetEq.has(sid));
+                            matches = (idxT !== -1);
+                        }
+                    }
+                    if (matches) {
+                        globalMatch = true;
+                        return true;
+                    }
+                }
+                if (!globalMatch) {
+                    // Detailed debug for 0 results case (Failure)
+                }
+                return globalMatch;
+            });
+        };
+
+        const applyFilteredRoutes = (commonRoutes, updateRouter = false) => {
+            this.state.filteredRoutes = commonRoutes.map(r => r.id);
+            this.state.active = true;
+
+            this.updateMapFilterState();
+            this.uiCallbacks.updateConnectionLine(this.state.originId, this.state.targetIds, false);
+
+            // UI Updates
+            if (currentStopId === this.state.originId) {
+                if (lastArrivals) {
+                    this.uiCallbacks.renderArrivals(lastArrivals, this.state.originId);
+                    if (lastRoutes) this.uiCallbacks.renderAllRoutes(lastRoutes, lastArrivals);
+                } else {
+                    // Fallback: reload
+                    const allStops = this.dataProvider.getAllStops();
+                    const stop = allStops.find(s => s.id === this.state.originId);
+                    if (stop) this.uiCallbacks.showStopInfo(stop, false, false, false);
+                }
+            }
+
+            if (updateRouter) {
+                this.router.updateStop(this.state.originId, true, Array.from(this.state.targetIds));
+            }
+
+            if (currentStopId === this.state.originId) {
+                const allStops = this.dataProvider.getAllStops();
+                const stop = allStops.find(s => String(s.id) === String(this.state.originId));
+                if (stop) {
+                    addToHistory('stop', {
+                        ...stop,
+                        _filterState: {
+                            active: true,
+                            originId: this.state.originId,
+                            targetIds: Array.from(this.state.targetIds || [])
+                        }
+                    });
+                }
+            }
+        };
+
+        // Fast path: apply filter using whatever data is already available.
+        applyFilteredRoutes(computeCommonRoutes(), false);
+
+        // Fill in missing routes for the origin (cache-only). This can be slow, so do it after the fast pass.
+        await this.ensureLazyRoutesForStop(this.state.originId, originIdsForRoutes);
+
+        // Recompute origin routes after lazy hydration.
+        originRoutes = buildOriginRoutes();
 
         // Ensure Hydration (Critical for Fresh Data reload)
         const routesNeedingFetch = originRoutes.filter(r => !r._details || !r._details.patterns);
@@ -245,115 +383,9 @@ export class FilterManager {
             } catch (err) { console.error('[FilterManager] Refresh hydration error', err); }
         }
 
-        // console.log(`[FilterManager] Refreshing. Origin: ${this.state.originId}, Targets: ${Array.from(this.state.targetIds).join(',')}. Routes to check: ${originRoutes.length}`);
-
-        const commonRoutes = originRoutes.filter(r => {
-            let routeStopsNormalized = null;
-            let globalMatch = false;
-
-            for (const tid of this.state.targetIds) {
-                const targetEq = new Set(this.getEquivalentStops(tid));
-                let matches = false;
-
-                if (r._details && r._details.patterns) {
-                    matches = r._details.patterns.some(p => {
-                        if (!p.stops) return false;
-                        const idxO = p.stops.findIndex(s => originIdsForRoutes.has(redirectMap.get(s.id) || s.id));
-                        if (idxO === -1) return false;
-
-                        // Check if this is a loop route:
-                        // 1. CSV override flag isLoop
-                        // 2. Virtual split pattern (has _PART in suffix)
-                        const isLoopRoute = r._overrides?.isLoop === true ||
-                            r._overrides?.isLoop === 'true' ||
-                            (p.patternSuffix && p.patternSuffix.includes('_PART'));
-
-                        // Normal case: target after origin
-                        const idxT = p.stops.findIndex((s, i) => i > idxO && targetEq.has(redirectMap.get(s.id) || s.id));
-                        if (idxT !== -1) {
-                            // Fix: If it's a virtual pattern (_PART), it's already sliced linearly. Treat as standard.
-                            if (isLoopRoute && !p.patternSuffix.includes('_PART')) {
-                                // Find terminus index: prefer CSV override, fall back to midpoint
-                                let terminusIdx = -1;
-                                const terminusStopId = r._overrides?.terminusStopIdOverride || r._overrides?.terminusStopId;
-                                if (terminusStopId) {
-                                    terminusIdx = p.stops.findIndex(s => {
-                                        const normId = redirectMap.get(s.id) || s.id;
-                                        return normId === terminusStopId || s.id === terminusStopId;
-                                    });
-                                }
-                                if (terminusIdx === -1) {
-                                    terminusIdx = Math.ceil(p.stops.length * 0.5) - 1;
-                                }
-
-                                // If origin is before terminus, target must be at or before terminus + 1
-                                if (idxO <= terminusIdx) {
-                                    if (idxT > terminusIdx + 1) {
-                                        return false; // Target is past terminus - not reachable via this route
-                                    }
-                                }
-                                // If origin is on return leg (after terminus), target must be after origin
-                                // (which is already satisfied by idxT > idxO check above)
-                            }
-                            return true;
-                        }
-
-                        // Wrapped route case: target is at index 0 (first stop)
-                        // Special case for circular routes 387/397: bus continues from last to first stop
-                        const CIRCULAR_ROUTES = ['387', '397'];
-                        if (CIRCULAR_ROUTES.includes(String(r.shortName)) && idxO > 0 && p.stops.length >= 5) {
-                            const firstStop = p.stops[0];
-                            const firstNormId = redirectMap.get(firstStop.id) || firstStop.id;
-                            if (targetEq.has(firstNormId)) {
-                                return true;
-                            }
-                        }
-
-                        return false;
-                    });
-                } else if (r.stops) {
-                    if (!routeStopsNormalized) routeStopsNormalized = r.stops.map(sid => redirectMap.get(sid) || sid);
-                    const stops = routeStopsNormalized;
-                    const idxO = stops.findIndex(sid => originIdsForRoutes.has(sid));
-                    if (idxO !== -1) {
-                        const idxT = stops.findIndex((sid, i) => i > idxO && targetEq.has(sid));
-                        matches = (idxT !== -1);
-                    }
-                }
-                if (matches) {
-                    globalMatch = true;
-                    return true;
-                }
-            }
-            if (!globalMatch) {
-                // Detailed debug for 0 results case (Failure)
-            }
-            return globalMatch;
-        });
-
-        // console.log(`[FilterManager] Filtered Result: ${commonRoutes.length} routes.`);
-
-        this.state.filteredRoutes = commonRoutes.map(r => r.id);
-        this.state.active = true;
-
-        this.updateMapFilterState();
-
-        this.uiCallbacks.updateConnectionLine(this.state.originId, this.state.targetIds, false);
-
-        // UI Updates
-        if (currentStopId === this.state.originId) {
-            if (lastArrivals) {
-                this.uiCallbacks.renderArrivals(lastArrivals, this.state.originId);
-                if (lastRoutes) this.uiCallbacks.renderAllRoutes(lastRoutes, lastArrivals);
-            } else {
-                // Fallback: reload
-                const allStops = this.dataProvider.getAllStops();
-                const stop = allStops.find(s => s.id === this.state.originId);
-                if (stop) this.uiCallbacks.showStopInfo(stop, false, false, false);
-            }
-        }
-
-        this.router.updateStop(this.state.originId, true, Array.from(this.state.targetIds));
+        // Recompute with hydrated details (if any) and update UI/router.
+        const commonRoutes = computeCommonRoutes();
+        applyFilteredRoutes(commonRoutes, true);
     }
 
     async updateReachableStops() {
@@ -481,6 +513,7 @@ export class FilterManager {
 
     async recalculateFilter(currentStopId, lastArrivals, lastRoutes) {
         if (!this.state.picking && !this.state.active) return;
+        window.isFilterModeActive = true;
 
         // console.log('[FilterManager] Recalculating filter due to settings update');
 
@@ -505,6 +538,15 @@ export class FilterManager {
         this.state.targetIds = new Set();
         this.state.filteredRoutes = [];
         RouteFilterColorManager.reset();
+        window.isFilterModeActive = false;
+
+        if (currentStopId) {
+            const allStops = this.dataProvider.getAllStops();
+            const stop = allStops.find(s => String(s.id) === String(currentStopId));
+            if (stop) {
+                addToHistory('stop', stop);
+            }
+        }
 
         // Clear Markers (Robust)
         try {

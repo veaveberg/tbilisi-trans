@@ -161,8 +161,10 @@ function resolveDirectionInfo(a, matchedRoute, stopId) {
             }
 
             if (virtualPatterns && virtualPatterns.length > 0) {
-                // Find which virtual pattern contains this stop
+                // Find which virtual pattern(s) contain this stop
                 const normalizedStopId = normalizeRouteId(stopId);
+                const stopName = stopEntry?.stop?.name ? String(stopEntry.stop.name).toLowerCase().trim() : null;
+                const candidates = [];
 
                 for (let i = 0; i < virtualPatterns.length; i++) {
                     const vp = virtualPatterns[i];
@@ -174,36 +176,72 @@ function resolveDirectionInfo(a, matchedRoute, stopId) {
                     });
 
                     if (containsStop) {
-                        // Found! Determine direction from suffix
-                        const suffix = vp.patternSuffix || '';
-                        if (suffix.endsWith('_PART0')) {
-                            directionIndex = 0;
-                        } else if (suffix.endsWith('_PART1')) {
-                            directionIndex = 1;
-                        }
+                        candidates.push(vp);
+                    }
+                }
 
-                        // Get headsign from pattern or overrides
-                        if (overrides?.destinations && overrides.destinations[directionIndex]) {
-                            const dest = overrides.destinations[directionIndex];
-                            const locale = new URLSearchParams(window.location.search).get('locale') || 'en';
-                            if (dest.headsign) {
-                                verifiedHeadsign = typeof dest.headsign === 'string'
-                                    ? dest.headsign
-                                    : (dest.headsign[locale] || dest.headsign.en || dest.headsign.ka || '');
-                            }
-                        }
+                if (candidates.length > 0) {
+                    let chosen = candidates[0];
 
-                        // If no headsign from overrides, use pattern headsign
-                        if (!verifiedHeadsign && vp.headsign) {
-                            verifiedHeadsign = vp.headsign;
-                        }
+                    if (candidates.length > 1) {
+                        // Ambiguous (usually terminus shared by both parts). Prefer the "other" terminus.
+                        const isSplitPoint = candidates.some(vp => {
+                            const splitId = vp._splitPoint?.id;
+                            return splitId && (String(splitId) === String(stopId) || normalizeRouteId(splitId) === normalizedStopId);
+                        });
 
-                        fixedDirection = true;
-
-                        if (debugRoutes.includes(a.shortName)) {
-                            console.log(`[${a.shortName} VirtualPattern] Found stop in ${suffix} → dir=${directionIndex} headsign="${verifiedHeadsign}"`);
+                        if (isSplitPoint) {
+                            const preferPart1 = candidates.find(vp => (vp.patternSuffix || '').endsWith('_PART1'));
+                            if (preferPart1) chosen = preferPart1;
+                        } else if (stopName) {
+                            const preferOtherHeadsign = candidates.find(vp => {
+                                const suffix = vp.patternSuffix || '';
+                                const dirIdx = suffix.endsWith('_PART1') ? 1 : 0;
+                                let hs = vp.headsign || '';
+                                if (overrides?.destinations && overrides.destinations[dirIdx]?.headsign) {
+                                    const dest = overrides.destinations[dirIdx];
+                                    const locale = new URLSearchParams(window.location.search).get('locale') || 'en';
+                                    hs = typeof dest.headsign === 'string'
+                                        ? dest.headsign
+                                        : (dest.headsign[locale] || dest.headsign.en || dest.headsign.ka || hs);
+                                }
+                                return hs && !hs.toLowerCase().includes(stopName);
+                            });
+                            if (preferOtherHeadsign) chosen = preferOtherHeadsign;
+                        } else {
+                            const preferPart0 = candidates.find(vp => (vp.patternSuffix || '').endsWith('_PART0'));
+                            if (preferPart0) chosen = preferPart0;
                         }
-                        break;
+                    }
+
+                    // Found! Determine direction from suffix
+                    const suffix = chosen.patternSuffix || '';
+                    if (suffix.endsWith('_PART0')) {
+                        directionIndex = 0;
+                    } else if (suffix.endsWith('_PART1')) {
+                        directionIndex = 1;
+                    }
+
+                    // Get headsign from pattern or overrides
+                    if (overrides?.destinations && overrides.destinations[directionIndex]) {
+                        const dest = overrides.destinations[directionIndex];
+                        const locale = new URLSearchParams(window.location.search).get('locale') || 'en';
+                        if (dest.headsign) {
+                            verifiedHeadsign = typeof dest.headsign === 'string'
+                                ? dest.headsign
+                                : (dest.headsign[locale] || dest.headsign.en || dest.headsign.ka || '');
+                        }
+                    }
+
+                    // If no headsign from overrides, use pattern headsign
+                    if (!verifiedHeadsign && chosen.headsign) {
+                        verifiedHeadsign = chosen.headsign;
+                    }
+
+                    fixedDirection = true;
+
+                    if (debugRoutes.includes(a.shortName)) {
+                        console.log(`[${a.shortName} VirtualPattern] Found stop in ${suffix} → dir=${directionIndex} headsign="${verifiedHeadsign}"`);
                     }
                 }
 
@@ -360,8 +398,24 @@ export function sortArrivalsList() {
         return nameA.localeCompare(nameB, undefined, { numeric: true });
     });
 
-    nonSorted.forEach(item => listEl.appendChild(item));
-    items.forEach(item => listEl.appendChild(item));
+    const desiredOrder = [...nonSorted, ...items];
+    const isSameOrder = desiredOrder.length === allChildren.length &&
+        desiredOrder.every((el, idx) => el === allChildren[idx]);
+
+    if (isSameOrder) return;
+
+    const fragment = document.createDocumentFragment();
+    desiredOrder.forEach(item => fragment.appendChild(item));
+    listEl.appendChild(fragment);
+}
+
+let arrivalsSortTimer = null;
+function scheduleArrivalsSort() {
+    if (arrivalsSortTimer) return;
+    arrivalsSortTimer = setTimeout(() => {
+        arrivalsSortTimer = null;
+        sortArrivalsList();
+    }, 50);
 }
 
 // === V3 SCHEDULE FUNCTIONS ===
@@ -967,6 +1021,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     // showing old stop's arrivals and to prevent ID collisions.
     if (String(window._lastRenderedStopId) !== String(stopId)) {
         listEl.innerHTML = '';
+        listEl.scrollTop = 0;
         window._lastRenderedStopId = String(stopId);
     }
 
@@ -1257,9 +1312,9 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         }
 
         const scheduledClass = isScheduled ? 'scheduled-time' : '';
-        const timeElId = `time-${item.data.shortName}-${stopId}`;
+        const timeElId = `time-${stableId}`;
         const timeElAttr = `id="${timeElId}"`;
-        const bottomBarId = `bottom-${item.data.shortName}-${stopId}`;
+        const bottomBarId = `bottom-${stableId}`;
         const bottomBarAttr = `id="${bottomBarId}"`;
 
         let bottomContent = '&nbsp;';
@@ -1298,10 +1353,11 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         if (routeObj) {
             div.onclick = () => {
                 deps.showRouteOnMap(routeObj, true, {
-                    preserveBounds: true,
+                    preserveBounds: false,
                     fromStopId: stopId,
                     targetHeadsign: headsign,
-                    initialDirectionIndex: item.directionIndex
+                    initialDirectionIndex: item.directionIndex,
+                    routeSource: 'stop'
                 });
             };
         }
@@ -1379,7 +1435,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                             div.setAttribute('data-minutes', minsFromNow);
                             timeEl.textContent = timeStr.includes('˚') ? timeStr : timeStr + '˚';
                         }
-                        setTimeout(() => sortArrivalsList(), 50);
+                        scheduleArrivalsSort();
                     }
                 }).catch(err => {
                     console.warn('[V3] Schedule Fetch Error', err);
@@ -1393,6 +1449,11 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     // They are only removed when the stop ID changes (handled at top of renderArrivals).
     listEl.querySelectorAll('.arrival-item').forEach(el => {
         if (!activeIds.has(el.id)) {
+            // In filter mode, remove non-matching items immediately so FLIP handles the shift once.
+            if (deps.filterManager?.state?.active) {
+                el.remove();
+                return;
+            }
             // IMMEDIATE CLEANUP: If the item belongs to an invalid direction for this stop, remove it NOW.
             // This prevents "opposite direction" ghosts from appearing as dimmed items.
             const routeId = el.getAttribute('data-route-id');
@@ -1439,32 +1500,36 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             // Restore opacity if it was dimmed
             if (el.style.opacity === '0.5') {
                 el.style.opacity = '1';
-                setTimeout(() => sortArrivalsList(), 50);
+                scheduleArrivalsSort();
             }
         }
     });
 
     // 3. FLIP Play
-    requestAnimationFrame(() => {
-        listEl.querySelectorAll('.arrival-item').forEach(el => {
-            const oldRect = oldRects.get(el.id);
-            if (!oldRect) return;
+    const flipEls = [];
+    listEl.querySelectorAll('.arrival-item').forEach(el => {
+        const oldRect = oldRects.get(el.id);
+        if (!oldRect) return;
 
-            const newRect = el.getBoundingClientRect();
-            const dy = oldRect.top - newRect.top;
-            const dx = oldRect.left - newRect.left;
+        const newRect = el.getBoundingClientRect();
+        const dy = oldRect.top - newRect.top;
+        const dx = oldRect.left - newRect.left;
 
-            if (dy !== 0 || dx !== 0) {
-                el.style.transition = 'none';
-                el.style.transform = `translate(${dx}px, ${dy}px)`;
-
-                requestAnimationFrame(() => {
-                    el.style.transition = '';
-                    el.style.transform = '';
-                });
-            }
-        });
+        if (dy !== 0 || dx !== 0) {
+            el.style.transition = 'none';
+            el.style.transform = `translate(${dx}px, ${dy}px)`;
+            flipEls.push(el);
+        }
     });
+
+    if (flipEls.length > 0) {
+        requestAnimationFrame(() => {
+            flipEls.forEach(el => {
+                el.style.transition = '';
+                el.style.transform = '';
+            });
+        });
+    }
 
 }
 
@@ -1477,7 +1542,11 @@ if (window.arrivalsCountdownTimer) {
     clearInterval(window.arrivalsCountdownTimer);
 }
 
-window.arrivalsCountdownTimer = setInterval(() => {
+export function startArrivalsCountdown() {
+    if (window.arrivalsCountdownTimer) clearInterval(window.arrivalsCountdownTimer);
+    window.arrivalsCountdownTimer = setInterval(() => {
+        if (document.hidden) return;
+
     const fetchTime = window.arrivalsDataTimestamp || Date.now();
     const elapsedMinutes = (Date.now() - fetchTime) / 60000;
 
@@ -1525,7 +1594,17 @@ window.arrivalsCountdownTimer = setInterval(() => {
     if (needsResort) {
         sortArrivalsList();
     }
-}, 10000); // Update every 10 seconds
+    }, 10000); // Update every 10 seconds
+}
+
+export function stopArrivalsCountdown() {
+    if (window.arrivalsCountdownTimer) {
+        clearInterval(window.arrivalsCountdownTimer);
+        window.arrivalsCountdownTimer = null;
+    }
+}
+
+startArrivalsCountdown();
 // --- LOADING INDICATOR HELPERS ---
 
 let loadingStatusTimeout = null;
@@ -1576,5 +1655,3 @@ export function updateArrivalsLoadingState(visible) {
         });
     }
 }
-
-

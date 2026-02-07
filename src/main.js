@@ -216,17 +216,26 @@ function getEquivalentStops(id, includeHubs = true) {
 // --- Navigation History ---
 // Moved to history.js
 
-function handleBack() {
+async function handleBack() {
     const previous = popHistory();
     if (previous) {
         if (previous.type === 'stop') {
+            const filterState = previous.data?._filterState;
             // Restore map view to stop
             // Restore persistence zoom if available
             if (previous.data.savedZoom) {
                 window.savedZoom = previous.data.savedZoom; // Temporary global handoff (or modify showStopInfo)
                 // Actually easier to just modify showStopInfo to respect it from the object property
             }
-            showStopInfo(previous.data, false, true); // false = no history, true = flyTo
+            if (filterState?.active && filterState.targetIds && filterState.targetIds.length > 0) {
+                await showStopInfo(previous.data, false, false, false); // no history, no flyTo, no URL yet
+                await filterManager.toggleFilterMode(previous.data.id, null, null, { forceEnable: true, skipFlyTo: true });
+                filterManager.state.targetIds = new Set(filterState.targetIds);
+                await filterManager.refreshRouteFilter(previous.data.id, window.lastArrivals, window.lastRoutes);
+                fitFilterBounds(previous.data, filterState.targetIds);
+            } else {
+                await showStopInfo(previous.data, false, true); // false = no history, true = flyTo
+            }
         } else if (previous.type === 'route') {
             showRouteOnMap(previous.data, false, { preserveBounds: true });
         }
@@ -375,6 +384,42 @@ function updateMapFilterState() {
 document.getElementById('back-panel')?.addEventListener('click', handleBack);
 document.getElementById('back-route-info')?.addEventListener('click', handleBack);
 
+// App Lifecycle: Pause all activity when backgrounded
+function pauseAppActivity() {
+    try { stopTracking(); } catch (e) { }
+    try { arrivalsController.pause(); } catch (e) { }
+    try { arrivals.stopArrivalsCountdown(); } catch (e) { }
+    try { metro.stopMetroTicker(); } catch (e) { }
+    if (busUpdateInterval) {
+        clearInterval(busUpdateInterval);
+        busUpdateInterval = null;
+    }
+}
+
+function resumeAppActivity() {
+    if (document.hidden) return;
+    try { arrivals.startArrivalsCountdown(); } catch (e) { }
+    try { arrivalsController.resume(); } catch (e) { }
+    try {
+        if (document.querySelector('.metro-countdown')) {
+            metro.startMetroTicker();
+        }
+    } catch (e) { }
+    try {
+        const routePanel = document.getElementById('route-info');
+        if (window.currentRoute && routePanel && !routePanel.classList.contains('hidden')) {
+            updateRouteView(window.currentRoute, { preserveBounds: true });
+        }
+    } catch (e) { }
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) pauseAppActivity();
+    else resumeAppActivity();
+});
+window.addEventListener('pagehide', pauseAppActivity);
+window.addEventListener('pageshow', resumeAppActivity);
+
 // --- Search History ---
 
 
@@ -417,7 +462,7 @@ async function initializeMapData(stopsData, routesData) {
     // 4. Setup Search (Run Once)
     if (!isSearchInitialized) {
         setupSearch({
-            onRouteSelect: (route) => showRouteOnMap(route),
+            onRouteSelect: (route) => showRouteOnMap(route, true, { routeSource: 'search' }),
             onStopSelect: (stop) => showStopInfo(stop, true, true)
         }, {
             getAllStops: () => allStops,
@@ -439,7 +484,9 @@ async function initializeMapData(stopsData, routesData) {
         map.resize();
         // This fixes the issue where "Fresh Load" resets the layer styles, undoing deep link dimming.
         if (window.currentStopId) {
-            setMapFocus(true);
+            const parsed = Router.parse();
+            const shouldFocus = !(parsed?.filterActive || window.isFilterModeActive || (filterManager && (filterManager.state.active || filterManager.state.picking)));
+            if (shouldFocus) setMapFocus(true);
 
             // Also restore stop highlight marker (may have been cleared by addStopsToMap)
             const highlightStop = allStops.find(s => String(s.id) === String(window.currentStopId));
@@ -934,6 +981,83 @@ const GREEN_LINE_STOPS = [
 ];
 
 // Handle Initial URL State (Deep Links)
+function fitFilterBounds(originStop, targetIds) {
+    if (!originStop || !targetIds || targetIds.size === 0 && !Array.isArray(targetIds)) return;
+
+    const bounds = new mapboxgl.LngLatBounds();
+    if (originStop.lon && originStop.lat) {
+        bounds.extend([parseFloat(originStop.lon), parseFloat(originStop.lat)]);
+    }
+
+    let targetCount = 0;
+    const targets = targetIds instanceof Set ? Array.from(targetIds) : targetIds;
+    targets.forEach(targetId => {
+        const targetStop = allStops.find(s => s.id === targetId);
+        if (targetStop && targetStop.lon && targetStop.lat) {
+            bounds.extend([parseFloat(targetStop.lon), parseFloat(targetStop.lat)]);
+            targetCount++;
+        }
+    });
+
+    if (bounds.isEmpty() || targetCount === 0) return;
+
+    // Store the bounds to fit - only the last one will be used
+    window._pendingFilterBounds = bounds;
+
+    // Schedule fitBounds to run when map is idle (only once)
+    if (!window._pendingFilterBoundsScheduled) {
+        window._pendingFilterBoundsScheduled = true;
+
+        const fitWhenReady = () => {
+            if (window._pendingFilterBounds) {
+                const b = window._pendingFilterBounds;
+
+                // Get panel height for bottom padding, but cap it to avoid overflow
+                const panel = document.getElementById('info-panel');
+                const rawPanelHeight = panel ? panel.offsetHeight : 200;
+                const maxPadding = Math.min(window.innerHeight * 0.4, 300);
+                const panelHeight = Math.min(rawPanelHeight, maxPadding);
+
+                // Temporarily restore original map methods (fitBounds internally uses flyTo)
+                const origMethods = window._originalMapMethods;
+                if (origMethods) {
+                    map.flyTo = origMethods.flyTo;
+                    map.jumpTo = origMethods.jumpTo;
+                    map.easeTo = origMethods.easeTo;
+                }
+
+                map.fitBounds(b, {
+                    padding: {
+                        top: 100,
+                        bottom: panelHeight + 60,
+                        left: 50,
+                        right: 50
+                    },
+                    maxZoom: 16,
+                    duration: 1200
+                });
+
+                // Re-apply no-op overrides so auto-locate doesn't center
+                if (origMethods) {
+                    map.flyTo = () => map;
+                    map.jumpTo = () => map;
+                    map.easeTo = () => map;
+                }
+
+                window._pendingFilterBounds = null;
+                window._pendingFilterBoundsScheduled = false;
+            }
+        };
+
+        map.once('idle', fitWhenReady);
+        setTimeout(() => {
+            if (window._pendingFilterBounds) {
+                fitWhenReady();
+            }
+        }, 2000);
+    }
+}
+
 async function handleDeepLinks() {
     const state = Router.parse();
     if (state.stopId) {
@@ -988,97 +1112,7 @@ async function handleDeepLinks() {
                 if (filterBtn) filterBtn.classList.add('active');
 
                 // 5. Fit map to show origin and all destination stops
-                const bounds = new mapboxgl.LngLatBounds();
-
-                // Add origin stop
-                if (stop.lon && stop.lat) {
-                    bounds.extend([parseFloat(stop.lon), parseFloat(stop.lat)]);
-                    console.log(`[DeepLink] Bounds: Added origin ${stop.id} at [${stop.lon}, ${stop.lat}]`);
-                }
-
-                // Add all destination stops
-                let targetCount = 0;
-                filterManager.state.targetIds.forEach(targetId => {
-                    const targetStop = allStops.find(s => s.id === targetId);
-                    if (targetStop && targetStop.lon && targetStop.lat) {
-                        bounds.extend([parseFloat(targetStop.lon), parseFloat(targetStop.lat)]);
-                        console.log(`[DeepLink] Bounds: Added target ${targetId} at [${targetStop.lon}, ${targetStop.lat}]`);
-                        targetCount++;
-                    } else {
-                        console.log(`[DeepLink] Bounds: Target ${targetId} not found or missing coords`);
-                    }
-                });
-
-                // Fly to fit bounds - store for later execution when map is idle
-                if (!bounds.isEmpty() && targetCount > 0) {
-                    const boundsArray = bounds.toArray();
-                    console.log(`[DeepLink] Calculated bounds: SW=${JSON.stringify(boundsArray[0])}, NE=${JSON.stringify(boundsArray[1])}`);
-
-                    // Store the bounds to fit - only the last one will be used
-                    window._pendingFilterBounds = bounds;
-
-                    // Schedule fitBounds to run when map is idle (only once)
-                    if (!window._pendingFilterBoundsScheduled) {
-                        window._pendingFilterBoundsScheduled = true;
-
-                        // Wait for map to be idle (all tiles loaded, no animations)
-                        const fitWhenReady = () => {
-                            if (window._pendingFilterBounds) {
-                                const b = window._pendingFilterBounds;
-
-                                // Get panel height for bottom padding, but cap it to avoid overflow
-                                const panel = document.getElementById('info-panel');
-                                const rawPanelHeight = panel ? panel.offsetHeight : 200;
-                                // Cap at half screen height or 300px, whichever is smaller
-                                const maxPadding = Math.min(window.innerHeight * 0.4, 300);
-                                const panelHeight = Math.min(rawPanelHeight, maxPadding);
-
-                                console.log(`[DeepLink] Fitting bounds with padding. Panel: ${rawPanelHeight}px, capped to: ${panelHeight}px`);
-
-                                // Temporarily restore original map methods (fitBounds internally uses flyTo)
-                                const origMethods = window._originalMapMethods;
-                                if (origMethods) {
-                                    map.flyTo = origMethods.flyTo;
-                                    map.jumpTo = origMethods.jumpTo;
-                                    map.easeTo = origMethods.easeTo;
-                                }
-
-                                map.fitBounds(b, {
-                                    padding: {
-                                        top: 100,
-                                        bottom: panelHeight + 60,
-                                        left: 50,
-                                        right: 50
-                                    },
-                                    maxZoom: 16,
-                                    duration: 1200
-                                });
-
-                                // Re-apply no-op overrides so auto-locate doesn't center
-                                if (origMethods) {
-                                    map.flyTo = () => map;
-                                    map.jumpTo = () => map;
-                                    map.easeTo = () => map;
-                                }
-
-                                window._pendingFilterBounds = null;
-                                window._pendingFilterBoundsScheduled = false;
-                            }
-                        };
-
-                        // Use multiple strategies to ensure we catch the right moment
-                        map.once('idle', fitWhenReady);
-                        // Also try after a longer delay as backup
-                        setTimeout(() => {
-                            if (window._pendingFilterBounds) {
-                                console.log('[DeepLink] Backup timeout triggered');
-                                fitWhenReady();
-                            }
-                        }, 2000);
-                    }
-                } else {
-                    console.log(`[DeepLink] Bounds empty or no targets found. isEmpty=${bounds.isEmpty()}, targetCount=${targetCount}`);
-                }
+                fitFilterBounds(stop, filterManager.state.targetIds);
             } else {
                 // Standard Stop View (or nested route - suppress panel if route follows)
                 // addToStack=true: Ensure Stop is in internal history so "Back" works
@@ -1110,6 +1144,7 @@ async function handleDeepLinks() {
                             initialDirectionIndex: state.direction,
                             fromStopId: stop.id,
                             startZoom: intendedStopZoom,
+                            routeSource: 'deepLink',
                             centerOnStop: { lat: stop.lat, lon: stop.lon } // Fly to stop on deep link
                         });
                     } else {
@@ -1129,6 +1164,8 @@ async function handleDeepLinks() {
     return true; // Nothing to handle
 }
 
+// Expose for native Universal Links handling
+window.handleDeepLinks = handleDeepLinks;
 
 
 // Listen for Theme Changes
@@ -1181,10 +1218,22 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         window.currentStopMode = stop.vehicleMode;
     }
 
-    // Enable Focus Mode (Dim others)
-    setMapFocus(true);
+    // Enable Focus Mode (Dim others) unless filter view is active/picking
+    if (!(filterManager && (filterManager.state.active || filterManager.state.picking))) {
+        setMapFocus(true);
+    }
 
-    if (addToStack) addToHistory('stop', stop);
+    if (addToStack) {
+        const historyStop = filterManager?.state?.active && String(filterManager.state.originId) === String(stop.id) ? {
+            ...stop,
+            _filterState: {
+                active: true,
+                originId: filterManager.state.originId,
+                targetIds: Array.from(filterManager.state.targetIds || [])
+            }
+        } : stop;
+        addToHistory('stop', historyStop);
+    }
 
     // Sync URL (Router)
     if (updateURL) {
@@ -1445,7 +1494,7 @@ function getRouteDisplayColor(route) {
     // 1. Filter Manager Priority (Selection/Common Routes)
     if (filterManager && filterManager.state && filterManager.state.active) {
         const routeId = route.id || (allRoutes.find(r => r.shortName === route.shortName) || {}).id;
-        if (routeId) {
+        if (routeId && filterManager.state.filteredRoutes.includes(routeId)) {
             const filterColor = RouteFilterColorManager.getColorForRoute(routeId);
             if (filterColor) return filterColor;
         }
@@ -1660,6 +1709,7 @@ function renderAllRoutes(routesInput, arrivalsInput) {
 // V3 Routes Map (populated by arrivals.fetchV3Routes via api.js)
 // Used by renderAllRoutes for route resolution
 let v3RoutesMap = null;
+let cachedStopsConfig = null;
 
 
 
@@ -1673,6 +1723,9 @@ async function refreshStopsLayer(useLocalConfig = false) {
         // Use the in-memory config (already updated by EditTools)
         stopsConfigToUse = window.stopsConfig;
         console.log('[Main] Refreshing with LOCAL stops config...');
+    } else if (cachedStopsConfig) {
+        stopsConfigToUse = cachedStopsConfig;
+        console.log('[Main] Using cached stops config...');
     } else {
         // Reload from files (Standard Load)
         try {
@@ -1740,6 +1793,7 @@ async function refreshStopsLayer(useLocalConfig = false) {
             // console.log('[Main DEBUG] Sample merges (pre-norm):', JSON.stringify(sampleMerges));
             const sampleOverrides = Object.entries(stopsConfigToUse.overrides).slice(0, 5);
             // console.log('[Main DEBUG] Sample overrides (pre-norm):', sampleOverrides.map(([k, v]) => `${k}: rot=${v.rotation}`));
+            cachedStopsConfig = stopsConfigToUse;
         } catch (e) {
             console.error('[Main] Failed to load stops config:', e);
             stopsConfigToUse = { overrides: {}, merges: {}, hubs: {} };
@@ -2458,7 +2512,23 @@ async function updateRouteView(route, options = {}) {
                 }
 
                 if (!isOptimistic || !window._routeBoundsFit) {
-                    if (options.fitToRoute && coordinates.length > 0) {
+                    const viewBounds = map.getBounds();
+                    const sampleStep = Math.max(1, Math.floor(coordinates.length / 200));
+                    let isRouteOnScreen = false;
+                    if (viewBounds) {
+                        for (let i = 0; i < coordinates.length; i += sampleStep) {
+                            const c = coordinates[i];
+                            if (viewBounds.contains([c[0], c[1]])) {
+                                isRouteOnScreen = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    const forceFit = options.fitToRoute || options.routeSource === 'deepLink' || options.routeSource === 'search';
+                    const shouldFit = forceFit || !isRouteOnScreen;
+
+                    if (shouldFit && coordinates.length > 0) {
                         const bounds = new mapboxgl.LngLatBounds();
                         coordinates.forEach(coord => bounds.extend(coord));
                         const panel = document.getElementById('route-info');
@@ -2470,7 +2540,7 @@ async function updateRouteView(route, options = {}) {
                         map.fitBounds(bounds, { padding: { top: 80, bottom: panelHeight + 40, left: 40, right: 40 }, maxZoom: 15, duration: 1200 });
                         if (origMethods) { map.flyTo = () => map; map.jumpTo = () => map; map.easeTo = () => map; }
                         window._routeBoundsFit = true;
-                    } else if (options.centerOnStop && options.centerOnStop.lat && options.centerOnStop.lon) {
+                    } else if (options.centerOnStop && options.centerOnStop.lat && options.centerOnStop.lon && !options.preserveBounds) {
                         const offsetY = -(window.innerHeight * 0.1);
                         map.flyTo({ center: [options.centerOnStop.lon, options.centerOnStop.lat], zoom: 14, offset: [0, offsetY], duration: 1500 });
                         window._routeBoundsFit = true;
@@ -2520,7 +2590,10 @@ async function updateRouteView(route, options = {}) {
             if (!isOptimistic && route.id) {
                 const liveColor = getRouteDisplayColor(route);
                 updateLiveBuses(route.id, patternSuffix, liveColor);
-                busUpdateInterval = setInterval(() => updateLiveBuses(route.id, patternSuffix, liveColor), 5000);
+                busUpdateInterval = setInterval(() => {
+                    if (document.hidden) return;
+                    updateLiveBuses(route.id, patternSuffix, liveColor);
+                }, 5000);
             }
 
             // 5. Highlight Stop
@@ -2633,7 +2706,15 @@ const handleCopyLink = (btnId) => {
         e.stopPropagation();
         e.preventDefault();
 
-        const url = window.location.href;
+        // Get current URL and convert Capacitor URLs to production URLs
+        let url = window.location.href;
+
+        // If running in Capacitor (iOS app), replace with production URL
+        if (url.startsWith('capacitor://')) {
+            const pathname = window.location.pathname + window.location.hash;
+            url = `https://veaveberg.github.io/tbilisi-trans${pathname}`;
+        }
+
         let success = false;
 
         try {

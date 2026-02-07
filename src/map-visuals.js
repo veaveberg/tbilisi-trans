@@ -231,9 +231,12 @@ export function setupVisuals() {
     // Safari fix: The Mapbox Standard style can override our terrain settings during its
     // complex loading sequence (multiple styledata events). We need to aggressively
     // re-apply our terrain exaggeration whenever the style updates.
+    let styledataTerrainTimer = null;
     map.on('styledata', () => {
+        if (styledataTerrainTimer) return;
         // Use a small delay to ensure style internal overrides have finished
-        setTimeout(() => {
+        styledataTerrainTimer = setTimeout(() => {
+            styledataTerrainTimer = null;
             if (user3DTerrain) {
                 ensureTerrain();
             }
@@ -998,7 +1001,9 @@ export async function updateLiveBuses(routeId, patternSuffix, color) {
 }
 
 export function updateStopHoverEffects(hoveredId) {
-    if (window.currentStopId || !map || !map.getStyle()) return;
+    if (!map || !map.getStyle()) return;
+    const filterModeActive = window.isFilterModeActive === true;
+    if (window.currentStopId && !filterModeActive) return;
 
     const isDark = document.body.classList.contains('dark-mode');
     const safeHoveredId = hoveredId ?? '';

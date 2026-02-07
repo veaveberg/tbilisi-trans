@@ -1,0 +1,14 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "94C5G63LL2.tbilisi.trans",
+        "paths": [
+          "/tbilisi-trans/*",
+          "/tbilisi-trans"
+        ]
+      }
+    ]
+  }
+}

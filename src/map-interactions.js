@@ -6,6 +6,9 @@ let lastHoveredStopId = null;
 let hoverTimeout = null;
 
 export function setMapFocus(active) {
+    if (active && window.isFilterModeActive === true) {
+        active = false;
+    }
     const isDark = document.body.classList.contains('dark-mode');
     const baseOpacity = isDark ? 0.3 : 0.4;
     const selectedId = window.currentStopId || "";
@@ -312,6 +315,10 @@ export function setupHoverHandlers(context) {
             if (hoverTimeout) {
                 clearTimeout(hoverTimeout);
                 hoverTimeout = null;
+            }
+
+            if (updateConnectionLine && filterManager && filterManager.state.picking) {
+                updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, true, currentId);
             }
             return; // Stop processing (don't do segment logic)
         }

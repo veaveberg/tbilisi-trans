@@ -33,7 +33,7 @@
         width: 100%;
         border-radius: var(--bottom-sheet-radius);
         overflow: hidden;
-        height: 92dvh;
+        height: calc(92dvh * var(--inv-page-scale, 1));
         display: flex;
         flex-direction: column;
     }
@@ -44,15 +44,15 @@
 }
 
 .panel.sheet-collapsed {
-    transform: translateY(calc(100% - 80px - env(safe-area-inset-bottom))) translateZ(0);
+    transform: translateY(calc(100% - (80px * var(--inv-page-scale, 1)) - env(safe-area-inset-bottom))) translateZ(0);
 }
 
 .panel.sheet-peek {
-    transform: translateY(calc(100% - 25vh)) translateZ(0);
+    transform: translateY(calc(100% - (25dvh * var(--inv-page-scale, 1)))) translateZ(0);
 }
 
 .panel.sheet-half {
-    transform: translateY(calc(100% - 48.3vh)) translateZ(0);
+    transform: translateY(calc(100% - (48.3dvh * var(--inv-page-scale, 1)))) translateZ(0);
 }
 
 .panel.sheet-full {
@@ -71,7 +71,7 @@
         border-radius: 20px 20px 0 0;
         transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         will-change: transform;
-        height: 92dvh;
+        height: calc(92dvh * var(--inv-page-scale, 1));
         max-height: none;
         display: flex;
         flex-direction: column;

@@ -1,5 +1,5 @@
 {
-  "appId": "ge.ttc.transit",
+  "appId": "tbilisi.trans",
   "appName": "Tbilisi Transit",
   "webDir": "dist",
   "plugins": {

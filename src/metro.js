@@ -10,6 +10,7 @@ let _cachedExits = null;
 let _isFetchingSchematic = false;
 let _lastMetroFeatures = null; // Store reference for exit annotation refreshes
 let _lastAllStops = null;
+let _lastExitsSignature = null;
 
 // Explicit mapping from station display names to segment IDs for exit/snapping lookup
 const STATION_TO_SEGMENT_ID = {
@@ -70,6 +71,7 @@ function formatStationLabelName(name) {
 export function startMetroTicker() {
     if (metroTicker) return;
     metroTicker = setInterval(() => {
+        if (document.hidden) return;
         const now = Date.now();
         const elements = document.querySelectorAll('.metro-countdown');
         elements.forEach(el => {
@@ -1146,6 +1148,13 @@ function addMetroExitsLayers(map) {
             });
         });
     });
+
+    const exitsSignature = exitFeatures.map(f => f.properties.id).join('|');
+    const sourceExists = !!map.getSource('metro-exits');
+    if (sourceExists && exitsSignature === _lastExitsSignature) {
+        return;
+    }
+    _lastExitsSignature = exitsSignature;
 
     console.log(`[Metro] Adding ${exitFeatures.length} exit markers`);
 

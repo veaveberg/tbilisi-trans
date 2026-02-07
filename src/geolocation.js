@@ -35,8 +35,12 @@ let cumulativeIndicatorRotation = 0;
 let isHeadingSupported = false;
 let isWaitingForFirstLocation = false;
 let isAutoShowingMarker = false;
+let isAutoFlyOnLaunch = false;
 
 const isCapacitor = typeof window !== 'undefined' && window.Capacitor;
+const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/i.test(navigator.userAgent);
+const isIOSWebView = !!(isIOS && (window.Capacitor || window.webkit?.messageHandlers));
+const isIOSBrowser = isIOS && !isIOSWebView;
 
 // Wrapper to make Capacitor Geolocation look like navigator.geolocation for Mapbox
 const capacitorGeolocation = {
@@ -197,6 +201,13 @@ function updateHeadingIndicator(map) {
     }
 }
 
+function updateMapLocationHash(map) {
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+    const hash = `#${zoom.toFixed(2)}/${center.lat.toFixed(5)}/${center.lng.toFixed(5)}`;
+    history.replaceState(null, '', location.pathname + hash);
+}
+
 function updateLocationIcon(btn) {
     if (!btn) return;
 
@@ -234,19 +245,16 @@ function startPersistentOrientationTracking(map) {
 
         if (heading === undefined || heading === null) return;
 
-        // Strict firing: wait for a change if the initial value is exactly 0
+        // Show indicator on first valid heading (even if it's 0).
         if (!headingFired) {
-            if (initialHeading === null) initialHeading = heading;
-            // Fire if it's not exactly 0, or if it has moved from the initial value
-            if (heading !== 0 || Math.abs(heading - (initialHeading || 0)) > 1) {
-                headingFired = true;
-                document.documentElement.classList.add('show-heading-indicator');
-                // Force an immediate sync update when first showing
-                lastIndicatorRotation = null;
-            }
+            headingFired = true;
+            document.documentElement.classList.add('show-heading-indicator');
+            // Force an immediate sync update when first showing
+            lastIndicatorRotation = null;
         }
 
         latestHeading = heading;
+        isHeadingSupported = true;
         updateHeadingIndicator(map);
 
         // Map movement updates
@@ -278,6 +286,9 @@ export function setupGeolocation(map) {
     const compassIcon = miniCompass?.querySelector('svg');
 
     checkHeadingSupport();
+    if (localStorage.getItem('compassPermissionGranted') === 'true') {
+        startPersistentOrientationTracking(map);
+    }
     updateLocationIcon(locateBtn);
 
     // Zoom Controls
@@ -322,6 +333,23 @@ export function setupGeolocation(map) {
         locateBtn.addEventListener('click', () => {
             lastLocateClickTime = Date.now();
 
+            if (checkHeadingSupport() && typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                const granted = localStorage.getItem('compassPermissionGranted') === 'true';
+                if (!granted) {
+                    // Defer permission prompt so UI state updates immediately.
+                    setTimeout(() => {
+                        DeviceOrientationEvent.requestPermission()
+                            .then(res => {
+                                if (res === 'granted') {
+                                    localStorage.setItem('compassPermissionGranted', 'true');
+                                    startPersistentOrientationTracking(map);
+                                }
+                            })
+                            .catch(() => { });
+                    }, 0);
+                }
+            }
+
             if (window._originalMapMethods) {
                 map.flyTo = window._originalMapMethods.flyTo;
                 map.jumpTo = window._originalMapMethods.jumpTo;
@@ -349,6 +377,7 @@ export function setupGeolocation(map) {
 
                 currentLocationState = LOCATION_STATES.FOLLOW;
                 updateLocationIcon(locateBtn);
+                isWaitingForFirstLocation = true;
 
                 if (lastUserCoords) {
                     map.easeTo({
@@ -356,7 +385,6 @@ export function setupGeolocation(map) {
                         duration: 500
                     });
                 } else {
-                    isWaitingForFirstLocation = true;
                     geolocate.trigger();
                 }
 
@@ -365,7 +393,14 @@ export function setupGeolocation(map) {
                 };
 
                 if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    // iOS 13+ skip
+                    DeviceOrientationEvent.requestPermission()
+                        .then(res => {
+                            if (res === 'granted') {
+                                localStorage.setItem('compassPermissionGranted', 'true');
+                                enableHeadingIndicator();
+                            }
+                        })
+                        .catch(() => { });
                 } else {
                     enableHeadingIndicator();
                 }
@@ -576,6 +611,23 @@ export function setupGeolocation(map) {
 
         if (isAutoShowingMarker) {
             isAutoShowingMarker = false;
+        }
+
+        if (isAutoFlyOnLaunch) {
+            isAutoFlyOnLaunch = false;
+            const targetZoom = 16;
+            map.jumpTo({
+                center: [coords.longitude, coords.latitude],
+                zoom: targetZoom
+            });
+            updateMapLocationHash(map);
+            // Ensure zoom applies even if jumpTo is overridden elsewhere
+            setTimeout(() => {
+                if (map.getZoom() < targetZoom - 0.1) {
+                    map.easeTo({ zoom: targetZoom, duration: 600 });
+                    map.once('moveend', () => updateMapLocationHash(map));
+                }
+            }, 300);
             return;
         }
 
@@ -608,33 +660,35 @@ export function setupGeolocation(map) {
         isPitching = e.detail;
     });
 
-    // Initialize Auto-Show if permitted
-    // This logic duplicates some map-setup.js logic but is self-contained.
-    if (navigator.permissions && navigator.permissions.query) {
-        navigator.permissions.query({ name: 'geolocation' }).then(result => {
-            if (result.state === 'granted') {
-                // We need to capture original methods HERE if we want to support the auto-show behavior
-                // But map-setup.js might have executed this too? 
-                // If we move it here, we should remove it from map-setup.js
-                window._originalMapMethods = {
-                    flyTo: map.flyTo.bind(map),
-                    jumpTo: map.jumpTo.bind(map),
-                    easeTo: map.easeTo.bind(map),
-                    fitBounds: map.fitBounds.bind(map)
-                };
-                isAutoShowingMarker = true;
+    // Initialize Auto-Show if permitted (iOS or WebView)
+    const autoShowIfGranted = async () => {
+        if (!isSecureContext()) return;
 
-                map.flyTo = (options) => {
-                    if (options && options.center) return map;
-                    return window._originalMapMethods.flyTo(options);
-                };
-                // ... (abbreviated for brevity, assuming full logic copied if strictly needed)
-                // For now, let's just trigger it without the method override complexity if acceptable,
-                // OR fully implement it.
-                // Let's rely on standard trigger for now to avoid complexity in this artifact creation.
-                startPersistentOrientationTracking(map);
-                geolocate.trigger();
-            }
-        }).catch(() => { });
-    }
+        let granted = false;
+        if (isCapacitor && Geolocation?.checkPermissions) {
+            try {
+                const perms = await Geolocation.checkPermissions();
+                granted = perms?.location === 'granted' || perms?.coarseLocation === 'granted';
+            } catch (e) { }
+        } else if (navigator.permissions && navigator.permissions.query) {
+            try {
+                const result = await navigator.permissions.query({ name: 'geolocation' });
+                granted = result.state === 'granted';
+            } catch (e) { }
+        }
+
+        if (!granted) return;
+
+        const path = window.location?.pathname || '';
+        const hasDeepLink = path.includes('/stop') || path.includes('/bus') || path.includes('/filtered') || !!window.currentStopId;
+
+        // Do not enter follow mode on launch; just center if allowed.
+        isAutoFlyOnLaunch = !hasDeepLink;
+        if (localStorage.getItem('compassPermissionGranted') === 'true') {
+            startPersistentOrientationTracking(map);
+        }
+        geolocate.trigger();
+    };
+
+    autoShowIfGranted();
 }

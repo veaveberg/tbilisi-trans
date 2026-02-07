@@ -1,6 +1,8 @@
 export const Router = {
     // Detect base path from vite.config/document base or default
     base: import.meta.env.BASE_URL,
+    _lastParsedPath: null,
+    _lastParsedState: null,
 
     init() {
         console.log('[Router] Initializing...');
@@ -23,6 +25,9 @@ export const Router = {
     parse() {
         // Strip base path
         let path = location.pathname;
+        if (path === this._lastParsedPath && this._lastParsedState) {
+            return this._lastParsedState;
+        }
         console.log(`[Router] Parsing path: "${path}" (Base: "${this.base}")`);
         if (path.startsWith(this.base)) {
             path = path.substring(this.base.length);
@@ -79,18 +84,24 @@ export const Router = {
             }
 
             if (stopId) {
-                return {
+                const state = {
                     type: 'nested',
                     stopId: stopId,
                     shortName: shortName,
                     direction: direction
                 };
+                this._lastParsedPath = location.pathname;
+                this._lastParsedState = state;
+                return state;
             } else {
-                return {
+                const state = {
                     type: 'route',
                     shortName: shortName,
                     direction: direction
                 };
+                this._lastParsedPath = location.pathname;
+                this._lastParsedState = state;
+                return state;
             }
         }
 
@@ -129,6 +140,8 @@ export const Router = {
             state.targetIds = p2.split('-').filter(id => id.length > 0);
         }
 
+        this._lastParsedPath = location.pathname;
+        this._lastParsedState = state;
         return state;
     },
 

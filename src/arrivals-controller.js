@@ -99,6 +99,7 @@ class ArrivalsController {
 
         this.refreshTimer = setInterval(() => {
             if (!this.stopId || this.isRefreshing) return;
+            if (document.hidden) return;
 
             const age = (Date.now() - this.timestamp) / 1000;
             const threshold = this.getRefreshThreshold();
@@ -107,6 +108,18 @@ class ArrivalsController {
                 this.refresh();
             }
         }, 5000);
+    }
+
+    pause() {
+        if (this.abortController) this.abortController.abort();
+        if (this.refreshTimer) clearInterval(this.refreshTimer);
+        this.refreshTimer = null;
+    }
+
+    resume() {
+        if (this.stopId) {
+            this.startRefreshTimer();
+        }
     }
 
     /**

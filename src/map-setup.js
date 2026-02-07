@@ -3,6 +3,17 @@ import * as api from './api.js';
 
 // Initialize Map
 mapboxgl.accessToken = api.MAPBOX_TOKEN;
+if (typeof mapboxgl.setTelemetryEnabled === 'function') {
+    mapboxgl.setTelemetryEnabled(false);
+}
+// Mapbox GL v3 uses a config getter; override to silence telemetry posts when possible.
+if (mapboxgl.config && typeof Object.defineProperty === 'function') {
+    try {
+        Object.defineProperty(mapboxgl.config, 'EVENTS_URL', { value: null });
+    } catch (e) {
+        // Non-fatal: some builds may not allow redefining the property.
+    }
+}
 
 // Determine Initial Theme for Mapbox (Prevent Flash)
 const storedTheme = localStorage.getItem('theme') || 'system';
