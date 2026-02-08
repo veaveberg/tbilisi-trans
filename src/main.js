@@ -1092,6 +1092,10 @@ async function handleDeepLinks() {
 
         // console.log(`[DeepLink] Processing Stop: ${rawStopId} -> ${normStopId}. Found=${!!stop}`);
         if (stop) {
+            // If an existing filter is active on a different origin, clear it before applying deep link state
+            if (filterManager && filterManager.state.active && String(filterManager.state.originId) !== String(normStopId)) {
+                filterManager.clearFilter(filterManager.state.originId, { restoreStop: false });
+            }
             // Check for Filtered State
             if (state.filterActive && state.targetIds && state.targetIds.length > 0) {
                 // console.log('[DeepLink] Applying Filter:', state.targetIds);
@@ -1117,8 +1121,16 @@ async function handleDeepLinks() {
                         equivalentStops.forEach(eqId => filterManager.state.targetIds.add(eqId));
                     });
                     console.log(`[DeepLink] Final targetIds: [${Array.from(filterManager.state.targetIds).join(', ')}]`);
+                    // Ensure static route details are available before applying filter
+                    await api.preloadStaticRoutesDetails();
                     // Trigger refresh to apply
                     await filterManager.refreshRouteFilter(normStopId);
+                    // Ensure colors/filtered routes settle after async data/arrivals load
+                    setTimeout(() => {
+                        if (filterManager.state.active && filterManager.state.originId) {
+                            filterManager.refreshRouteFilter(filterManager.state.originId, window.lastArrivals, window.lastRoutes);
+                        }
+                    }, 400);
                 }
 
                 // 4. Update UI Button State
@@ -2947,6 +2959,68 @@ const filterTravelTimeHelper = createFilterTravelTimeHelper({
     filterManager
 });
 
+function getLabelOffset(key) {
+    if (!key) return [0, 0];
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+        hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+    }
+    const offsets = [
+        [0, 0],
+        [0, 2.4],
+        [0, -2.4],
+        [2.4, 0],
+        [-2.4, 0],
+        [1.8, 1.8],
+        [-1.8, 1.8],
+        [1.8, -1.8],
+        [-1.8, -1.8],
+        [0, 3.2],
+        [0, -3.2],
+        [3.2, 0],
+        [-3.2, 0],
+        [2.6, 1.2],
+        [-2.6, 1.2],
+        [2.6, -1.2],
+        [-2.6, -1.2],
+        [1.2, 2.6],
+        [-1.2, 2.6],
+        [1.2, -2.6],
+        [-1.2, -2.6]
+    ];
+    return offsets[hash % offsets.length];
+}
+
+function getLabelMidpointFactor(key) {
+    if (!key) return 0.5;
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+        hash = (hash * 33 + key.charCodeAt(i)) >>> 0;
+    }
+    const factors = [0.38, 0.5, 0.62];
+    return factors[hash % factors.length];
+}
+
+function getLabelCandidateFactors(key) {
+    if (!key) return [0.5];
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+        hash = (hash * 29 + key.charCodeAt(i)) >>> 0;
+    }
+    const base = [0.25, 0.4, 0.55, 0.7];
+    const shift = hash % base.length;
+    return base.slice(shift).concat(base.slice(0, shift));
+}
+
+function distanceMeters(a, b) {
+    const lat = (a[1] + b[1]) / 2;
+    const mPerDegLat = 111320;
+    const mPerDegLon = 111320 * Math.cos(lat * Math.PI / 180);
+    const dx = (a[0] - b[0]) * mPerDegLon;
+    const dy = (a[1] - b[1]) * mPerDegLat;
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
 function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId = null) {
     if (!originId) return;
 
@@ -2977,6 +3051,9 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
 
     const features = [];
     const allActiveSignatures = new Set();
+    const labelPoints = [];
+    const labeledSignatures = new Set();
+    const MIN_LABEL_DISTANCE_M = 120;
 
     // Reset colors if this is a "real" update (active filter), not just a hover preview
     // Actually, we want to maintain consistent colors during a session.
@@ -3244,11 +3321,12 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             // Determine Color Strategy
             let color;
             const isSelected = filterManager.state.targetIds && filterManager.state.targetIds.has(targetId);
+            const isHoverPreview = isHover && String(targetId) === String(hoverId);
 
             if (isSelected) {
                 // Selected: Consume/Lock Color
                 color = RouteFilterColorManager.assignNextColor(signature, routeIds);
-            } else if (isHover && String(targetId) === String(hoverId)) {
+            } else if (isHoverPreview) {
                 // Hover: Peek Next Color (Preview)
                 color = RouteFilterColorManager.getNextColor();
                 // Do NOT assign to map.
@@ -3382,7 +3460,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
 
             const stopCount = group.stops ? Math.max(group.stops.length - 1, 0) : null;
             let travelMinutes = null;
-            if (isSelected && !isHover && group.routes.length > 0 && stopCount !== null) {
+            if (isSelected && group.routes.length > 0 && stopCount !== null) {
                 const bestRoute = group.routes[0];
                 const suffix = group.pattern?.patternSuffix || group.pattern?.suffix || null;
                 travelMinutes = filterTravelTimeHelper.requestScheduledTravelMinutes({
@@ -3401,10 +3479,10 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                     travelLabel = (min === max) ? `${min} min` : `${min}\u2013${max} min`;
                 }
             }
-            const label = (isSelected && !isHover && travelLabel !== null && stopCount !== null)
+            const label = (isSelected && travelLabel !== null && stopCount !== null)
                 ? `${stopCount} ${stopCount === 1 ? 'stop' : 'stops'}\n${travelLabel}`
                 : null;
-            const subLabel = (isSelected && !isHover && travelLabel !== null && stopCount !== null)
+            const subLabel = (isSelected && travelLabel !== null && stopCount !== null)
                 ? `Without traffic`
                 : null;
 
@@ -3435,9 +3513,26 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             });
 
             if (label && Array.isArray(activeCoords) && activeCoords.length > 0) {
-                const midIndex = Math.floor(activeCoords.length / 2);
-                const midCoord = activeCoords[midIndex];
+                if (labeledSignatures.has(signature)) return;
+                const labelKey = `${signature}|${targetId}`;
+                const candidates = getLabelCandidateFactors(labelKey)
+                    .map(f => Math.max(0, Math.min(activeCoords.length - 1, Math.floor(activeCoords.length * f))))
+                    .map(idx => activeCoords[idx]);
+                const fallbackFactor = getLabelMidpointFactor(labelKey);
+                candidates.push(activeCoords[Math.max(0, Math.min(activeCoords.length - 1, Math.floor(activeCoords.length * fallbackFactor)))]);
+
+                let midCoord = candidates[0];
+                for (const candidate of candidates) {
+                    if (!candidate || candidate.length !== 2) continue;
+                    const tooClose = labelPoints.some(p => distanceMeters(candidate, p) < MIN_LABEL_DISTANCE_M);
+                    if (!tooClose) {
+                        midCoord = candidate;
+                        break;
+                    }
+                }
                 if (midCoord && midCoord.length === 2) {
+                    const offset = getLabelOffset(labelKey);
+                    const labelOffset = [offset[0], 0];
                     targetFeatures.push({
                         type: 'Feature',
                         geometry: {
@@ -3448,9 +3543,13 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                             color: color,
                             label: label,
                             subLabel: subLabel,
+                            labelOffset: labelOffset,
+                            subLabelOffset: [labelOffset[0], 2.4],
                             quality: quality
                         }
                     });
+                    labelPoints.push(midCoord);
+                    labeledSignatures.add(signature);
                 }
             }
         });

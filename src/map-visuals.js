@@ -882,10 +882,13 @@ export function addStopsToMap(stops, options = {}) {
             'text-justify': 'center',
             'text-anchor': 'center',
             'text-allow-overlap': true,
+            'text-padding': 2,
+            'text-offset': ['case', ['has', 'labelOffset'], ['get', 'labelOffset'], ['literal', [0, 0]]],
             'icon-image': 'route-plaque',
             'icon-text-fit': 'both',
             'icon-text-fit-padding': [6, 10, 6, 10],
             'icon-allow-overlap': true,
+            'icon-padding': 2,
             'text-rotation-alignment': 'viewport',
             'icon-rotation-alignment': 'viewport'
         },
@@ -911,7 +914,8 @@ export function addStopsToMap(stops, options = {}) {
             'text-justify': 'center',
             'text-anchor': 'center',
             'text-allow-overlap': true,
-            'text-offset': [0, 2.4],
+            'text-padding': 2,
+            'text-offset': ['case', ['has', 'subLabelOffset'], ['get', 'subLabelOffset'], ['literal', [0, 2.8]]],
             'text-rotation-alignment': 'viewport'
         },
         paint: {
