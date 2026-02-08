@@ -73,6 +73,10 @@ initSettings({
     }
 });
 
+// Background refresh for cached schedules (local dev proxy only)
+api.maybeRefreshScheduleCache();
+window.forceRefreshScheduleCache = api.forceRefreshScheduleCache;
+
 // Setup Map Controls
 // Setup Geolocation & Map Interactions
 setupGeolocation(map);
@@ -258,6 +262,7 @@ async function handleBack() {
 
 // --- Filter Manager ---
 import { FilterManager, generatePathSignature } from './filter-manager.js';
+import { createFilterTravelTimeHelper } from './filter-travel-time.js';
 
 let filterManager;
 
@@ -334,7 +339,7 @@ setupHoverHandlers({
         const style = map.getStyle();
         if (style && style.layers) {
             style.layers.forEach(l => {
-                if (l.id.startsWith('filter-connection-')) {
+                if (l.id.startsWith('filter-connection-') && l.type === 'line') {
                     map.setPaintProperty(l.id, 'line-opacity', opacity);
                 }
             });
@@ -664,7 +669,8 @@ async function loadMinibusSegments() {
             map.on('click', (e) => {
                 if (window.minibusSegmentsEditor && window.minibusSegmentsEditor.isActive()) return;
                 // Check if we hit a stop first - prioritize stops!
-                const stopFeatures = map.queryRenderedFeatures(e.point, { layers: ALL_STOP_LAYERS });
+                const validStopLayers = ALL_STOP_LAYERS.filter(id => map.getLayer(id));
+                const stopFeatures = map.queryRenderedFeatures(e.point, { layers: validStopLayers });
                 if (stopFeatures.length > 0) return;
 
                 // Restrict to Hover: Only open if we are currently hovering a segment
@@ -2933,6 +2939,14 @@ function loadSvgImage(map, id, url, width = 32, height = 32) {
 // Track last logged state to reduce log spam
 let _lastLoggedFilterState = { originId: null, targets: '', isHover: null };
 
+const filterTravelTimeHelper = createFilterTravelTimeHelper({
+    getEquivalentStops,
+    mergeSourcesMap,
+    redirectMap,
+    onUpdate: () => updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false),
+    filterManager
+});
+
 function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId = null) {
     if (!originId) return;
 
@@ -3366,6 +3380,34 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                 color = '#888888';
             }
 
+            const stopCount = group.stops ? Math.max(group.stops.length - 1, 0) : null;
+            let travelMinutes = null;
+            if (isSelected && !isHover && group.routes.length > 0 && stopCount !== null) {
+                const bestRoute = group.routes[0];
+                const suffix = group.pattern?.patternSuffix || group.pattern?.suffix || null;
+                travelMinutes = filterTravelTimeHelper.requestScheduledTravelMinutes({
+                    signature,
+                    routeId: bestRoute.id,
+                    patternSuffix: suffix,
+                    originId,
+                    targetId
+                });
+            }
+            let travelLabel = null;
+            if (travelMinutes && typeof travelMinutes === 'object') {
+                const min = travelMinutes.min;
+                const max = travelMinutes.max;
+                if (min !== null && max !== null) {
+                    travelLabel = (min === max) ? `${min} min` : `${min}\u2013${max} min`;
+                }
+            }
+            const label = (isSelected && !isHover && travelLabel !== null && stopCount !== null)
+                ? `${stopCount} ${stopCount === 1 ? 'stop' : 'stops'}\n${travelLabel}`
+                : null;
+            const subLabel = (isSelected && !isHover && travelLabel !== null && stopCount !== null)
+                ? `Without traffic`
+                : null;
+
             // Quality Indicator
             const quality = 'high'; // We only reach here with finalCoordinates
 
@@ -3386,9 +3428,31 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                     color: color,
                     lineWidth: 4,
                     opacity: 0.8,
-                    quality: quality // Used for local dedup
+                    quality: quality, // Used for local dedup
+                    label: label,
+                    subLabel: subLabel
                 }
             });
+
+            if (label && Array.isArray(activeCoords) && activeCoords.length > 0) {
+                const midIndex = Math.floor(activeCoords.length / 2);
+                const midCoord = activeCoords[midIndex];
+                if (midCoord && midCoord.length === 2) {
+                    targetFeatures.push({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Point',
+                            coordinates: midCoord
+                        },
+                        properties: {
+                            color: color,
+                            label: label,
+                            subLabel: subLabel,
+                            quality: quality
+                        }
+                    });
+                }
+            }
         });
 
         // Dedup/Filter Logic per Target

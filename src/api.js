@@ -47,6 +47,116 @@ const v3Cache = {
     polylines: new Map() // routeId:suffix -> polyline data
 };
 
+const V3_SCHEDULE_KEYS_KEY = 'v3_sched_keys';
+const V3_SCHEDULE_REFRESH_KEY = 'v3_sched_last_refresh';
+const V3_SCHEDULE_REFRESH_SUCCESS_KEY = 'v3_sched_last_refresh_success';
+const V3_SCHEDULE_REFRESH_INTERVAL = 3 * 24 * 60 * 60 * 1000; // 3 days
+const V3_SCHEDULE_CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
+const V3_SCHEDULE_REFRESH_MAX = 50;
+
+function isLocalProxyEnvironment() {
+    if (typeof window === 'undefined') return false;
+    if (!import.meta.env.DEV) return false;
+    const host = window.location.hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+}
+
+async function rememberScheduleCacheKey(routeId, suffix) {
+    try {
+        const existing = await db.get(V3_SCHEDULE_KEYS_KEY);
+        const list = Array.isArray(existing) ? existing : [];
+        const entry = { routeId, suffix };
+        const already = list.some(k => k && k.routeId === routeId && k.suffix === suffix);
+        if (!already) {
+            list.push(entry);
+            await db.set(V3_SCHEDULE_KEYS_KEY, list);
+        }
+    } catch (e) { }
+}
+
+function parseScheduleKey(key) {
+    if (key && typeof key === 'object' && key.routeId && key.suffix) return key;
+    if (typeof key !== 'string') return null;
+    const parts = key.split(':');
+    if (parts.length < 2) return null;
+    const suffix = parts.slice(-2).join(':');
+    const routeId = parts.slice(0, -2).join(':');
+    if (!routeId || !suffix) return null;
+    return { routeId, suffix };
+}
+
+async function refreshScheduleCacheEntry(routeId, suffix) {
+    const cacheKey = `${routeId}:${suffix}`;
+    const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${id}/schedule?patternSuffix=${suffix}&locale=en`;
+    const schedule = await fetchFromSmartSource(urlGen, routeId);
+    if (schedule) {
+        v3Cache.schedules.set(cacheKey, schedule);
+        try {
+            const keySafe = cacheKey.replace(/:/g, '_');
+            await db.set(`v3_sched_${keySafe}`, { timestamp: Date.now(), data: schedule });
+        } catch (e) { }
+    }
+}
+
+export async function maybeRefreshScheduleCache() {
+    if (!isLocalProxyEnvironment()) {
+        console.log('[Schedule Refresh] Skipped: not local dev proxy environment');
+        return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        console.log('[Schedule Refresh] Skipped: offline');
+        return;
+    }
+
+    let last = null;
+    let lastSuccess = null;
+    try {
+        last = await db.get(V3_SCHEDULE_REFRESH_KEY);
+        lastSuccess = await db.get(V3_SCHEDULE_REFRESH_SUCCESS_KEY);
+    } catch (e) { }
+    const gateTimestamp = lastSuccess || last;
+    if (gateTimestamp && Date.now() - gateTimestamp < V3_SCHEDULE_REFRESH_INTERVAL) {
+        const hours = Math.round((Date.now() - last) / (1000 * 60 * 60));
+        console.log(`[Schedule Refresh] Skipped: last refresh ${hours}h ago`);
+        return;
+    }
+
+    let keys = [];
+    try {
+        const stored = await db.get(V3_SCHEDULE_KEYS_KEY);
+        keys = Array.isArray(stored) ? stored : [];
+    } catch (e) { }
+    if (!keys.length) {
+        console.log('[Schedule Refresh] Skipped: no cached schedule keys');
+        return;
+    }
+
+    const toRefresh = keys.slice(0, V3_SCHEDULE_REFRESH_MAX).map(parseScheduleKey).filter(Boolean);
+    console.log(`[Schedule Refresh] Refreshing ${toRefresh.length} schedule(s)`);
+    for (const entry of toRefresh) {
+        try {
+            await refreshScheduleCacheEntry(entry.routeId, entry.suffix);
+        } catch (e) { }
+        // Gentle pacing to avoid upstream throttling
+        await new Promise(r => setTimeout(r, 150));
+    }
+
+    try {
+        await db.set(V3_SCHEDULE_REFRESH_KEY, Date.now());
+        await db.set(V3_SCHEDULE_REFRESH_SUCCESS_KEY, Date.now());
+    } catch (e) { }
+    console.log('[Schedule Refresh] Done');
+}
+
+// Manual force refresh (dev helper)
+export async function forceRefreshScheduleCache() {
+    try {
+        await db.del(V3_SCHEDULE_REFRESH_KEY);
+        await db.del(V3_SCHEDULE_REFRESH_SUCCESS_KEY);
+    } catch (e) { }
+    await maybeRefreshScheduleCache();
+}
+
 // Queue for V3 requests to prevent 500 errors
 const MAX_CONCURRENT_V3_REQUESTS = 3;
 let activeV3Requests = 0;
@@ -1910,7 +2020,7 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
         const lsKey = `v3_sched_${keySafe}`;
         try {
             const cached = await db.get(lsKey);
-            if (cached && (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000)) {
+            if (cached && (Date.now() - cached.timestamp < V3_SCHEDULE_CACHE_TTL)) {
                 schedule = cached.data;
                 v3Cache.schedules.set(cacheKey, schedule);
             }
@@ -1974,6 +2084,7 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
                     try {
                         const keySafe = cacheKey.replace(/:/g, '_');
                         await db.set(`v3_sched_${keySafe}`, { timestamp: Date.now(), data: schedule });
+                        await rememberScheduleCacheKey(routeId, suffix);
                     } catch (e) { }
                 }
             } catch (e) {
@@ -2215,4 +2326,3 @@ export async function calculateBusETAs(routeId, patternSuffix, targetStopId, opt
         return [];
     }
 }
-

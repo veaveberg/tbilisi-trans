@@ -326,6 +326,11 @@ export async function loadImages() {
 <circle cx="15" cy="17" r="6" fill="#ef4444"/>
 <circle cx="33" cy="17" r="6" fill="#22c55e"/>
 </svg>`
+        },
+        {
+            id: 'route-plaque',
+            sdf: true,
+            svg: `<svg width="${40 * ICON_SCALE}" height="${24 * ICON_SCALE}" viewBox="0 0 40 24" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="36" height="20" rx="8" fill="black"/></svg>`
         }
     ];
 
@@ -595,10 +600,14 @@ export function updateMapTheme() {
     };
 
     // Update Label Layers
-    const labelLayers = ['metro-layer-label', 'metro-transfer-layer', 'stops-label-selected'];
+    const labelLayers = ['metro-layer-label', 'metro-transfer-layer', 'stops-label-selected', 'filter-connection-label-sub'];
     labelLayers.forEach(id => {
         if (map.getLayer(id)) {
-            map.setPaintProperty(id, 'text-color', theme.label);
+            if (id === 'filter-connection-label-sub') {
+                map.setPaintProperty(id, 'text-color', theme.label);
+            } else {
+                map.setPaintProperty(id, 'text-color', theme.label);
+            }
             map.setPaintProperty(id, 'text-halo-color', theme.halo);
         }
     });
@@ -858,6 +867,59 @@ export function addStopsToMap(stops, options = {}) {
         }
     });
     if (map.getLayer('stops-layer')) map.moveLayer('filter-connection-line', 'stops-layer');
+
+    map.addLayer({
+        id: 'filter-connection-label',
+        type: 'symbol',
+        source: 'filter-connection',
+        slot: 'top',
+        filter: ['all', ['==', ['geometry-type'], 'Point'], ['has', 'label']],
+        layout: {
+            'symbol-placement': 'point',
+            'text-field': ['get', 'label'],
+            'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+            'text-size': 13,
+            'text-justify': 'center',
+            'text-anchor': 'center',
+            'text-allow-overlap': true,
+            'icon-image': 'route-plaque',
+            'icon-text-fit': 'both',
+            'icon-text-fit-padding': [6, 10, 6, 10],
+            'icon-allow-overlap': true,
+            'text-rotation-alignment': 'viewport',
+            'icon-rotation-alignment': 'viewport'
+        },
+        paint: {
+            'text-color': '#ffffff',
+            'text-halo-color': 'rgba(0,0,0,0)',
+            'icon-color': ['get', 'color'],
+            'icon-opacity': 0.95
+        }
+    });
+
+    map.addLayer({
+        id: 'filter-connection-label-sub',
+        type: 'symbol',
+        source: 'filter-connection',
+        slot: 'top',
+        filter: ['all', ['==', ['geometry-type'], 'Point'], ['has', 'subLabel']],
+        layout: {
+            'symbol-placement': 'point',
+            'text-field': ['get', 'subLabel'],
+            'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
+            'text-size': 12,
+            'text-justify': 'center',
+            'text-anchor': 'center',
+            'text-allow-overlap': true,
+            'text-offset': [0, 2.4],
+            'text-rotation-alignment': 'viewport'
+        },
+        paint: {
+            'text-color': '#ffffff',
+            'text-halo-color': 'rgba(0,0,0,0)',
+            'text-opacity': 1
+        }
+    });
 
     metro.addMetroLayers(map, metroFeatures, metroLines, stops);
 

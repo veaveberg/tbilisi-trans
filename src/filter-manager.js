@@ -610,6 +610,14 @@ export class FilterManager {
             this.map.setPaintProperty('stops-highlight', 'icon-opacity', 1);
         }
 
+        // Reset Metro Labels
+        if (this.map.getLayer('metro-layer-label')) {
+            this.map.setPaintProperty('metro-layer-label', 'text-opacity', 1);
+        }
+        if (this.map.getLayer('metro-transfer-layer')) {
+            this.map.setPaintProperty('metro-transfer-layer', 'text-opacity', 1);
+        }
+
         // Refresh View
         if (restoreStop && currentStopId) {
             const allStops = this.dataProvider.getAllStops();
@@ -726,6 +734,15 @@ export class FilterManager {
             } else {
                 this.map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', []]]);
             }
+            // Ensure selected labels are not dimmed in filter mode
+            this.map.setPaintProperty('stops-label-selected', 'text-opacity', 1.0);
+        }
+
+        if (this.map.getLayer('metro-layer-label')) {
+            this.map.setPaintProperty('metro-layer-label', 'text-opacity', dimmedOpacity);
+        }
+        if (this.map.getLayer('metro-transfer-layer')) {
+            this.map.setPaintProperty('metro-transfer-layer', 'text-opacity', dimmedOpacity);
         }
 
         if (this.map.getLayer('metro-layer-circle')) {
@@ -965,16 +982,26 @@ export class FilterManager {
     getGradientColors(routes, originId, targetId) {
         if (!routes || routes.length === 0) return ['#888'];
 
-        const colors = routes.map(r => {
-            const entry = RouteFilterColorManager.pathColors.get(this.getPathSignature(r, originId, targetId));
-            if (entry) return entry.color;
+        const routeIdsBySignature = new Map();
+        const signatureByRouteId = new Map();
 
-            // Removed fallback to getColorForRoute(r.id) because it persists old colors
-            // even after pathColors GC, causing mismatch with main.js logic which wants fresh colors.
-
-            console.warn('[FilterManager] Color not found for signature:', this.getPathSignature(r, originId, targetId), 'Assigning new.');
-            return RouteFilterColorManager.assignNextColor(this.getPathSignature(r, originId, targetId), [r.id]);
+        routes.forEach(r => {
+            const signature = this.getPathSignature(r, originId, targetId);
+            signatureByRouteId.set(r.id, signature);
+            if (!routeIdsBySignature.has(signature)) routeIdsBySignature.set(signature, []);
+            routeIdsBySignature.get(signature).push(r.id);
         });
+
+        const colorBySignature = new Map();
+        routeIdsBySignature.forEach((routeIds, signature) => {
+            // assignNextColor returns existing if already assigned and updates routeColors for routeIds
+            const color = RouteFilterColorManager.assignNextColor(signature, routeIds);
+            colorBySignature.set(signature, color);
+        });
+
+        const colors = routes
+            .map(r => colorBySignature.get(signatureByRouteId.get(r.id)))
+            .filter(Boolean);
 
         // Dedup colors
         const uniqueColors = [...new Set(colors)];

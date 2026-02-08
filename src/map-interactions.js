@@ -127,7 +127,8 @@ export function setMapFocus(active) {
     }
 
     if (map.getLayer('stops-label-selected')) {
-        map.setPaintProperty('stops-label-selected', 'text-opacity', opacityExpr);
+        const selectedLabelOpacity = window.isFilterModeActive === true ? 1.0 : opacityExpr;
+        map.setPaintProperty('stops-label-selected', 'text-opacity', selectedLabelOpacity);
         map.setPaintProperty('stops-label-selected', 'text-color', labelColor);
         map.setPaintProperty('stops-label-selected', 'text-halo-color', haloColor);
     }

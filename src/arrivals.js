@@ -14,6 +14,8 @@ let v3RoutesMap = null;
 let v3RoutesPromise = null;
 const V3_ROUTES_CACHE_KEY = 'v3_routes_map_cache';
 const V3_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+const scheduledArrivalsCache = new Map(); // key -> { minutes, timeDisplay }
+const scheduledArrivalsByStop = new Map(); // stopId -> Map(key -> { route, headsign, directionIndex, minutes, timeDisplay })
 
 // --- Dependencies (injected from main.js) ---
 let deps = {
@@ -1068,10 +1070,50 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     }
 
     // 2. Filter Logic (User Route Filter)
-    if (deps.filterManager.state.active) {
+    const shouldFilterArrivals = !!(deps.filterManager &&
+        (deps.filterManager.state.active ||
+            (deps.filterManager.state.targetIds && deps.filterManager.state.targetIds.size > 0) ||
+            window.isFilterModeActive) &&
+        deps.filterManager.state.filteredRoutes &&
+        deps.filterManager.state.filteredRoutes.length > 0);
+
+    let isRouteAllowed = null;
+    if (shouldFilterArrivals) {
+        const filteredRoutes = deps.filterManager.state.filteredRoutes || [];
+        const filteredIds = new Set(filteredRoutes.map(id => String(id)));
+        const filteredIdsNorm = new Set(filteredRoutes.map(id => normalizeRouteId(id)));
+        const allowedShortNames = new Set();
+
+        (deps.allRoutes() || []).forEach(route => {
+            if (!route) return;
+            const rId = String(route.id);
+            if (filteredIds.has(rId) || filteredIdsNorm.has(normalizeRouteId(rId))) {
+                allowedShortNames.add(String(route.shortName));
+            }
+        });
+
+        const isFilteredRouteId = (routeId) => {
+            if (!routeId) return false;
+            const idStr = String(routeId);
+            return filteredIds.has(idStr) || filteredIdsNorm.has(normalizeRouteId(idStr));
+        };
+
+        isRouteAllowed = (arrivalOrRoute) => {
+            if (!arrivalOrRoute) return false;
+            const aId = arrivalOrRoute.id;
+            const aShort = arrivalOrRoute.shortName;
+            if (isFilteredRouteId(aId)) return true;
+            if (allowedShortNames.has(String(aShort))) return true;
+
+            const r = deps.allRoutes().find(route => String(route.id) === String(aId)) ||
+                deps.allRoutes().find(route => normalizeRouteId(route.id) === normalizeRouteId(aId)) ||
+                deps.allRoutes().find(route => String(route.shortName) === String(aShort));
+            return r ? isFilteredRouteId(r.id) : false;
+        };
+
         arrivalsData = arrivalsData.filter(a => {
-            const r = deps.allRoutes().find(route => String(route.shortName) === String(a.shortName));
-            return r && deps.filterManager.state.filteredRoutes.includes(r.id);
+            // Prefer direct ID match from arrivals data
+            return isRouteAllowed(a);
         });
     }
 
@@ -1118,6 +1160,35 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         const actualStopId = a._sourceStopId || stopId;
         const { directionIndex, headsign, verifiedHeadsign } = resolveDirectionInfo(a, matchedRouteForColor, actualStopId);
         if (verifiedHeadsign) a._verifiedHeadsign = verifiedHeadsign;
+        const routeIdForKey = (matchedRouteForColor && matchedRouteForColor.id) || a.id || a.shortName;
+        const cacheKey = `${actualStopId}|${routeIdForKey}|${directionIndex}`;
+        if (!a.realtime && minutes !== 999) {
+            const schedTime = formatScheduledTime(minutes);
+            const timeDisplay = schedTime ? `${schedTime}˚` : null;
+            scheduledArrivalsCache.set(cacheKey, {
+                minutes,
+                timeDisplay
+            });
+            if (actualStopId) {
+                if (!scheduledArrivalsByStop.has(actualStopId)) {
+                    scheduledArrivalsByStop.set(actualStopId, new Map());
+                }
+                const stopMap = scheduledArrivalsByStop.get(actualStopId);
+                const groupKey = `${a.shortName}_${directionIndex}`;
+                stopMap.set(groupKey, {
+                    route: {
+                        id: routeIdForKey,
+                        shortName: a.shortName,
+                        longName: a.longName,
+                        customShortName: a.displayShortName
+                    },
+                    headsign,
+                    directionIndex,
+                    minutes,
+                    timeDisplay
+                });
+            }
+        }
 
         // Group Key: ShortName + Direction Index (or Headsign if fuzzy)
         // We use DirectionIndex as primary differentiator for grouped rows.
@@ -1160,7 +1231,24 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     // for directions not currently represented in liveGroups.
     uniqueRoutesMap.forEach(r => {
         // Apply Global Filters (User selection & Minibus settings)
-        if (deps.filterManager.state.active && !deps.filterManager.state.filteredRoutes.includes(r.id)) return;
+        if (shouldFilterArrivals) {
+            const rId = String(r.id);
+            const filteredRoutes = deps.filterManager.state.filteredRoutes || [];
+            const filteredIds = new Set(filteredRoutes.map(id => String(id)));
+            const filteredIdsNorm = new Set(filteredRoutes.map(id => normalizeRouteId(id)));
+            const allowedShortNames = new Set();
+            (deps.allRoutes() || []).forEach(route => {
+                if (!route) return;
+                const idStr = String(route.id);
+                if (filteredIds.has(idStr) || filteredIdsNorm.has(normalizeRouteId(idStr))) {
+                    allowedShortNames.add(String(route.shortName));
+                }
+            });
+
+            if (!filteredIds.has(rId) && !filteredIdsNorm.has(normalizeRouteId(rId)) && !allowedShortNames.has(String(r.shortName))) {
+                return;
+            }
+        }
         if (!shouldShowRoute(r.shortName, r)) return;
 
         const validDirs = getValidDirectionsForRoute(r.id, equivalentIds);
@@ -1169,20 +1257,75 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             if (!representedKeys.has(key)) {
                 // Determine headsign for this direction at this stop
                 const { headsign } = resolveDirectionInfo({ id: r.id, shortName: r.shortName, directionIndex: dirIdx }, r, stopId);
+                const stableId = `route-${r.id}-${dirIdx}`;
+                const existingEl = document.getElementById(stableId);
+                let existingMinutes = 99999;
+                let existingTimeDisplay = null;
+                const cacheKey = `${stopId}|${r.id}|${dirIdx}`;
+                const cached = scheduledArrivalsCache.get(cacheKey);
+                if (cached) {
+                    if (cached.timeDisplay) existingTimeDisplay = cached.timeDisplay;
+                    const cachedMins = cached.timeDisplay ? getMinutesFromNow(cached.timeDisplay.replace('˚', '')) : cached.minutes;
+                    if (!Number.isNaN(cachedMins) && cachedMins !== null && cachedMins !== undefined) {
+                        existingMinutes = cachedMins;
+                    } else if (cached.minutes !== undefined && cached.minutes !== null) {
+                        existingMinutes = cached.minutes;
+                    }
+                }
+                if (existingEl) {
+                    const storedMinutes = parseInt(existingEl.getAttribute('data-minutes') || existingEl.getAttribute('data-minutes-original') || '99999');
+                    const existingTimeEl = existingEl.querySelector('.led-text');
+                    const existingText = existingTimeEl?.textContent || '';
+                    if (existingText && existingText !== '--:--') {
+                        existingTimeDisplay = existingText;
+                        const recomputed = getMinutesFromNow(existingText.replace('˚', ''));
+                        if (!Number.isNaN(recomputed)) {
+                            existingMinutes = recomputed;
+                        }
+                    } else if (!Number.isNaN(storedMinutes) && storedMinutes < 99999) {
+                        existingMinutes = storedMinutes;
+                    }
+                }
 
                 renderList.push({
                     type: 'scheduled',
                     data: r,
-                    minutes: 99999,
+                    minutes: existingMinutes,
                     color: deps.getRouteDisplayColor(r),
                     directionIndex: dirIdx,
                     headsign: headsign,
-                    needsFetch: true
+                    needsFetch: true,
+                    timeDisplay: existingTimeDisplay || undefined
                 });
                 representedKeys.add(key);
             }
         });
     });
+
+    // Fallback: Add cached scheduled routes for this stop if they are missing
+    if (stopId && scheduledArrivalsByStop.has(stopId)) {
+        const stopMap = scheduledArrivalsByStop.get(stopId);
+        stopMap.forEach((cached, key) => {
+            if (representedKeys.has(key)) return;
+            const minsFromDisplay = cached.timeDisplay ? getMinutesFromNow(cached.timeDisplay.replace('˚', '')) : cached.minutes;
+            renderList.push({
+                type: 'scheduled',
+                data: cached.route,
+                minutes: minsFromDisplay,
+                color: deps.getRouteDisplayColor(cached.route),
+                directionIndex: cached.directionIndex,
+                headsign: cached.headsign,
+                needsFetch: true,
+                timeDisplay: cached.timeDisplay || undefined
+            });
+            representedKeys.add(key);
+        });
+    }
+
+    // 3.8 Final filter pass (safety)
+    if (shouldFilterArrivals && typeof isRouteAllowed === 'function') {
+        renderList = renderList.filter(item => isRouteAllowed(item.data));
+    }
 
     // 4. Sort EVERYTHING
     renderList.sort((a, b) => {
@@ -1265,6 +1408,8 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
         div.setAttribute('data-minutes', item.minutes);
         div.setAttribute('data-minutes-original', item.minutes); // Reset original minutes for countdown
+        div.setAttribute('data-item-type', item.type);
+        div.setAttribute('data-needs-fetch', item.needsFetch ? '1' : '0');
         div.style.borderLeftColor = item.color;
 
         // -- Data Prep --
@@ -1277,6 +1422,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             headsign = item.headsign;
             isScheduled = !a.realtime;
             routeIdForClick = a.id;
+            // No debug logging
 
             const rawMins = item.minutes;
             if (rawMins === 999 || rawMins === null || rawMins === undefined) {
@@ -1430,10 +1576,37 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                         const firstArrival = nextArrivals[0];
                         const timeEl = document.getElementById(timeElId);
                         if (timeEl) {
+                            const currentType = div.getAttribute('data-item-type');
+                            const isStillScheduled = currentType === 'scheduled' || timeEl.classList.contains('scheduled-time');
+                            if (!isStillScheduled) return;
                             const timeStr = firstArrival.time;
                             const minsFromNow = getMinutesFromNow(timeStr);
                             div.setAttribute('data-minutes', minsFromNow);
                             timeEl.textContent = timeStr.includes('˚') ? timeStr : timeStr + '˚';
+                            const cacheKey = `${stopId}|${item.data.id || item.data.shortName}|${item.directionIndex || 0}`;
+                            scheduledArrivalsCache.set(cacheKey, {
+                                minutes: minsFromNow,
+                                timeDisplay: timeStr.includes('˚') ? timeStr : timeStr + '˚'
+                            });
+                            if (stopId) {
+                                if (!scheduledArrivalsByStop.has(stopId)) {
+                                    scheduledArrivalsByStop.set(stopId, new Map());
+                                }
+                                const stopMap = scheduledArrivalsByStop.get(stopId);
+                                const groupKey = `${item.data.shortName}_${item.directionIndex || 0}`;
+                                stopMap.set(groupKey, {
+                                    route: {
+                                        id: item.data.id || item.data.shortName,
+                                        shortName: item.data.shortName,
+                                        longName: item.data.longName,
+                                        customShortName: item.data.displayShortName
+                                    },
+                                    headsign: item.headsign,
+                                    directionIndex: item.directionIndex || 0,
+                                    minutes: minsFromNow,
+                                    timeDisplay: timeStr.includes('˚') ? timeStr : timeStr + '˚'
+                                });
+                            }
                         }
                         scheduleArrivalsSort();
                     }
