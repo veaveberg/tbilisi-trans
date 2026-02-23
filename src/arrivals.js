@@ -81,6 +81,19 @@ export function initArrivals(dependencies) {
 function resolveDirectionInfo(a, matchedRoute, stopId) {
     // Debug routes for tracing direction issues
     const debugRoutes = ['414', '437', '336'];
+    const isLoopRoute = matchedRoute?._overrides?.isLoop === true ||
+        matchedRoute?._overrides?.isLoop === 'true' ||
+        matchedRoute?.isLoop === true;
+    const overrides = matchedRoute?._overrides;
+    if (a.shortName === '387' || a.shortName === '397') {
+        console.log('[Arrivals Debug][Loop] resolveDirectionInfo enter', {
+            shortName: a.shortName,
+            id: a.id,
+            stopId,
+            patternSuffix: a.patternSuffix,
+            headsign: a.headsign
+        });
+    }
 
     // --- DIRECTION FIX LOGIC (Static Check) ---
     const routeId = matchedRoute ? matchedRoute.id : (a.routeId || a.id);
@@ -109,6 +122,7 @@ function resolveDirectionInfo(a, matchedRoute, stopId) {
 
     let verifiedHeadsign = null;
     let fixedDirection = false;
+    let loopAmbiguous = false;
 
     if (staticDetails && staticDetails._stopsOfPatterns && stopId) {
         // Find stop entry
@@ -131,8 +145,9 @@ function resolveDirectionInfo(a, matchedRoute, stopId) {
         // --- VIRTUAL PATTERN DIRECTION DETECTION ---
         // For loop routes, check cached virtual patterns (_PART0, _PART1) to determine direction.
         // This is the same approach used by route card in main.js.
-        const isLoopRoute = matchedRoute?._overrides?.isLoop === true;
-        const overrides = matchedRoute?._overrides;
+        if (isLoopRoute && stopEntry?.patternSuffixes && stopEntry.patternSuffixes.length > 1) {
+            loopAmbiguous = true;
+        }
 
         if (isLoopRoute && deps.getVirtualPatterns) {
             let virtualPatterns = deps.getVirtualPatterns(routeId);
@@ -253,7 +268,18 @@ function resolveDirectionInfo(a, matchedRoute, stopId) {
                     if (debugRoutes.includes(a.shortName)) {
                         console.log(`[${a.shortName} Final] dir=${directionIndex} | headsign="${headsign}" | verified="${verifiedHeadsign}" | fixed=${fixedDirection}`);
                     }
-                    return { directionIndex, headsign, verifiedHeadsign, fixedDirection };
+                    if (a.shortName === '387' || a.shortName === '397') {
+                        console.log('[Arrivals Debug][Loop] resolveDirectionInfo virtual', {
+                            shortName: a.shortName,
+                            stopId,
+                            directionIndex,
+                            headsign,
+                            verifiedHeadsign,
+                            fixedDirection,
+                            loopAmbiguous
+                        });
+                    }
+                    return { directionIndex, headsign, verifiedHeadsign, fixedDirection, loopAmbiguous };
                 }
             } else if (debugRoutes.includes(a.shortName)) {
                 console.log(`[${a.shortName}] No virtual patterns available for ${routeId}`);
@@ -296,6 +322,49 @@ function resolveDirectionInfo(a, matchedRoute, stopId) {
         }
     }
 
+    if (isLoopRoute && overrides?.destinations && a.headsign) {
+        const locale = new URLSearchParams(window.location.search).get('locale') || 'en';
+        const normalize = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const src = normalize(a.headsign);
+        const scoreMatch = (candidate) => {
+            const tgt = normalize(candidate);
+            if (!src || !tgt) return 0;
+            const srcTokens = new Set(src.split(' ').filter(Boolean));
+            const tgtTokens = new Set(tgt.split(' ').filter(Boolean));
+            let score = 0;
+            srcTokens.forEach(t => {
+                if (tgtTokens.has(t)) score += 1;
+            });
+            return score;
+        };
+
+        let bestIdx = null;
+        let bestScore = -1;
+        overrides.destinations.forEach((dest, idx) => {
+            if (!dest || !dest.headsign) return;
+            const cand = typeof dest.headsign === 'string'
+                ? dest.headsign
+                : (dest.headsign[locale] || dest.headsign.en || dest.headsign.ka || '');
+            const s = scoreMatch(cand);
+            if (s > bestScore) {
+                bestScore = s;
+                bestIdx = idx;
+            }
+        });
+
+        if (bestIdx !== null && bestScore > 0) {
+            directionIndex = bestIdx;
+            const dest = overrides.destinations[bestIdx];
+            verifiedHeadsign = typeof dest.headsign === 'string'
+                ? dest.headsign
+                : (dest.headsign[locale] || dest.headsign.en || dest.headsign.ka || verifiedHeadsign);
+            fixedDirection = true;
+        }
+    }
+
+    if (!verifiedHeadsign && isLoopRoute && a.headsign) {
+        verifiedHeadsign = a.headsign;
+    }
     const headsign = verifiedHeadsign || deps.getPatternHeadsign(matchedRoute, directionIndex, a.headsign);
 
     // Debug for problem routes
@@ -303,7 +372,18 @@ function resolveDirectionInfo(a, matchedRoute, stopId) {
         console.log(`[${a.shortName} Final] dir=${directionIndex} | headsign="${headsign}" | verified="${verifiedHeadsign}" | fixed=${fixedDirection}`);
     }
 
-    return { directionIndex, headsign, verifiedHeadsign, fixedDirection };
+    if (a.shortName === '387' || a.shortName === '397') {
+        console.log('[Arrivals Debug][Loop] resolveDirectionInfo final', {
+            shortName: a.shortName,
+            stopId,
+            directionIndex,
+            headsign,
+            verifiedHeadsign,
+            fixedDirection,
+            loopAmbiguous
+        });
+    }
+    return { directionIndex, headsign, verifiedHeadsign, fixedDirection, loopAmbiguous };
 }
 
 /**
@@ -311,12 +391,19 @@ function resolveDirectionInfo(a, matchedRoute, stopId) {
  * Supports multiple stop IDs (equivalent stops).
  */
 function getValidDirectionsForRoute(routeId, stopIds) {
+    const matchedRoute = deps.allRoutes().find(r => String(r.id) === String(routeId)) || { id: routeId };
+    if (matchedRoute?.shortName === '387' || matchedRoute?.shortName === '397') {
+        console.log('[Arrivals Debug][Loop] getValidDirectionsForRoute', {
+            routeId,
+            shortName: matchedRoute.shortName,
+            stopIds
+        });
+    }
     const staticDetails = getStaticRouteDetails(routeId);
     if (!staticDetails || !staticDetails._stopsOfPatterns || !stopIds || (Array.isArray(stopIds) && stopIds.length === 0)) return [0];
 
     const targetIds = Array.isArray(stopIds) ? stopIds.map(id => String(id)) : [String(stopIds)];
     const finalDirs = new Set();
-    const matchedRoute = deps.allRoutes().find(r => String(r.id) === String(routeId)) || { id: routeId };
 
     targetIds.forEach(id => {
         const stopEntry = staticDetails._stopsOfPatterns.find(s => {
@@ -1133,6 +1220,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     // User wants multiple arrivals (e.g. 5', 12') for the same route to be grouped.
     // Group by: ShortName + Direction (Headsign/PatternSuffix)
     const liveGroups = new Map(); // Key -> { primary: arrival, secondaries: [arrival] }
+    const liveShortNames = new Set();
 
     console.log(`[Arrivals Debug] Processing ${arrivalsData.length} live arrivals.ShortNames: `, arrivalsData.map(a => a.shortName));
     arrivalsData.forEach(a => {
@@ -1158,7 +1246,8 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         }
 
         const actualStopId = a._sourceStopId || stopId;
-        const { directionIndex, headsign, verifiedHeadsign } = resolveDirectionInfo(a, matchedRouteForColor, actualStopId);
+        const resolveStopId = stopId || actualStopId;
+        const { directionIndex, headsign, verifiedHeadsign, loopAmbiguous } = resolveDirectionInfo(a, matchedRouteForColor, resolveStopId);
         if (verifiedHeadsign) a._verifiedHeadsign = verifiedHeadsign;
         const routeIdForKey = (matchedRouteForColor && matchedRouteForColor.id) || a.id || a.shortName;
         const cacheKey = `${actualStopId}|${routeIdForKey}|${directionIndex}`;
@@ -1192,8 +1281,20 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
         // Group Key: ShortName + Direction Index (or Headsign if fuzzy)
         // We use DirectionIndex as primary differentiator for grouped rows.
-        const groupKey = `${a.shortName}_${directionIndex}`;
+        const groupKey = loopAmbiguous ? `${a.shortName}_loop` : `${a.shortName}_${directionIndex}`;
+        if (a.shortName === '387' || a.shortName === '397') {
+            console.log('[Arrivals Debug][Loop] Live groupKey', {
+                shortName: a.shortName,
+                directionIndex,
+                loopAmbiguous,
+                groupKey,
+                stopId: resolveStopId,
+                id: a.id,
+                headsign
+            });
+        }
         representedKeys.add(groupKey);
+        liveShortNames.add(a.shortName);
 
         if (!liveGroups.has(groupKey)) {
             liveGroups.set(groupKey, {
@@ -1201,7 +1302,8 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 headsign: headsign,
                 directionIndex: directionIndex,
                 color: deps.getRouteDisplayColor(matchedRouteForColor || { ...a, id: a.id }),
-                arrivals: []
+                arrivals: [],
+                key: groupKey
             });
         }
         liveGroups.get(groupKey).arrivals.push(a);
@@ -1222,13 +1324,28 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             color: group.color,
             headsign: group.headsign,
             directionIndex: group.directionIndex,
-            allArrivals: group.arrivals
+            allArrivals: group.arrivals,
+            key: group.key || `${primaryArrival.shortName}_${group.directionIndex}`
         });
     });
 
     // Add Extra Routes (Scheduled/Missing)
     // We iterate through all unique routes found for this stop and add scheduled entries
     // for directions not currently represented in liveGroups.
+    const sharedStopRoutes = new Set();
+    if (stopId) {
+        uniqueRoutesMap.forEach(r => {
+            const staticDetails = getStaticRouteDetails(r.id);
+            const stopEntry = staticDetails?._stopsOfPatterns?.find(s => {
+                const sId = String(s.stop?.id || s.stop);
+                return sId === String(stopId) || normalizeRouteId(sId) === normalizeRouteId(stopId);
+            });
+            if (stopEntry && Array.isArray(stopEntry.patternSuffixes) && stopEntry.patternSuffixes.length > 1) {
+                sharedStopRoutes.add(String(r.shortName));
+            }
+        });
+    }
+
     uniqueRoutesMap.forEach(r => {
         // Apply Global Filters (User selection & Minibus settings)
         if (shouldFilterArrivals) {
@@ -1250,18 +1367,25 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             }
         }
         if (!shouldShowRoute(r.shortName, r)) return;
+        if (liveShortNames.has(r.shortName) && sharedStopRoutes.has(String(r.shortName))) return;
 
         const validDirs = getValidDirectionsForRoute(r.id, equivalentIds);
         validDirs.forEach(dirIdx => {
             const key = `${r.shortName}_${dirIdx}`;
             if (!representedKeys.has(key)) {
+                const realRoute = deps.allRoutes().find(route => String(route.id) === String(r.id)) ||
+                    deps.allRoutes().find(route => normalizeRouteId(route.id) === normalizeRouteId(r.id)) ||
+                    deps.allRoutes().find(route => String(route.shortName) === String(r.shortName)) ||
+                    r;
+                const isLoopRoute = realRoute?._overrides?.isLoop === true || realRoute?.isLoop === true || realRoute?._overrides?.isLoop === 'true';
+                if (liveShortNames.has(r.shortName) && isLoopRoute) return;
                 // Determine headsign for this direction at this stop
-                const { headsign } = resolveDirectionInfo({ id: r.id, shortName: r.shortName, directionIndex: dirIdx }, r, stopId);
-                const stableId = `route-${r.id}-${dirIdx}`;
+                const { headsign } = resolveDirectionInfo({ id: realRoute.id, shortName: realRoute.shortName, directionIndex: dirIdx }, realRoute, stopId);
+                const stableId = `route-${realRoute.id || r.id}-${dirIdx}`;
                 const existingEl = document.getElementById(stableId);
                 let existingMinutes = 99999;
                 let existingTimeDisplay = null;
-                const cacheKey = `${stopId}|${r.id}|${dirIdx}`;
+                const cacheKey = `${stopId}|${realRoute.id || r.id}|${dirIdx}`;
                 const cached = scheduledArrivalsCache.get(cacheKey);
                 if (cached) {
                     if (cached.timeDisplay) existingTimeDisplay = cached.timeDisplay;
@@ -1287,16 +1411,33 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                     }
                 }
 
-                renderList.push({
+                const scheduledItem = {
                     type: 'scheduled',
-                    data: r,
+                    data: realRoute,
                     minutes: existingMinutes,
-                    color: deps.getRouteDisplayColor(r),
+                    color: deps.getRouteDisplayColor(realRoute),
                     directionIndex: dirIdx,
                     headsign: headsign,
                     needsFetch: true,
-                    timeDisplay: existingTimeDisplay || undefined
-                });
+                    timeDisplay: existingTimeDisplay || undefined,
+                    key: key
+                };
+
+                // If no live data and this stop has multiple patterns for this route, keep only the earliest scheduled item
+                if (!liveShortNames.has(r.shortName) && sharedStopRoutes.has(String(r.shortName))) {
+                    const existingIdx = renderList.findIndex(item =>
+                        item.type === 'scheduled' && String(item.data.shortName) === String(r.shortName)
+                    );
+                    if (existingIdx !== -1) {
+                        if (scheduledItem.minutes < renderList[existingIdx].minutes) {
+                            renderList[existingIdx] = scheduledItem;
+                        }
+                    } else {
+                        renderList.push(scheduledItem);
+                    }
+                } else {
+                    renderList.push(scheduledItem);
+                }
                 representedKeys.add(key);
             }
         });
@@ -1316,7 +1457,8 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 directionIndex: cached.directionIndex,
                 headsign: cached.headsign,
                 needsFetch: true,
-                timeDisplay: cached.timeDisplay || undefined
+                timeDisplay: cached.timeDisplay || undefined,
+                key: key
             });
             representedKeys.add(key);
         });
@@ -1380,7 +1522,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     renderList.forEach((item, index) => {
         const routeId = item.data.id || item.data.shortName || 'unknown';
         const dirIdx = item.directionIndex !== undefined ? item.directionIndex : 0;
-        const stableId = `route-${routeId}-${dirIdx}`;
+        const stableId = `route-${item.key || `${routeId}_${dirIdx}`}`;
         activeIds.add(stableId);
 
         let div = document.getElementById(stableId);

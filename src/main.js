@@ -32,7 +32,9 @@ import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
 
 
-import { initSettings, simplifyNumber, shouldShowRoute } from './settings.js';
+import { initSettings, simplifyNumber, shouldShowRoute, openNativeFavoritesMenu } from './settings.js';
+import { initICloudHistorySync } from './icloud-sync.js';
+import { favoritesManager } from './favorites.js';
 
 // --- Global State Declarations (Hoisted) ---
 // These must be declared before api.fetchRoutes calls onRoutesLoaded
@@ -72,6 +74,31 @@ initSettings({
         }
     }
 });
+
+initICloudHistorySync();
+
+try {
+    const cap = window.Capacitor;
+    const ns = cap?.Plugins?.NativeSettings;
+    if (cap?.isNativePlatform?.() && cap?.getPlatform?.() === 'ios' && ns?.warmUI) {
+        ns.warmUI().catch(() => { });
+    }
+} catch (e) { }
+
+// In native iOS app we don't need PWA service workers; clear them to avoid stale cached bundles.
+try {
+    const cap = window.Capacitor;
+    if (cap?.isNativePlatform?.() && cap?.getPlatform?.() === 'ios' && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations()
+            .then((registrations) => Promise.allSettled(registrations.map((r) => r.unregister())))
+            .catch(() => { });
+        if (window.caches?.keys) {
+            window.caches.keys()
+                .then((keys) => Promise.allSettled(keys.map((key) => window.caches.delete(key))))
+                .catch(() => { });
+        }
+    }
+} catch (e) { }
 
 // Background refresh for cached schedules (local dev proxy only)
 api.maybeRefreshScheduleCache();
@@ -219,8 +246,28 @@ function getEquivalentStops(id, includeHubs = true) {
 
 // --- Navigation History ---
 // Moved to history.js
+let isInFavoritesBackContext = false;
+
+function setFavoritesBackContext(enabled) {
+    isInFavoritesBackContext = !!enabled;
+    applyFavoritesBackButtonsIfNeeded();
+}
+
+function applyFavoritesBackButtonsIfNeeded() {
+    if (!isInFavoritesBackContext) return;
+    const backPanel = document.getElementById('back-panel');
+    const backRoute = document.getElementById('back-route-info');
+    if (backPanel) backPanel.classList.remove('hidden');
+    if (backRoute) backRoute.classList.remove('hidden');
+}
 
 async function handleBack() {
+    if (isInFavoritesBackContext) {
+        isInFavoritesBackContext = false;
+        await openNativeFavoritesMenu();
+        return;
+    }
+
     const previous = popHistory();
     if (previous) {
         if (previous.type === 'stop') {
@@ -559,7 +606,29 @@ async function initializeMapData(stopsData, routesData) {
 // ... (keep this replacement near imports later)
 
 // --- Map Initialization ---
+function startNativeSplashReveal() {
+    const overlay = document.getElementById('splash-overlay');
+    if (overlay) overlay.remove();
+
+    // On native: trigger the native Swift zoom-reveal animation
+    try {
+        const ns = window.Capacitor?.Plugins?.NativeSettings;
+        if (ns && typeof ns.hideSplash === 'function') {
+            ns.hideSplash();
+            return;
+        }
+    } catch (e) { }
+
+    // Fallback: also hide Capacitor's built-in splash
+    try {
+        const splash = window.Capacitor?.Plugins?.SplashScreen;
+        if (splash && typeof splash.hide === 'function') splash.hide();
+    } catch (e) { }
+}
+
 map.on('load', async () => {
+    startNativeSplashReveal();
+
     // Initialize Theme Manager FIRST (Before any UI rendering to prevent theme flicker)
     themeManager = new ThemeManager(map);
     themeManager.init();
@@ -1233,7 +1302,8 @@ map.on('moveend', () => {
 
 
 async function showStopInfo(stop, addToStack = true, flyToStop = false, updateURL = true, options = {}) {
-    const { suppressPanel = false, forceRoutesRefresh = false } = options;
+    closeAllMoreMenus();
+    const { suppressPanel = false, forceRoutesRefresh = false, fromFavorites = false } = options;
 
     // Stop location tracking if we are selecting something specific
     stopTracking();
@@ -1243,6 +1313,10 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     if (stop.id) {
         window.currentStopId = String(stop.id);
         window.currentStopMode = stop.vehicleMode;
+    }
+    syncFavoriteButtonState();
+    if (fromFavorites) {
+        setFavoritesBackContext(true);
     }
 
     // Enable Focus Mode (Dim others) unless filter view is active/picking
@@ -1428,6 +1502,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
             updateBackButtons,
             showRouteOnMap
         });
+        applyFavoritesBackButtonsIfNeeded();
         return;
     } else {
         metro.stopMetroTicker();
@@ -1442,6 +1517,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
 
     setSheetState(panel, 'half');
     updateBackButtons();
+    applyFavoritesBackButtonsIfNeeded();
 
     // --- UNIFIED ARRIVALS LOADING ---
     // Route chips (static, instant)
@@ -1547,7 +1623,49 @@ function getRouteDisplayColor(route) {
     const rawColor = route.color || '2563eb';
     if (rawColor === '2563eb') return 'var(--primary)';
 
-    return rawColor.startsWith('#') ? rawColor : `#${rawColor} `;
+    return rawColor.startsWith('#') ? rawColor : `#${rawColor}`;
+}
+
+function cssColorToHex(input) {
+    if (typeof input !== 'string') return '';
+    const raw = input.trim();
+    if (!raw) return '';
+    if (/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(raw)) return raw;
+
+    const match = raw.match(/^rgba?\(([^)]+)\)$/i);
+    if (!match) return '';
+    const parts = match[1].split(',').map((p) => p.trim());
+    if (parts.length < 3) return '';
+    const r = Number(parts[0]);
+    const g = Number(parts[1]);
+    const b = Number(parts[2]);
+    if (![r, g, b].every((n) => Number.isFinite(n))) return '';
+    const clamp = (n) => Math.max(0, Math.min(255, Math.round(n)));
+    const toHex = (n) => clamp(n).toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function resolveRouteFavoriteColor(route) {
+    const rawRouteColor = String(route?.color || '').trim();
+    if (/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(rawRouteColor)) {
+        return rawRouteColor;
+    }
+    if (/^([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(rawRouteColor)) {
+        return `#${rawRouteColor}`;
+    }
+
+    const fromDisplay = typeof getRouteDisplayColor === 'function'
+        ? cssColorToHex(String(getRouteDisplayColor(route) || ''))
+        : '';
+    if (fromDisplay) return fromDisplay;
+
+    const routeInfoNumber = document.getElementById('route-info-number');
+    const inlineColor = cssColorToHex(routeInfoNumber?.style?.color || '');
+    if (inlineColor) return inlineColor;
+    const computedColor = routeInfoNumber ? cssColorToHex(getComputedStyle(routeInfoNumber).color) : '';
+    if (computedColor) return computedColor;
+
+    return '#2563eb';
 }
 
 function getPatternHeadsign(route, directionIndex, defaultHeadsign) {
@@ -2128,6 +2246,9 @@ async function showRouteOnMap(route, addToStack = true, options = {}) {
     currentRoute = route;
     window.currentRoute = route; // Crucial for Edit Tools
     currentPatternIndex = 0; // Reset to default
+    if (options.fromFavorites) {
+        setFavoritesBackContext(true);
+    }
 
     // Style wait removed - we're inside map.on('load') so style should be ready
 
@@ -2142,6 +2263,8 @@ async function showRouteOnMap(route, addToStack = true, options = {}) {
 }
 
 async function updateRouteView(route, options = {}) {
+    closeAllMoreMenus();
+    syncFavoriteButtonState();
     try {
         const requestId = ++lastRouteUpdateId; // Start new request
 
@@ -2223,6 +2346,7 @@ async function updateRouteView(route, options = {}) {
             setSheetState(infoCard, 'half'); // Default to half open
         }
         updateBackButtons(); // Ensure back button state is correct
+        applyFavoritesBackButtonsIfNeeded();
 
         // Clear Filter state before showing route
         if (filterManager.state.active || filterManager.state.picking) {
@@ -2733,9 +2857,362 @@ if (filterBtn) {
 ['mousedown', 'touchstart', 'click'].forEach(evt => {
     document.getElementById('close-panel').addEventListener(evt, e => e.stopPropagation(), { passive: false });
     document.getElementById('close-route-info').addEventListener(evt, e => e.stopPropagation(), { passive: false });
-    // Also protect copy link buttons
-    if (document.getElementById('copy-link-btn')) document.getElementById('copy-link-btn').addEventListener(evt, e => e.stopPropagation(), { passive: false });
-    if (document.getElementById('copy-route-link-btn')) document.getElementById('copy-link-btn').addEventListener(evt, e => e.stopPropagation(), { passive: false });
+    ['stop-more-btn', 'route-more-btn', 'copy-link-btn', 'copy-route-link-btn', 'btn-edit-stop', 'btn-edit-route', 'favorite-stop-btn', 'favorite-route-btn'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener(evt, e => e.stopPropagation(), { passive: false });
+    });
+});
+
+const initMoreMenu = (triggerId, menuId) => {
+    const trigger = document.getElementById(triggerId);
+    const menu = document.getElementById(menuId);
+    if (!trigger || !menu) return;
+
+    const closeMenu = () => menu.classList.add('hidden');
+
+    const isNativeIOS = () => {
+        const cap = window.Capacitor;
+        if (!cap || typeof cap.isNativePlatform !== 'function' || typeof cap.getPlatform !== 'function') return false;
+        return cap.isNativePlatform() && cap.getPlatform() === 'ios';
+    };
+
+    const getNativeSettings = () => window.Capacitor?.Plugins?.NativeSettings;
+
+    const getVisibleActions = () => {
+        return Array.from(menu.querySelectorAll('button.more-menu-item'))
+            .filter((btn) => !btn.classList.contains('hidden') && btn.style.display !== 'none')
+            .map((btn) => {
+                let text = (btn.textContent || '').trim();
+                let symbol = null;
+                if (btn.id === 'copy-link-btn' || btn.id === 'copy-route-link-btn') {
+                    text = 'Copy link';
+                    symbol = 'link';
+                }
+                if (btn.id === 'favorite-stop-btn' || btn.id === 'favorite-route-btn') {
+                    symbol = text === 'Unfavorite' ? 'star.fill' : 'star';
+                }
+                return {
+                    id: btn.id,
+                    title: text || btn.title || btn.id,
+                    style: 'default',
+                    symbol,
+                    accent: text === 'Unfavorite' ? 'yellow' : null
+                };
+            });
+    };
+
+    const buildCurrentUrl = () => {
+        let url = window.location.href;
+        if (url.startsWith('capacitor://')) {
+            const pathname = window.location.pathname + window.location.hash;
+            url = `https://veaveberg.github.io/tbilisi-trans${pathname}`;
+        }
+        return url;
+    };
+
+    const showNativeMenu = async (event) => {
+        const plugin = getNativeSettings();
+        if (!plugin || typeof plugin.showActionSheet !== 'function') return false;
+        syncFavoriteButtonState();
+
+        const actions = [
+            ...getVisibleActions(),
+            { id: 'native-share-current-url', title: 'Share', style: 'default', symbol: 'square.and.arrow.up' }
+        ];
+        if (!actions.length) return true;
+
+        let res;
+        try {
+            res = await plugin.showActionSheet({
+                actions,
+                anchorX: Number(event?.clientX ?? 0),
+                anchorY: Number(event?.clientY ?? 0)
+            });
+        } catch (err) {
+            console.warn('[UI] Native action sheet failed, falling back to web menu:', err);
+            return false;
+        }
+
+        const actionId = res?.action;
+        if (typeof actionId !== 'string') return true;
+
+        try {
+            if (actionId === 'favorite-stop-btn') {
+                const stopKey = getCurrentStopFavoriteKey();
+                if (stopKey) {
+                    const nextValue = !favoritesManager.has(stopKey);
+                    toggleCurrentFavorite('stop', nextValue);
+                }
+                return true;
+            }
+            if (actionId === 'favorite-route-btn') {
+                const routeKey = getCurrentRouteFavoriteKey();
+                if (routeKey) {
+                    const nextValue = !favoritesManager.has(routeKey);
+                    toggleCurrentFavorite('route', nextValue);
+                }
+                return true;
+            }
+            if (actionId === 'native-share-current-url') {
+                if (typeof plugin.shareUrl === 'function') {
+                    setTimeout(() => {
+                        plugin.shareUrl({
+                            url: buildCurrentUrl(),
+                            anchorX: Number(event?.clientX ?? 0),
+                            anchorY: Number(event?.clientY ?? 0)
+                        }).catch((err) => console.warn('[UI] Native share failed:', err));
+                    }, 0);
+                }
+                return true;
+            }
+
+            setTimeout(() => {
+                const actionBtn = document.getElementById(actionId);
+                if (actionBtn) actionBtn.click();
+            }, 0);
+        } catch (err) {
+            const message = err?.message || String(err);
+            console.warn('[UI] Native action handler failed:', message, err);
+        }
+        return true;
+    };
+
+    trigger.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isNativeIOS()) {
+            const handled = await showNativeMenu(e);
+            if (handled) return;
+        }
+        menu.classList.toggle('hidden');
+    });
+
+    menu.addEventListener('click', (e) => {
+        const target = e.target instanceof Element ? e.target.closest('button') : null;
+        if (target) closeMenu();
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!(e.target instanceof Node)) return;
+        if (!menu.contains(e.target) && !trigger.contains(e.target)) {
+            closeMenu();
+        }
+    });
+};
+
+initMoreMenu('stop-more-btn', 'stop-more-menu');
+initMoreMenu('route-more-btn', 'route-more-menu');
+
+function closeAllMoreMenus() {
+    ['stop-more-menu', 'route-more-menu'].forEach((id) => {
+        const menu = document.getElementById(id);
+        if (menu) menu.classList.add('hidden');
+    });
+}
+
+function buildStopFavoriteKey(stopId, targetIds = []) {
+    const base = `stop:${String(stopId)}`;
+    if (!Array.isArray(targetIds) || targetIds.length === 0) return base;
+    const normalized = Array.from(new Set(targetIds.map(id => String(id).trim()).filter(Boolean))).sort();
+    if (!normalized.length) return base;
+    return `${base}|filters:${normalized.join(',')}`;
+}
+
+function parseStopFavoriteKey(key) {
+    if (typeof key !== 'string' || !key.startsWith('stop:')) {
+        return { stopId: null, targetIds: [] };
+    }
+    const raw = key.slice('stop:'.length);
+    const marker = '|filters:';
+    const markerIndex = raw.indexOf(marker);
+    if (markerIndex === -1) {
+        return { stopId: raw || null, targetIds: [] };
+    }
+    const stopId = raw.slice(0, markerIndex) || null;
+    const targetsRaw = raw.slice(markerIndex + marker.length);
+    const targetIds = targetsRaw.split(',').map(s => s.trim()).filter(Boolean);
+    return { stopId, targetIds };
+}
+
+function resolveStopNameById(stopId) {
+    const stop = allStops.find(s => String(s.id) === String(stopId));
+    return stop?.name || String(stopId);
+}
+
+function formatFilteredSubtitle(targetIds) {
+    if (!Array.isArray(targetIds) || targetIds.length === 0) return '';
+    const names = targetIds.slice(0, 3).map(resolveStopNameById);
+    if (names.length === 1) return `Filtered by ${names[0]}`;
+    if (names.length === 2) return `Filtered by ${names[0]} and ${names[1]}`;
+    return `Filtered by ${names[0]}, ${names[1]}, and ${names[2]}`;
+}
+
+function getCurrentStopFavoriteKey() {
+    if (!window.currentStopId) return null;
+    const hasActiveFilterForCurrentStop =
+        !!(filterManager?.state?.active &&
+            String(filterManager.state.originId) === String(window.currentStopId) &&
+            filterManager.state.targetIds &&
+            filterManager.state.targetIds.size > 0);
+
+    if (hasActiveFilterForCurrentStop) {
+        return buildStopFavoriteKey(window.currentStopId, Array.from(filterManager.state.targetIds));
+    }
+    return buildStopFavoriteKey(window.currentStopId, []);
+}
+
+function getCurrentRouteFavoriteKey() {
+    const route = window.currentRoute;
+    if (!route) return null;
+    const stable = route.id || route.shortName || route.customShortName;
+    if (!stable) return null;
+    return `route:${String(stable)}`;
+}
+
+let lastFavoriteMutation = { key: '', value: null, at: 0 };
+function shouldSkipDuplicateFavoriteMutation(key, value) {
+    const tsNow = Date.now();
+    if (
+        lastFavoriteMutation.key === key &&
+        lastFavoriteMutation.value === value &&
+        (tsNow - lastFavoriteMutation.at) < 700
+    ) {
+        return true;
+    }
+    lastFavoriteMutation = { key, value, at: tsNow };
+    return false;
+}
+
+function syncFavoriteButtonState() {
+    const stopBtn = document.getElementById('favorite-stop-btn');
+    const routeBtn = document.getElementById('favorite-route-btn');
+    const stopKey = getCurrentStopFavoriteKey();
+    const routeKey = getCurrentRouteFavoriteKey();
+    const stopFav = !!(stopKey && favoritesManager.has(stopKey));
+    const routeFav = !!(routeKey && favoritesManager.has(routeKey));
+
+    if (stopBtn) {
+        stopBtn.textContent = stopFav ? 'Unfavorite' : 'Favorite';
+        stopBtn.title = stopBtn.textContent;
+        stopBtn.classList.toggle('is-unfavorite', stopFav);
+    }
+    if (routeBtn) {
+        routeBtn.textContent = routeFav ? 'Unfavorite' : 'Favorite';
+        routeBtn.title = routeBtn.textContent;
+        routeBtn.classList.toggle('is-unfavorite', routeFav);
+    }
+}
+
+function toggleCurrentFavorite(kind, nextValue = null) {
+    if (kind === 'stop') {
+        const key = getCurrentStopFavoriteKey();
+        if (!key) return false;
+        const stop = allStops.find(s => String(s.id) === String(window.currentStopId));
+        const stopNameFromUI = (document.getElementById('stop-name')?.textContent || '').trim();
+        const title = stop?.name || stopNameFromUI || `Stop ${String(window.currentStopId)}`;
+        const { targetIds } = parseStopFavoriteKey(key);
+        const subtitle = targetIds.length > 0
+            ? formatFilteredSubtitle(targetIds)
+            : (stop?.code ? `Code: ${stop.code}` : '');
+        const desiredValue = nextValue === null ? !favoritesManager.has(key) : !!nextValue;
+        if (shouldSkipDuplicateFavoriteMutation(key, desiredValue)) return true;
+        favoritesManager.set(key, desiredValue, { title, subtitle });
+        syncFavoriteButtonState();
+        return true;
+    }
+
+    const key = getCurrentRouteFavoriteKey();
+    if (!key) return false;
+    const route = window.currentRoute || {};
+    const routeLabel = route.shortName || route.customShortName || route.id || '';
+    const title = String(route.longName || '').trim() || (routeLabel ? `Route ${routeLabel}` : 'Route');
+    const subtitle = '';
+    const routeColor = resolveRouteFavoriteColor(route);
+    const routeNumber = String(route.customShortName || route.shortName || '').trim();
+    const desiredValue = nextValue === null ? !favoritesManager.has(key) : !!nextValue;
+    if (shouldSkipDuplicateFavoriteMutation(key, desiredValue)) return true;
+    if (typeof favoritesManager.set === 'function') {
+        favoritesManager.set(key, desiredValue, { title, subtitle, routeNumber, routeColor });
+    } else if (desiredValue !== favoritesManager.has(key)) {
+        favoritesManager.toggle(key, { title, subtitle, routeNumber, routeColor });
+    }
+    syncFavoriteButtonState();
+    return true;
+}
+
+const toggleFavoriteFromButton = (btnId) => {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        toggleCurrentFavorite(btnId === 'favorite-stop-btn' ? 'stop' : 'route');
+    });
+};
+
+toggleFavoriteFromButton('favorite-stop-btn');
+toggleFavoriteFromButton('favorite-route-btn');
+favoritesManager.subscribe(() => syncFavoriteButtonState());
+window.addEventListener('favoritesClearAllRequest', () => {
+    favoritesManager.clearAll();
+    syncFavoriteButtonState();
+});
+window.addEventListener('favoritesRemoveKeyRequest', (event) => {
+    const key = typeof event?.detail === 'string' ? event.detail : '';
+    if (!key) return;
+    favoritesManager.remove(key);
+    syncFavoriteButtonState();
+});
+window.addEventListener('favoritesReorderRequest', (event) => {
+    const type = event?.detail?.type;
+    const keys = event?.detail?.keys;
+    favoritesManager.reorderType(type, keys);
+    syncFavoriteButtonState();
+});
+window.addEventListener('favoritesUpdateSubtitleRequest', (event) => {
+    const key = typeof event?.detail?.key === 'string' ? event.detail.key : '';
+    const subtitle = typeof event?.detail?.subtitle === 'string' ? event.detail.subtitle : '';
+    if (!key) return;
+    favoritesManager.updateSubtitle(key, subtitle);
+});
+window.addEventListener('favoritesUpdateIconRequest', (event) => {
+    const key = typeof event?.detail?.key === 'string' ? event.detail.key : '';
+    const icon = typeof event?.detail?.icon === 'string' ? event.detail.icon : '';
+    if (!key) return;
+    favoritesManager.updateStopIcon(key, icon);
+});
+window.addEventListener('favoritesOpenKeyRequest', async (event) => {
+    const key = typeof event?.detail === 'string' ? event.detail : '';
+    if (!key) return;
+
+    if (key.startsWith('stop:')) {
+        const { stopId, targetIds } = parseStopFavoriteKey(key);
+        if (!stopId) return;
+        const stop = allStops.find(s => String(s.id) === String(stopId));
+        if (stop) {
+            await showStopInfo(stop, false, true, true, { fromFavorites: true });
+            if (targetIds.length > 0) {
+                await filterManager.toggleFilterMode(stop.id, null, null, { forceEnable: true, skipFlyTo: true });
+                filterManager.state.targetIds = new Set(targetIds);
+                await filterManager.refreshRouteFilter(stop.id, window.lastArrivals, window.lastRoutes);
+                fitFilterBounds(stop, targetIds);
+            }
+        }
+        return;
+    }
+
+    if (key.startsWith('route:')) {
+        const routeKey = key.slice('route:'.length);
+        if (!routeKey) return;
+        const route = allRoutes.find(r =>
+            String(r.id) === routeKey ||
+            String(r.shortName) === routeKey ||
+            String(r.customShortName || '') === routeKey
+        );
+        if (route) {
+            await showRouteOnMap(route, false, { fromFavorites: true });
+        }
+    }
 });
 
 
@@ -2795,9 +3272,11 @@ const handleCopyLink = (btnId) => {
         if (success) {
             console.log('[UI] URL copied to clipboard:', url);
 
-            // Visual Feedback: Turn black (opacity: 1)
+            // Visual feedback for both icon buttons and menu items
             btn.style.opacity = '1';
-            btn.style.transform = 'scale(1.1)';
+            if (!btn.classList.contains('more-menu-item')) {
+                btn.style.transform = 'scale(1.1)';
+            }
 
             setTimeout(() => {
                 btn.style.opacity = '';
@@ -2829,6 +3308,8 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
     triggerMapClickLock();
+    closeAllMoreMenus();
+    setFavoritesBackContext(false);
 
     console.log('[Debug] Close panel clicked');
     const panel = document.getElementById('info-panel');
@@ -2873,6 +3354,8 @@ document.getElementById('close-route-info').addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
     triggerMapClickLock();
+    closeAllMoreMenus();
+    setFavoritesBackContext(false);
 
     setSheetState(document.getElementById('route-info'), 'hidden');
     try { clearStopHoverState(); } catch (err) { console.error('Clear Hover Error', err); }

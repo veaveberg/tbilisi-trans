@@ -6,7 +6,7 @@ import { RouteGeometry } from './route-geometry.js';
 export { sources };
 
 // Configuration
-export const MAPBOX_TOKEN = 'pk.eyJ1IjoidHRjYXpyeSIsImEiOiJjam5sZWU2NHgxNmVnM3F0ZGN2N2lwaGF2In0.00TvUGr9Qu4Q4fc_Jb9wjw';
+export const MAPBOX_TOKEN = (import.meta.env.VITE_MAPBOX_TOKEN || '').trim();
 export const API_KEY = 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f';
 
 // Default Source (Tbilisi) for fallback or single-source calls
@@ -984,7 +984,7 @@ function processRoute(route, source) {
     if (!route) return route;
 
     if (route.shortName === '497' || route.id === 'minibusR24335' || route.id === '497') {
-        console.log('[API DEBUG] processRoute 497 input:', { id: route.id, hasOv: !!route._overrides, fromConvex: !!route._debug });
+        // console.debug('[API DEBUG] processRoute 497 input:', { id: route.id, hasOv: !!route._overrides, fromConvex: !!route._debug });
     }
 
     route.id = processId(route.id, source);
@@ -1037,7 +1037,7 @@ export const convex = new ConvexClient(import.meta.env.VITE_CONVEX_URL);
  * Fetches stops from ALL sources via Convex, tags them with `_source`, and merges results.
  */
 export async function fetchStops(options = {}) {
-    console.log('[API DEBUG] fetchStops called with options:', options);
+    // console.debug('[API DEBUG] fetchStops called with options:', options);
     const promises = sources.map(async (source) => {
         const cacheKey = `convex_stops_${source.id}`;
         let data = null;
@@ -1062,9 +1062,9 @@ export async function fetchStops(options = {}) {
         // 2. Fetch Network (if needed)
         if (!data && options.strategy !== 'cache-only') {
             try {
-                console.log(`[API DEBUG] fetchStops: Calling Convex for ${source.id}...`);
+                // console.debug(`[API DEBUG] fetchStops: Calling Convex for ${source.id}...`);
                 data = await convex.query("transit:getStops", { sourceId: source.id, locale: 'en' });
-                console.log(`[API DEBUG] fetchStops: Got ${data?.length || 0} stops from Convex for ${source.id}`);
+                // console.debug(`[API DEBUG] fetchStops: Got ${data?.length || 0} stops from Convex for ${source.id}`);
                 // Save to Cache
                 await db.set(cacheKey, { timestamp: Date.now(), data });
             } catch (e) {
@@ -1131,7 +1131,7 @@ export async function fetchStops(options = {}) {
  * Fetches routes from ALL sources via Convex, tags them with `_source`, and merges results.
  */
 export async function fetchRoutes(options = {}) {
-    console.log('[API DEBUG] fetchRoutes called with options:', options);
+    // console.debug('[API DEBUG] fetchRoutes called with options:', options);
     const promises = sources.map(async (source) => {
         const cacheKey = `convex_routes_${source.id}`;
         let data = null;
@@ -1162,22 +1162,22 @@ export async function fetchRoutes(options = {}) {
                 // But the app might switch locales partially?
                 // Static Data usually preload EN.
                 // Let's stick to 'en' for structural data as per previous static files.
-                console.log(`[API DEBUG] fetchRoutes: Calling Convex for ${source.id}...`);
+                // console.debug(`[API DEBUG] fetchRoutes: Calling Convex for ${source.id}...`);
                 const response = await convex.query("transit:getRoutes", { sourceId: source.id, locale: 'en' });
 
                 if (response && response._convex_meta) {
-                    console.log(`[API DEBUG] fetchRoutes: Got response from Convex at ${new Date(response._convex_meta.timestamp).toLocaleTimeString()}. Overrides in DB: ${response._convex_meta.totalOverrides}`);
+                    // console.debug(`[API DEBUG] fetchRoutes: Got response from Convex at ${new Date(response._convex_meta.timestamp).toLocaleTimeString()}. Overrides in DB: ${response._convex_meta.totalOverrides}`);
                     data = response.routes;
                 } else {
-                    console.warn(`[API DEBUG] fetchRoutes: Convex returned unexpected format or no meta for ${source.id}`, response);
+                    // console.warn(`[API DEBUG] fetchRoutes: Convex returned unexpected format or no meta for ${source.id}`, response);
                     data = Array.isArray(response) ? response : [];
                 }
 
-                console.log(`[API DEBUG] fetchRoutes: Got ${data?.length || 0} routes from Convex for ${source.id}`);
+                // console.debug(`[API DEBUG] fetchRoutes: Got ${data?.length || 0} routes from Convex for ${source.id}`);
 
                 const r497 = data.find(r => r.id === 'minibusR24335' || r.id === '497' || r.shortName === '497');
                 if (r497) {
-                    console.log(`[API DEBUG] Route 497 raw data from Convex:`, JSON.stringify(r497));
+                    // console.debug(`[API DEBUG] Route 497 raw data from Convex:`, JSON.stringify(r497));
                 }
 
                 await db.set(cacheKey, { timestamp: Date.now(), data });
@@ -1356,7 +1356,7 @@ export async function fetchMetroSchedulePattern(routeId, patternSuffix) {
 
 // V3 Routes List - Now uses Convex-backed fetchRoutes
 export async function fetchV3Routes() {
-    console.log('[API DEBUG] fetchV3Routes: Delegating to fetchRoutes()');
+    // console.debug('[API DEBUG] fetchV3Routes: Delegating to fetchRoutes()');
     return fetchRoutes({ strategy: 'cache-first' });
 }
 // --- Global Overrides Cache ---

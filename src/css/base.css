@@ -147,3 +147,74 @@ body.loading * {
     width: 100% !important;
     height: 100% !important;
 }
+
+/* Native Splash Overlay */
+#splash-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    transform: scale(1);
+    transform-origin: 50% 50%;
+    will-change: transform, opacity;
+}
+
+html.native-splash #splash-overlay {
+    display: flex;
+}
+
+#splash-backdrop {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-main);
+    opacity: 1;
+    transition: opacity 0.25s ease;
+    will-change: opacity;
+}
+
+#splash-overlay img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    will-change: opacity, transform;
+}
+
+#splash-opaque {
+    opacity: 1;
+    transition: opacity 0.25s ease;
+}
+
+#splash-cutout {
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+
+#splash-overlay.splash-reveal #splash-opaque {
+    opacity: 0;
+}
+
+#splash-overlay.splash-reveal #splash-cutout {
+    opacity: 1;
+}
+
+#splash-overlay.splash-reveal #splash-backdrop {
+    opacity: 0;
+}
+
+#splash-overlay.splash-zoom {
+    transform: scale(var(--splash-zoom-scale, 6));
+    transition: transform 0.5s ease-in;
+}
+
+#splash-overlay.splash-pass-through {
+    pointer-events: none;
+}
+
+#splash-overlay.splash-done {
+    opacity: 0;
+}

@@ -11,7 +11,6 @@
 		36C9B7A52D4F6E4700B6B31E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 36C9B7A42D4F6E4700B6B31E /* PrivacyInfo.xcprivacy */; };
 		3D6D7A7A2D4F9F1E00E8D512 /* NativeSettingsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D6D7A792D4F9F1E00E8D512 /* NativeSettingsPlugin.swift */; };
 		3D6D7A7C2D4F9F1E00E8D512 /* SettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D6D7A7B2D4F9F1E00E8D512 /* SettingsViewController.swift */; };
-		7A1B2C3D2EFA111100AA0001 /* BridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B2C3D2EFA111100AA0002 /* BridgeViewController.swift */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
@@ -20,6 +19,8 @@
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		50C2D3D72D4F77D1009CC6E1 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50C2D3D62D4F77D1009CC6E1 /* SceneDelegate.swift */; };
+		7A1B2C3D2EFA111100AA0001 /* BridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B2C3D2EFA111100AA0002 /* BridgeViewController.swift */; };
+		AA1B2C3D2F3B000100BB0001 /* SplashAnimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1B2C3D2F3B000100BB0002 /* SplashAnimator.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,7 +28,6 @@
 		36C9B7A42D4F6E4700B6B31E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		3D6D7A792D4F9F1E00E8D512 /* NativeSettingsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSettingsPlugin.swift; sourceTree = "<group>"; };
 		3D6D7A7B2D4F9F1E00E8D512 /* SettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewController.swift; sourceTree = "<group>"; };
-		7A1B2C3D2EFA111100AA0002 /* BridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeViewController.swift; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* Tbilisi Trans.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Tbilisi Trans.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -37,7 +37,9 @@
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		50C2D3D62D4F77D1009CC6E1 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		7A1B2C3D2EFA111100AA0002 /* BridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeViewController.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		AA1B2C3D2F3B000100BB0002 /* SplashAnimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashAnimator.swift; sourceTree = "<group>"; };
 		D97C3A0C2F36452C001EE68F /* Tbilisi Trans.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Tbilisi Trans.entitlements"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -80,6 +82,7 @@
 				3D6D7A792D4F9F1E00E8D512 /* NativeSettingsPlugin.swift */,
 				3D6D7A7B2D4F9F1E00E8D512 /* SettingsViewController.swift */,
 				50C2D3D62D4F77D1009CC6E1 /* SceneDelegate.swift */,
+				AA1B2C3D2F3B000100BB0002 /* SplashAnimator.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -121,7 +124,7 @@
 			isa = PBXProject;
 			attributes = {
 				LastSwiftUpdateCheck = 0920;
-				LastUpgradeCheck = 0920;
+				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					504EC3031FED79650016851F = {
 						CreatedOnToolsVersion = 9.2;
@@ -178,6 +181,7 @@
 				3D6D7A7A2D4F9F1E00E8D512 /* NativeSettingsPlugin.swift in Sources */,
 				3D6D7A7C2D4F9F1E00E8D512 /* SettingsViewController.swift in Sources */,
 				50C2D3D72D4F77D1009CC6E1 /* SceneDelegate.swift in Sources */,
+				AA1B2C3D2F3B000100BB0001 /* SplashAnimator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -317,9 +321,10 @@
 			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = "Tbilisi Trans.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 26.2.4;
 				DEVELOPMENT_TEAM = 94C5G63LL2;
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Tbilisi Trans";
@@ -329,7 +334,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 26.2.4;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = tbilisi.trans;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -343,9 +348,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_ENTITLEMENTS = "Tbilisi Trans.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 26.2.4;
 				DEVELOPMENT_TEAM = 94C5G63LL2;
 				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Tbilisi Trans";
@@ -355,7 +361,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 26.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = tbilisi.trans;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";

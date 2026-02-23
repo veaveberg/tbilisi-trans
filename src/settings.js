@@ -1,5 +1,6 @@
 import { onApiStatusChange, getApiStatusColor } from './api.js';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { favoritesManager } from './favorites.js';
 
 export const settings = {
     simplifyNumbers: false,
@@ -11,6 +12,9 @@ export const settings = {
 
 let onUpdateCallback = null;
 let nativeSettingsInitialized = false;
+let privacyPolicySheetInitialized = false;
+let lastFocusedBeforePrivacySheet = null;
+let privacyPolicyPreviousUrl = null;
 
 const NativeSettingsPlugin = registerPlugin('NativeSettings');
 
@@ -108,6 +112,51 @@ function applyNativeSetting(key, value) {
                 }
             }
             break;
+        case 'icloudSyncEnabled':
+            localStorage.setItem('icloudSyncEnabled', !!value);
+            window.dispatchEvent(new CustomEvent('iCloudSyncToggleChange', { detail: !!value }));
+            break;
+        case 'icloudSyncMode':
+            if (value === 'merge' || value === 'replace' || value === 'pushLocal') {
+                localStorage.setItem('icloudSyncMode', value);
+                window.dispatchEvent(new CustomEvent('iCloudSyncModeChange', { detail: value }));
+            }
+            break;
+        case 'favoritesAction':
+            if (value === 'clearAll') {
+                window.dispatchEvent(new CustomEvent('favoritesClearAllRequest'));
+            } else if (typeof value === 'string' && value.startsWith('remove:')) {
+                const key = value.slice('remove:'.length);
+                if (key) {
+                    window.dispatchEvent(new CustomEvent('favoritesRemoveKeyRequest', { detail: key }));
+                }
+            } else if (typeof value === 'string' && value.startsWith('open:')) {
+                const key = value.slice('open:'.length);
+                if (key) {
+                    window.dispatchEvent(new CustomEvent('favoritesOpenKeyRequest', { detail: key }));
+                }
+            } else if (typeof value === 'string' && value.startsWith('reorderStops:')) {
+                const payload = value.slice('reorderStops:'.length);
+                const keys = payload ? payload.split('|').filter(Boolean) : [];
+                window.dispatchEvent(new CustomEvent('favoritesReorderRequest', { detail: { type: 'stop', keys } }));
+            } else if (typeof value === 'string' && value.startsWith('reorderRoutes:')) {
+                const payload = value.slice('reorderRoutes:'.length);
+                const keys = payload ? payload.split('|').filter(Boolean) : [];
+                window.dispatchEvent(new CustomEvent('favoritesReorderRequest', { detail: { type: 'route', keys } }));
+            } else if (value && typeof value === 'object' && value.action === 'editSubtitle') {
+                const key = typeof value.key === 'string' ? value.key : '';
+                const subtitle = typeof value.subtitle === 'string' ? value.subtitle : '';
+                if (key) {
+                    window.dispatchEvent(new CustomEvent('favoritesUpdateSubtitleRequest', { detail: { key, subtitle } }));
+                }
+            } else if (value && typeof value === 'object' && value.action === 'editIcon') {
+                const key = typeof value.key === 'string' ? value.key : '';
+                const icon = typeof value.icon === 'string' ? value.icon : '';
+                if (key) {
+                    window.dispatchEvent(new CustomEvent('favoritesUpdateIconRequest', { detail: { key, icon } }));
+                }
+            }
+            break;
         default:
             break;
     }
@@ -195,7 +244,102 @@ function applyZoomCSS(scale) {
     }
 }
 
-async function openNativeSettings() {
+function getPrivacyPolicyUrl() {
+    const base = import.meta.env.BASE_URL || '/';
+    const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+    return `${normalizedBase}privacy-policy.html`;
+}
+
+function openPrivacyPolicySheet() {
+    const backdrop = document.getElementById('privacy-policy-backdrop');
+    const sheet = document.getElementById('privacy-policy-sheet');
+    const frame = document.getElementById('privacy-policy-frame');
+    const closeBtn = document.getElementById('privacy-policy-close');
+    if (!backdrop || !sheet || !frame) return;
+
+    lastFocusedBeforePrivacySheet = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    if (frame.dataset.loaded !== 'true') {
+        frame.src = getPrivacyPolicyUrl();
+        frame.dataset.loaded = 'true';
+    }
+
+    if (!privacyPolicyPreviousUrl) {
+        privacyPolicyPreviousUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    }
+    const privacyPath = getPrivacyPolicyUrl();
+    if (window.location.pathname !== privacyPath) {
+        history.pushState({ privacySheet: true }, '', privacyPath);
+    }
+
+    backdrop.classList.remove('hidden');
+    sheet.classList.remove('hidden');
+    document.body.classList.add('privacy-sheet-open');
+
+    setTimeout(() => {
+        closeBtn?.focus();
+    }, 0);
+}
+
+function closePrivacyPolicySheet() {
+    const backdrop = document.getElementById('privacy-policy-backdrop');
+    const sheet = document.getElementById('privacy-policy-sheet');
+    if (!backdrop || !sheet) return;
+
+    backdrop.classList.add('hidden');
+    sheet.classList.add('hidden');
+    document.body.classList.remove('privacy-sheet-open');
+
+    if (privacyPolicyPreviousUrl) {
+        history.replaceState(null, '', privacyPolicyPreviousUrl);
+        privacyPolicyPreviousUrl = null;
+    }
+
+    if (lastFocusedBeforePrivacySheet && typeof lastFocusedBeforePrivacySheet.focus === 'function') {
+        lastFocusedBeforePrivacySheet.focus();
+    }
+}
+
+function initPrivacyPolicySheetControls(menuPopup) {
+    if (privacyPolicySheetInitialized) return;
+    privacyPolicySheetInitialized = true;
+
+    const backdrop = document.getElementById('privacy-policy-backdrop');
+    const closeBtn = document.getElementById('privacy-policy-close');
+
+    menuPopup?.addEventListener('click', (e) => {
+        const trigger = e.target.closest('#menu-privacy-policy-row');
+        if (!trigger) return;
+        e.preventDefault();
+        e.stopPropagation();
+        menuPopup.classList.add('hidden');
+        openPrivacyPolicySheet();
+    });
+
+    backdrop?.addEventListener('click', closePrivacyPolicySheet);
+    closeBtn?.addEventListener('click', closePrivacyPolicySheet);
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const sheet = document.getElementById('privacy-policy-sheet');
+        if (sheet && !sheet.classList.contains('hidden')) {
+            closePrivacyPolicySheet();
+        }
+    });
+}
+
+function addPrivacyPolicyMenuItem(menuPopup) {
+    if (!menuPopup || document.getElementById('menu-privacy-policy-row')) return;
+
+    const button = document.createElement('button');
+    button.id = 'menu-privacy-policy-row';
+    button.type = 'button';
+    button.className = 'menu-item menu-item-button menu-footer-link';
+    button.textContent = 'Privacy Policy';
+    menuPopup.appendChild(button);
+}
+
+async function openNativeSettings(options = {}) {
     const plugin = getNativeSettingsPlugin();
     if (!plugin) return false;
     // Load scale with mobile defaults
@@ -207,6 +351,16 @@ async function openNativeSettings() {
         currentScale = 1.0;
     }
 
+    const favoritesList = favoritesManager.getFavoritesList(300).map((item) => ({
+        key: item.key,
+        type: item.type,
+        title: item.title || item.key,
+        subtitle: item.subtitle || '',
+        routeNumber: item.routeNumber || '',
+        routeColor: item.routeColor || '',
+        stopIcon: item.stopIcon || ''
+    }));
+
     const payload = {
         simplifyNumbers: getStoredBoolean('simplifyNumbers', false),
         showMinibuses: getStoredBoolean('showMinibuses', true),
@@ -216,16 +370,26 @@ async function openNativeSettings() {
         exaggerateTerrain: getStoredBoolean('exaggerateTerrain', false),
         showPoiLabels: getStoredBoolean('showPoiLabels', false),
         theme: localStorage.getItem('theme') || 'system',
-        pageScale: currentScale
+        pageScale: currentScale,
+        icloudSyncEnabled: getStoredBoolean('icloudSyncEnabled', true),
+        favoritesList
     };
 
     try {
-        await plugin.open({ settings: payload });
+        if (options.openFavoritesMenu && typeof plugin.openFavoritesMenu === 'function') {
+            await plugin.openFavoritesMenu({ settings: payload });
+        } else {
+            await plugin.open({ settings: payload });
+        }
         return true;
     } catch (err) {
         console.warn('[NativeSettings] Failed to open', err);
         return false;
     }
+}
+
+export async function openNativeFavoritesMenu() {
+    return openNativeSettings({ openFavoritesMenu: true });
 }
 
 // Start logic
@@ -283,6 +447,7 @@ export function initSettings({ onUpdate }) {
     const menuBtn = document.getElementById('menu-btn');
     const menuPopup = document.getElementById('map-menu-popup');
     const simplifySwitch = document.getElementById('simplify-switch');
+    initPrivacyPolicySheetControls(menuPopup);
 
     // Toggle Menu
     if (menuBtn && menuPopup) {
@@ -413,6 +578,9 @@ export function initSettings({ onUpdate }) {
 
     // Dev Tools Section (Local Only)
     initDevSettings();
+
+    // Keep policy link as the final, low-emphasis row.
+    addPrivacyPolicyMenuItem(menuPopup);
 }
 
 function initDevSettings() {

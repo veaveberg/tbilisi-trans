@@ -1,5 +1,6 @@
 node_modules
 dist
+dist-ios
 .DS_Store
 *.har
 .env

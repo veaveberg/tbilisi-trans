@@ -289,3 +289,65 @@ body.dark-mode .icon-btn img {
 .icon-btn.hidden {
     display: none;
 }
+
+.more-menu {
+    position: relative;
+}
+
+.more-menu-trigger {
+    color: var(--text-main);
+}
+
+.more-menu-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 150px;
+    display: flex;
+    flex-direction: column;
+    padding: 6px;
+    border-radius: 12px;
+    background: var(--surface, rgba(255, 255, 255, 0.98));
+    border: 1px solid var(--line, rgba(0, 0, 0, 0.1));
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.14);
+    z-index: 30;
+}
+
+.more-menu-dropdown.hidden {
+    display: none;
+}
+
+.more-menu-item {
+    width: 100%;
+    display: block;
+    border: 0;
+    background: transparent;
+    color: var(--text-main);
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.2;
+    padding: 9px 10px;
+    border-radius: 8px;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+}
+
+.more-menu-item:hover {
+    background: color-mix(in srgb, var(--primary), transparent 92%);
+}
+
+.more-menu-item.hidden {
+    display: none;
+}
+
+.more-menu-item.is-unfavorite {
+    background: #e3b100;
+    color: #000;
+}
+
+.more-menu-item.is-unfavorite:hover {
+    background: #e3b100;
+    color: #000;
+}

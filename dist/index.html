@@ -62,6 +62,15 @@
       }
     }(window.location))
   </script>
+  <script>
+    // Enable native-only splash overlay (Capacitor iOS/Android)
+    (function () {
+      try {
+        var shouldShow = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+        if (shouldShow) document.documentElement.classList.add('native-splash');
+      } catch (e) { }
+    })();
+  </script>
   <style>
     /* Critical CSS to prevent FOUC */
     .hidden {
@@ -79,12 +88,17 @@
       display: none !important;
     }
   </style>
-  <script type="module" crossorigin src="/tbilisi-trans/assets/index-Q7w72BMx.js"></script>
-  <link rel="stylesheet" crossorigin href="/tbilisi-trans/assets/index-Cmfn4c22.css">
+  <script type="module" crossorigin src="/tbilisi-trans/assets/index-DBfoCG_O.js"></script>
+  <link rel="stylesheet" crossorigin href="/tbilisi-trans/assets/index-BjEvv0ON.css">
 <link rel="manifest" href="/tbilisi-trans/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/tbilisi-trans/registerSW.js"></script></head>
 
 <body class="loading">
-  <div id="app">
+    <div id="app">
+    <div id="splash-overlay" aria-hidden="true">
+      <div id="splash-backdrop"></div>
+      <img id="splash-opaque" src="/tbilisi-trans/splash-opaque.png" alt="">
+      <img id="splash-cutout" src="/tbilisi-trans/splash-cutout.png" alt="">
+    </div>
     <div id="map"></div>
 
     <div id="ui-wrapper">
@@ -124,13 +138,16 @@
                 <img src="/tbilisi-trans/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
               </button>
 
-              <button id="btn-edit-stop" class="icon-btn hidden" title="Edit Stop" style="display: none;">
-                <img src="/tbilisi-trans/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
-              </button>
-
-              <button id="copy-link-btn" class="icon-btn" title="Copy Link">
-                <img src="/tbilisi-trans/link.circle.fill.svg" alt="Copy Link" width="28" height="28">
-              </button>
+              <div class="more-menu">
+                <button id="stop-more-btn" class="icon-btn more-menu-trigger" title="More">
+                  <img src="/tbilisi-trans/ellipsis.circle.fill.svg" alt="More" width="28" height="28">
+                </button>
+                <div id="stop-more-menu" class="more-menu-dropdown hidden">
+                  <button id="btn-edit-stop" class="more-menu-item hidden" title="Edit Stop" style="display: none;">Edit</button>
+                  <button id="favorite-stop-btn" class="more-menu-item" title="Favorite">Favorite</button>
+                  <button id="copy-link-btn" class="more-menu-item" title="Copy Link">Copy link</button>
+                </div>
+              </div>
 
               <button id="close-panel" class="icon-btn" title="Close">
                 <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
@@ -194,12 +211,16 @@
               <button id="back-route-info" class="icon-btn hidden" title="Back">
                 <img src="/tbilisi-trans/chevron.backward.circle.fill.svg" alt="Back" width="28" height="28">
               </button>
-              <button id="btn-edit-route" class="icon-btn hidden" title="Edit Route" style="display: none;">
-                <img src="/tbilisi-trans/pencil.circle.fill.svg" alt="Edit" width="28" height="28">
-              </button>
-              <button id="copy-route-link-btn" class="icon-btn" title="Copy Link">
-                <img src="/tbilisi-trans/link.circle.fill.svg" alt="Copy Link" width="28" height="28">
-              </button>
+              <div class="more-menu">
+                <button id="route-more-btn" class="icon-btn more-menu-trigger" title="More">
+                  <img src="/tbilisi-trans/ellipsis.circle.fill.svg" alt="More" width="28" height="28">
+                </button>
+                <div id="route-more-menu" class="more-menu-dropdown hidden">
+                  <button id="btn-edit-route" class="more-menu-item hidden" title="Edit Route" style="display: none;">Edit</button>
+                  <button id="favorite-route-btn" class="more-menu-item" title="Favorite">Favorite</button>
+                  <button id="copy-route-link-btn" class="more-menu-item" title="Copy Link">Copy link</button>
+                </div>
+              </div>
               <button id="close-route-info" class="icon-btn" title="Close">
                 <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
               </button>
@@ -484,6 +505,20 @@
           </div>
         </div>
       </div> <!-- Close map-controls -->
+
+      <div id="privacy-policy-backdrop" class="privacy-policy-backdrop hidden"></div>
+      <section id="privacy-policy-sheet" class="privacy-policy-sheet hidden" aria-modal="true" role="dialog"
+        aria-labelledby="privacy-policy-title">
+        <header class="privacy-policy-header">
+          <h2 id="privacy-policy-title">Privacy Policy</h2>
+          <button id="privacy-policy-close" class="icon-btn" type="button" title="Close">
+            <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+          </button>
+        </header>
+        <div class="privacy-policy-body">
+          <iframe id="privacy-policy-frame" title="Privacy Policy" loading="lazy"></iframe>
+        </div>
+      </section>
 
     </div><!-- Close ui-wrapper -->
   </div> <!-- Close app -->

@@ -14,6 +14,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         self.window = window
         window.makeKeyAndVisible()
         
+        // Install native splash overlay (continues seamlessly from LaunchScreen.storyboard)
+        SplashAnimator.shared.install(in: window)
+        
         // Handle Universal Links from cold start
         print("[SceneDelegate] willConnectTo - userActivities count: \(connectionOptions.userActivities.count)")
         if let userActivity = connectionOptions.userActivities.first,
@@ -122,4 +125,3 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
     }
 }
-

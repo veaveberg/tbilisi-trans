@@ -7,6 +7,7 @@ export class HistoryManager {
         this.CARD_KEY = 'card_history_v2';
         this.SEARCH_LIMIT = 30;
         this.CARD_LIMIT = 30;
+        this._listeners = new Set();
 
         this._migrateLegacy();
     }
@@ -40,8 +41,8 @@ export class HistoryManager {
     // --- Search History ---
     // Saved when user CLICKS a result in the search dropdown
     addSearch(item) {
-        // item: { type: 'stop'|'route', id: string, name: string, ... }
-        this._add(this.SEARCH_KEY, item, this.SEARCH_LIMIT);
+        const didChange = this._add(this.SEARCH_KEY, item, this.SEARCH_LIMIT);
+        if (didChange) this._emitChange('search:add');
     }
 
     getRecentSearches(limit = 5) {
@@ -51,7 +52,8 @@ export class HistoryManager {
     // --- Card History ---
     // Saved when user OPENS a card (map click or search result)
     addCard(item) {
-        this._add(this.CARD_KEY, item, this.CARD_LIMIT);
+        const didChange = this._add(this.CARD_KEY, item, this.CARD_LIMIT);
+        if (didChange) this._emitChange('card:add');
     }
 
     getRecentCards(limit = 10) {
@@ -60,16 +62,55 @@ export class HistoryManager {
 
     // --- Removal ---
     removeSearch(item) {
-        this._remove(this.SEARCH_KEY, item);
+        const didChange = this._remove(this.SEARCH_KEY, item);
+        if (didChange) this._emitChange('search:remove');
     }
 
     removeCard(item) {
-        this._remove(this.CARD_KEY, item);
+        const didChange = this._remove(this.CARD_KEY, item);
+        if (didChange) this._emitChange('card:remove');
     }
 
     clearSearchHistory() {
         console.log('[History] Clearing all search history.');
         localStorage.setItem(this.SEARCH_KEY, '[]');
+        this._emitChange('search:clear');
+    }
+
+    getSnapshot() {
+        return {
+            searches: this._get(this.SEARCH_KEY),
+            cards: this._get(this.CARD_KEY)
+        };
+    }
+
+    replaceHistory({ searches, cards }) {
+        if (Array.isArray(searches)) {
+            localStorage.setItem(this.SEARCH_KEY, JSON.stringify(searches.slice(0, this.SEARCH_LIMIT)));
+        }
+        if (Array.isArray(cards)) {
+            localStorage.setItem(this.CARD_KEY, JSON.stringify(cards.slice(0, this.CARD_LIMIT)));
+        }
+        this._emitChange('replace');
+    }
+
+    subscribe(listener) {
+        if (typeof listener !== 'function') {
+            return () => {};
+        }
+        this._listeners.add(listener);
+        return () => this._listeners.delete(listener);
+    }
+
+    _emitChange(reason) {
+        const snapshot = this.getSnapshot();
+        this._listeners.forEach(listener => {
+            try {
+                listener({ reason, ...snapshot });
+            } catch (e) {
+                console.error('[History] Change listener failed', e);
+            }
+        });
     }
 
     // --- Private Helpers ---
@@ -83,18 +124,22 @@ export class HistoryManager {
     }
 
     _add(key, item, limit) {
+        const normalizedItem = {
+            ...item,
+            ts: Number.isFinite(item?.ts) ? Number(item.ts) : Date.now()
+        };
         let list = this._get(key);
 
         // Remove existing (move to top)
         list = list.filter(i => {
             // Compare unique ID
-            if (i.type !== item.type) return true;
-            if (i.id !== item.id) return true;
+            if (i.type !== normalizedItem.type) return true;
+            if (String(i.id) !== String(normalizedItem.id)) return true;
             return false;
         });
 
         // Add to top
-        list.unshift(item);
+        list.unshift(normalizedItem);
 
         // Limit
         if (list.length > limit) {
@@ -103,6 +148,7 @@ export class HistoryManager {
 
         try {
             localStorage.setItem(key, JSON.stringify(list));
+            return true;
         } catch (e) {
             console.error('[History] Storage quota exceeded. Clearing old items.', e);
             if (e.name === 'QuotaExceededError' || e.code === 22) {
@@ -110,11 +156,13 @@ export class HistoryManager {
                 list = list.slice(0, Math.ceil(limit / 2));
                 try {
                     localStorage.setItem(key, JSON.stringify(list));
+                    return true;
                 } catch (retryErr) {
                     console.error('[History] Failed to save history even after cleanup.', retryErr);
                 }
             }
         }
+        return false;
     }
 
     _remove(key, item) {
@@ -146,6 +194,7 @@ export class HistoryManager {
 
         console.log(`[History] Removing ${item.type}:${item.id} from ${key}. Count: ${initialLength} -> ${list.length}`);
         localStorage.setItem(key, JSON.stringify(list));
+        return list.length !== initialLength;
     }
 }
 
