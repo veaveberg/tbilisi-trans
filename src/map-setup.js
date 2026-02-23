@@ -2,6 +2,9 @@ import mapboxgl from 'mapbox-gl';
 import * as api from './api.js';
 
 // Initialize Map
+if (!api.MAPBOX_TOKEN) {
+    throw new Error('Missing VITE_MAPBOX_TOKEN. Set it in .env.local or CI environment.');
+}
 mapboxgl.accessToken = api.MAPBOX_TOKEN;
 if (typeof mapboxgl.setTelemetryEnabled === 'function') {
     mapboxgl.setTelemetryEnabled(false);
