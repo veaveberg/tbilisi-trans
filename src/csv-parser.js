@@ -9,16 +9,16 @@
  * @returns {Array<Object>} Array of row objects
  */
 export function parseCSV(csvText) {
-    const lines = csvText.split('\n').filter(line => line.trim());
-    if (lines.length === 0) return [];
+    const records = splitCSVRecords(csvText).filter(line => line.trim());
+    if (records.length === 0) return [];
 
     // Parse header
-    const headers = parseCSVLine(lines[0]);
+    const headers = parseCSVLine(records[0]);
 
     // Parse rows
     const rows = [];
-    for (let i = 1; i < lines.length; i++) {
-        const values = parseCSVLine(lines[i]);
+    for (let i = 1; i < records.length; i++) {
+        const values = parseCSVLine(records[i]);
         if (values.length === 0) continue;
 
         const row = {};
@@ -29,6 +29,47 @@ export function parseCSV(csvText) {
     }
 
     return rows;
+}
+
+/**
+ * Split CSV into record strings while respecting quoted multiline fields.
+ * @param {string} csvText
+ * @returns {Array<string>}
+ */
+function splitCSVRecords(csvText) {
+    const records = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < csvText.length; i++) {
+        const char = csvText[i];
+        const nextChar = csvText[i + 1];
+
+        if (char === '"') {
+            if (inQuotes && nextChar === '"') {
+                current += '""';
+                i++;
+                continue;
+            }
+            inQuotes = !inQuotes;
+            current += char;
+            continue;
+        }
+
+        if (char === '\n' && !inQuotes) {
+            records.push(current.replace(/\r$/, ''));
+            current = '';
+            continue;
+        }
+
+        current += char;
+    }
+
+    if (current.length > 0) {
+        records.push(current.replace(/\r$/, ''));
+    }
+
+    return records;
 }
 
 /**
