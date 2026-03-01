@@ -11,8 +11,8 @@
     "build": "vite build",
     "build:all": "npm run prefetch && vite build",
     "build:cap": "VITE_BASE_URL=/ npm run build",
-    "build:ios": "VITE_BASE_URL=/ VITE_OUT_DIR=dist-ios npm run build",
-    "sync:ios": "npm run build:ios && rsync -a --delete dist-ios/ ios/App/App/public/",
+    "build:ios": "VITE_BASE_URL=/ VITE_OUT_DIR=dist-ios npm run build && rsync -a --delete dist-ios/ ios/App/App/public/",
+    "sync:ios": "npm run build:ios",
     "preview": "vite preview"
   },
   "dependencies": {

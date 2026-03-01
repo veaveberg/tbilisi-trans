@@ -18,7 +18,7 @@
                BlueprintIdentifier = "504EC3031FED79650016851F"
                BuildableName = "Tbilisi Trans.app"
                BlueprintName = "Tbilisi Trans"
-               ReferencedContainer = "container:Tbilisi Trans.xcodeproj">
+               ReferencedContainer = "container:App.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -47,7 +47,7 @@
             BlueprintIdentifier = "504EC3031FED79650016851F"
             BuildableName = "Tbilisi Trans.app"
             BlueprintName = "Tbilisi Trans"
-            ReferencedContainer = "container:Tbilisi Trans.xcodeproj">
+            ReferencedContainer = "container:App.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -64,7 +64,7 @@
             BlueprintIdentifier = "504EC3031FED79650016851F"
             BuildableName = "Tbilisi Trans.app"
             BlueprintName = "Tbilisi Trans"
-            ReferencedContainer = "container:Tbilisi Trans.xcodeproj">
+            ReferencedContainer = "container:App.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

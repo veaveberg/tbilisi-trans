@@ -36,6 +36,16 @@ let isHeadingSupported = false;
 let isWaitingForFirstLocation = false;
 let isAutoShowingMarker = false;
 let isAutoFlyOnLaunch = false;
+let smoothedFollowCoords = null;
+
+const TBILISI_REGION_BBOX = Object.freeze({
+    west: 44.5,
+    south: 41.5,
+    east: 45.1,
+    north: 42.0
+});
+const FOLLOW_SMOOTHING_FACTOR = 0.35;
+const FOLLOW_SNAP_DISTANCE_METERS = 250;
 
 const isCapacitor = typeof window !== 'undefined' && window.Capacitor;
 const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/i.test(navigator.userAgent);
@@ -129,6 +139,7 @@ export function isUserInteractingWithMap() {
 export function stopTracking() {
     if (currentLocationState !== LOCATION_STATES.OFF) {
         currentLocationState = LOCATION_STATES.OFF;
+        smoothedFollowCoords = null;
         const locateBtn = document.getElementById('locate-me');
         if (locateBtn) updateLocationIcon(locateBtn);
     }
@@ -144,6 +155,75 @@ function isSecureContext() {
 function checkHeadingSupport() {
     return !!(window.DeviceOrientationEvent) &&
         ('ontouchstart' in window || 'ondeviceorientationabsolute' in window || 'ondeviceorientation' in window);
+}
+
+function isWithinTbilisiRegion(lng, lat) {
+    return lng >= TBILISI_REGION_BBOX.west &&
+        lng <= TBILISI_REGION_BBOX.east &&
+        lat >= TBILISI_REGION_BBOX.south &&
+        lat <= TBILISI_REGION_BBOX.north;
+}
+
+function distanceMeters(a, b) {
+    const toRad = (deg) => deg * (Math.PI / 180);
+    const earthRadiusMeters = 6371000;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+
+    const h = Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 2 * earthRadiusMeters * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function getSmoothedFollowCoords(nextCoords) {
+    if (!smoothedFollowCoords) {
+        smoothedFollowCoords = { ...nextCoords };
+        return smoothedFollowCoords;
+    }
+
+    const jumpDistance = distanceMeters(smoothedFollowCoords, nextCoords);
+    if (jumpDistance > FOLLOW_SNAP_DISTANCE_METERS) {
+        smoothedFollowCoords = { ...nextCoords };
+        return smoothedFollowCoords;
+    }
+
+    smoothedFollowCoords = {
+        lng: smoothedFollowCoords.lng + (nextCoords.lng - smoothedFollowCoords.lng) * FOLLOW_SMOOTHING_FACTOR,
+        lat: smoothedFollowCoords.lat + (nextCoords.lat - smoothedFollowCoords.lat) * FOLLOW_SMOOTHING_FACTOR
+    };
+    return smoothedFollowCoords;
+}
+
+function suppressMapAutoMovements(map) {
+    if (!window._originalMapMethods) {
+        window._originalMapMethods = {
+            flyTo: map.flyTo,
+            jumpTo: map.jumpTo,
+            easeTo: map.easeTo,
+            fitBounds: map.fitBounds,
+            setCenter: map.setCenter,
+            setZoom: map.setZoom
+        };
+    }
+    map.flyTo = () => map;
+    map.jumpTo = () => map;
+    map.easeTo = () => map;
+    map.fitBounds = () => map;
+    map.setCenter = () => map;
+    map.setZoom = () => map;
+}
+
+function restoreMapAutoMovements(map) {
+    if (!window._originalMapMethods) return;
+    map.flyTo = window._originalMapMethods.flyTo;
+    map.jumpTo = window._originalMapMethods.jumpTo;
+    map.easeTo = window._originalMapMethods.easeTo;
+    map.fitBounds = window._originalMapMethods.fitBounds;
+    map.setCenter = window._originalMapMethods.setCenter;
+    map.setZoom = window._originalMapMethods.setZoom;
+    delete window._originalMapMethods;
 }
 
 // Helper to parse rotation from a transform string (matrix or rotate)
@@ -378,6 +458,7 @@ export function setupGeolocation(map) {
                 currentLocationState = LOCATION_STATES.FOLLOW;
                 updateLocationIcon(locateBtn);
                 isWaitingForFirstLocation = true;
+                smoothedFollowCoords = lastUserCoords ? { ...lastUserCoords } : null;
 
                 if (lastUserCoords) {
                     map.easeTo({
@@ -540,6 +621,7 @@ export function setupGeolocation(map) {
             }
         } else {
             currentLocationState = LOCATION_STATES.OFF;
+            smoothedFollowCoords = null;
             updateLocationIcon(locateBtn);
         }
     };
@@ -610,39 +692,50 @@ export function setupGeolocation(map) {
         }
 
         if (isAutoShowingMarker) {
+            restoreMapAutoMovements(map);
             isAutoShowingMarker = false;
         }
 
         if (isAutoFlyOnLaunch) {
             isAutoFlyOnLaunch = false;
-            const targetZoom = 16;
-            map.jumpTo({
-                center: [coords.longitude, coords.latitude],
-                zoom: targetZoom
-            });
-            updateMapLocationHash(map);
-            // Ensure zoom applies even if jumpTo is overridden elsewhere
-            setTimeout(() => {
-                if (map.getZoom() < targetZoom - 0.1) {
-                    map.easeTo({ zoom: targetZoom, duration: 600 });
-                    map.once('moveend', () => updateMapLocationHash(map));
-                }
-            }, 300);
+            if (isWithinTbilisiRegion(coords.longitude, coords.latitude)) {
+                const targetZoom = 16;
+                map.jumpTo({
+                    center: [coords.longitude, coords.latitude],
+                    zoom: targetZoom
+                });
+                updateMapLocationHash(map);
+                // Ensure zoom applies even if jumpTo is overridden elsewhere
+                setTimeout(() => {
+                    if (map.getZoom() < targetZoom - 0.1) {
+                        map.easeTo({ zoom: targetZoom, duration: 600 });
+                        map.once('moveend', () => updateMapLocationHash(map));
+                    }
+                }, 300);
+            }
             return;
         }
 
         const shouldFollow = (currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING) && !isUserInteracting && !isUserRotating && !isDragging && !isPitching && !isReCentering;
         if (shouldFollow) {
+            const smoothedCoords = getSmoothedFollowCoords({ lng: coords.longitude, lat: coords.latitude });
             map.easeTo({
-                center: [coords.longitude, coords.latitude],
-                duration: 100
+                center: [smoothedCoords.lng, smoothedCoords.lat],
+                duration: 500,
+                easing: (t) => t * (2 - t)
             });
+        } else {
+            smoothedFollowCoords = null;
         }
     });
 
     geolocate.on('error', (e) => {
         // Simple error handling for now - can expand if needed
         console.error('[Geolocation] Error', e);
+        if (isAutoShowingMarker) {
+            restoreMapAutoMovements(map);
+            isAutoShowingMarker = false;
+        }
         const timeSinceClick = Date.now() - lastLocateClickTime;
         const wasTracking = lastUserCoords !== null;
 
@@ -687,6 +780,9 @@ export function setupGeolocation(map) {
         if (localStorage.getItem('compassPermissionGranted') === 'true') {
             startPersistentOrientationTracking(map);
         }
+        // Prevent GeolocateControl internals from recentering before our region gate runs.
+        suppressMapAutoMovements(map);
+        isAutoShowingMarker = true;
         geolocate.trigger();
     };
 

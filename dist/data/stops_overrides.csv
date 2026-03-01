@@ -1,4 +1,4 @@
-id,name_en,name_en_override,name_ka,name_ka_override,name_ru_override,lat,lat_override,lon,lon_override,rotation,rotation_override,mergeParent,hubTarget
+id,name_en,name_en_override,name_ka,name_ka_override,name_ru_override,lat,lat_override,lon,lon_override,rotation,rotation_override,mergeParent,hubTarget,vehicleMode_override,provider_override,gondolaInfo_override
 1:799,Station Square,,სადგურის მოედანი,,,41.720675,,44.798547,,328,,,HUB_1_799
 1:801,Public School #24,,#24-ე საჯარო სკოლა,,,41.716785,,44.791898,,150,,,
 1:802,General Giorgi Kvinitadze Street,,გენერალ გიორგი კვინიტაძის ქუჩა,,,41.717996,41.71796,44.789857,44.78976,248,,,
@@ -2700,12 +2700,16 @@ id,name_en,name_en_override,name_ka,name_ka_override,name_ru_override,lat,lat_ov
 1:20293,საირმის ქ. კორპ. N6,,საირმის ქ. კორპ. N6,,,41.722672,,44.759672,,356,,,
 1:20294,გივი ამილახვარის ქ. N17,,გივი ამილახვარის ქ. N17,,,41.698366,,44.912476,,186,,,
 1:20295,ვახტანგ ფირცხალავას ქ. N39,,ვახტანგ ფირცხალავას ქ. N39,,,41.778699,,44.834747,,0,,,
-1:gondola_1,Rike,,რიყე,,,41.692039,,44.810776,,0,,,
-1:gondola_2,Narikala,,ნარიყალა,,,41.688088,,44.807127,,0,,,
-1:gondola_3,Vake,,ჭავჭავაძის გამზ.,,,41.711641,,44.753494,,0,,,
-1:gondola_4,Turtle Lake,,კუს ტბა,,,41.701247,,44.751546,,0,,,
+1:gondola_1,Rike,Rike Park Cable Car Station,რიყე,,,41.692039,,44.810776,,0,,,
+1:gondola_2,Narikala,Narikala Cable Car Station,ნარიყალა,,,41.688088,41.68805,44.807127,44.80722,0,,,
+1:gondola_3,Vake,Vake Cable Car Station,ჭავჭავაძის გამზ.,,,41.711641,,44.753494,,0,,,
+1:gondola_4,Turtle Lake,Turtle Lake Cable Car Station,კუს ტბა,,,41.701247,,44.751546,,0,,,
 1:gondola_5,University,,უნივერსიტეტი,,,41.717004,,44.717915,,0,,,
 1:gondola_6,Bagebi,,ბაგები,,,41.713714,,44.717711,,0,,,
+1:GONDOLA_MANUAL_1,,Funicular Lower Station,,,,,41.69532,,44.79194,,,,
+1:GONDOLA_MANUAL_2,,Mtatsminda Park Funicular Upper Station,,,,,41.69492,,44.78694,,,,
+1:GONDOLA_MANUAL_3,,Mtatsminda Park Cable Car,,,,,41.69578,,44.78643,,,,
+1:GONDOLA_MANUAL_4,,Rustaveli Cable Car,,,,,41.70281,,44.79048,,,,
 1:metro_1_1,M/S Akhmeteli Theatre,,მ/ს ახმეტელის თეატრი,,,41.792064,,44.815908,,0,,,
 1:metro_1_2,M/S Sarajisvhili,,მ/ს სარაჯიშვილი,,,41.783583,,44.799524,,0,,,
 1:metro_1_3,M/S Guramishvili,,მ/ს გურამიშვილი,,,41.77509,,44.795235,,0,,,
