@@ -253,6 +253,14 @@ body.dark-mode .edit-restore-btn img {
     height: 32px;
 }
 
+.gondola-info-input {
+    min-height: 72px;
+    height: auto;
+    padding: 8px;
+    line-height: 1.35;
+    resize: vertical;
+}
+
 /* Route Names Editor Styles (Modal) */
 #all-routes-editor {
     position: fixed;

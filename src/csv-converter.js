@@ -198,6 +198,9 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
         row.rotation_override = '';
         row.mergeParent = '';
         row.hubTarget = '';
+        row.vehicleMode_override = '';
+        row.provider_override = '';
+        row.gondolaInfo_override = '';
 
         // Try to find override using normalized map
         const baseId = id.includes(':') ? id.split(':')[1] : id;
@@ -212,7 +215,11 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
             }
             if (override.lat !== undefined) row.lat_override = override.lat;
             if (override.lon !== undefined) row.lon_override = override.lon;
-            if (override.bearing !== undefined) row.bearing_override = override.bearing;
+            if (override.rotation !== undefined) row.rotation_override = override.rotation;
+            if (override.bearing !== undefined) row.rotation_override = override.bearing;
+            if (override.vehicleMode !== undefined) row.vehicleMode_override = override.vehicleMode;
+            if (override.provider !== undefined) row.provider_override = override.provider;
+            if (override.gondolaInfo !== undefined) row.gondolaInfo_override = override.gondolaInfo;
         }
 
         // Apply merges (normalize incoming merges too)
@@ -278,6 +285,9 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
             row.rotation_override = '';
             row.mergeParent = '';
             row.hubTarget = '';
+            row.vehicleMode_override = '';
+            row.provider_override = '';
+            row.gondolaInfo_override = '';
 
             // Apply overrides
             const override = overrides[id]; // Here the ID is from config, so direct access is likely fine if it's new
@@ -290,6 +300,9 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
                 if (override.lat !== undefined) row.lat_override = override.lat;
                 if (override.lon !== undefined) row.lon_override = override.lon;
                 if (override.rotation !== undefined) row.rotation_override = override.rotation;
+                if (override.vehicleMode !== undefined) row.vehicleMode_override = override.vehicleMode;
+                if (override.provider !== undefined) row.provider_override = override.provider;
+                if (override.gondolaInfo !== undefined) row.gondolaInfo_override = override.gondolaInfo;
             }
 
             // Apply merges
@@ -369,7 +382,8 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
         'lat', 'lat_override',
         'lon', 'lon_override',
         'rotation', 'rotation_override',
-        'mergeParent', 'hubTarget'
+        'mergeParent', 'hubTarget',
+        'vehicleMode_override', 'provider_override', 'gondolaInfo_override'
     ];
 
     const emptyRow = stopsHeaders.reduce((acc, h) => ({ ...acc, [h]: '' }), {});

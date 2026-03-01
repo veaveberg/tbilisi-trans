@@ -102,6 +102,24 @@ body.dark-mode .panel.metro-mode .led-text.scheduled-time {
     padding-bottom: 8px;
 }
 
+.panel.metro-mode .metro-inline-warning {
+    margin-top: 8px;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 0.82rem;
+    line-height: 1.25;
+    color: #9a3412;
+}
+
+.panel.metro-mode .metro-inline-warning .icon {
+    margin-top: 1px;
+}
+
+body.dark-mode .panel.metro-mode .metro-inline-warning {
+    color: #fdba74;
+}
+
 .panel.metro-mode .arrival-card-right {
     padding-right: 12px;
     padding-left: 0;

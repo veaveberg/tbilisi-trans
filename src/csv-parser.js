@@ -273,6 +273,7 @@ export function overridesToCSVRows(overrides, existingRows = [], idColumn = 'id'
         if (override.lat !== undefined) row.lat_override = override.lat;
         if (override.lon !== undefined) row.lon_override = override.lon;
         if (override.rotation !== undefined) row.rotation_override = override.rotation;
+        if (override.gondolaInfo !== undefined) row.gondolaInfo_override = override.gondolaInfo;
         if (override.mergeParent) row.mergeParent = override.mergeParent;
         if (override.hubTarget) row.hubTarget = override.hubTarget;
         if (override.invertDirection !== undefined) row.invertDirection = override.invertDirection ? 'true' : '';

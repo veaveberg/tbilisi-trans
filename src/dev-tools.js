@@ -669,6 +669,7 @@ function initEditTools() {
     // Name Inputs
     const nameEn = document.getElementById('edit-name-en');
     const nameKa = document.getElementById('edit-name-ka');
+    const gondolaInfoInput = document.getElementById('edit-gondola-info');
     const restoreEnBtn = document.getElementById('edit-restore-en');
     const restoreKaBtn = document.getElementById('edit-restore-ka');
 
@@ -691,6 +692,12 @@ function initEditTools() {
 
     nameEn.addEventListener('input', updateNameOverride);
     nameKa.addEventListener('input', updateNameOverride);
+    gondolaInfoInput?.addEventListener('input', () => {
+        const val = gondolaInfoInput.value.trim();
+        if (!val) delete editState.overrides.gondolaInfo;
+        else editState.overrides.gondolaInfo = val;
+        checkDirtyState();
+    });
 
     const restoreField = async (locale) => {
         const originalVal = originalNames[locale] || '';
@@ -766,6 +773,9 @@ function startEditing(stopId) {
         nameEn.value = '';
         nameKa.value = '';
     }
+    if (gondolaInfoInput) {
+        gondolaInfoInput.value = editState.overrides.gondolaInfo || '';
+    }
 
     originalNames = { en: null, ka: null };
     // Not referencing rawStops from module scope anymore, need to access via window or provider if possible. 
@@ -794,6 +804,12 @@ function startEditing(stopId) {
         toggleRot.classList.add('active');
     } else {
         toggleRot.classList.remove('active');
+    }
+
+    // Keep manual gondola metadata sticky so edits don't strip teal styling on save.
+    if (String(stopId).startsWith('1:GONDOLA_MANUAL_')) {
+        editState.overrides.vehicleMode = 'GONDOLA';
+        editState.overrides.provider = 'manual-gondola';
     }
 
     updateEditMergedList();
@@ -1277,8 +1293,9 @@ function checkDirtyState() {
     const savedName = savedOverrides.name || {};
     const currentName = editState.overrides.name || {};
     const nameDirty = (currentName.en || '') !== (savedName.en || '') || (currentName.ka || '') !== (savedName.ka || '');
+    const gondolaInfoDirty = (editState.overrides.gondolaInfo || '') !== (savedOverrides.gondolaInfo || '');
 
-    const isDirty = latDirty || lonDirty || bearDirty || mergeDirty || unmergeDirty || unhubDirty || hubAddDirty || nameDirty;
+    const isDirty = latDirty || lonDirty || bearDirty || mergeDirty || unmergeDirty || unhubDirty || hubAddDirty || nameDirty || gondolaInfoDirty;
 
     applyBtn.disabled = !isDirty;
     if (isDirty) {
@@ -1816,4 +1833,3 @@ export async function populateAllVirtualTermini() {
 }
 
 window.populateAllVirtualTermini = populateAllVirtualTermini;
-

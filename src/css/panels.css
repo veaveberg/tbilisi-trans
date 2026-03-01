@@ -307,10 +307,14 @@ body.dark-mode .icon-btn img {
     flex-direction: column;
     padding: 6px;
     border-radius: 12px;
-    background: var(--surface, rgba(255, 255, 255, 0.98));
-    border: 1px solid var(--line, rgba(0, 0, 0, 0.1));
+    background: var(--bg-panel);
+    border: 1px solid var(--border-light);
     box-shadow: 0 10px 20px rgba(0, 0, 0, 0.14);
     z-index: 30;
+}
+
+body.dark-mode .more-menu-dropdown {
+    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.45);
 }
 
 .more-menu-dropdown.hidden {

@@ -301,6 +301,10 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                             if (intervalDesc) {
                                 bottomHTML += `,<span class="interval-desc">&nbsp;${intervalDesc}</span>`;
                             }
+                            const showVarketiliWarning = headsign === 'Varketili' || (route.shortName === '1' && headsign.includes('Varketili'));
+                            const warningHTML = showVarketiliWarning
+                                ? `<div class="metro-inline-warning"><span class="icon">⚠️</span><span class="text">In mornings 6:00–7:00 and evenings 23:00–0:00 trains terminate at Samgori. Between Samgori and Varketili use replacement bus 174</span></div>`
+                                : '';
 
                             arrivalItems.push(`
                                 <div class="arrival-item metro-consolidated-item" 
@@ -314,6 +318,7 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                         </div>
                                         <div class="arrival-card-bottom">
                                             ${bottomHTML}
+                                            ${warningHTML}
                                         </div>
                                     </div>
                                     <div class="arrival-card-right">
@@ -343,14 +348,6 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                         </div>
                                     </div>
                                 </div>
-                                ${(headsign === 'Varketili' || (route.shortName === '1' && headsign.includes('Varketili'))) ? `
-                                <div class="metro-hours-badge warning" style="margin: -8px 16px 16px 16px; width: calc(100% - 32px);">
-                                    <span class="icon">⚠️</span>
-                                    <div style="display: flex; flex-direction: column;">
-                                         <span style="font-weight: 500; font-size: 0.85em; line-height: 1.3;">In mornings 6:00–7:00 and evenings 23:00–0:00 trains terminate at Samgori. Between Samgori and Varketili use replacement bus 174</span>
-                                    </div>
-                                </div>
-                                ` : ''}
                             `);
                         });
                     });
@@ -554,7 +551,11 @@ export function processMetroStops(stops, stopBearings = {}) {
                     name: stop.name,
                     code: stop.code,
                     mode: stop.vehicleMode || 'BUS',
-                    rotation: stop.rotation
+                    rotation: stop.rotation,
+                    source: stop._source || '',
+                    provider: stop.provider || '',
+                    ticketProvider: stop.ticketProvider || '',
+                    gondolaInfo: stop.gondolaInfo || ''
                 }
             });
         }

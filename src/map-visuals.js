@@ -466,8 +466,12 @@ export async function loadImages() {
         const themes = [
             { suffix: 'dark', fill: '#FFED74', stroke: '#D4C45A' },    // Dark theme base
             { suffix: 'light', fill: '#3C3C3C', stroke: '#5C5C5C' },   // Light theme base
-            { suffix: 'hover-dark', fill: '#FFFFFF', stroke: '#E5E7EB' }, // Dark theme hover: White fill, very subtle gray stroke
-            { suffix: 'hover-light', fill: '#898989', stroke: '#FFFFFF' } // Light theme hover: Light gray fill, white stroke
+            { suffix: 'hover-dark', fill: '#FFFFFF', stroke: '#E5E7EB' }, // Dark theme hover
+            { suffix: 'hover-light', fill: '#898989', stroke: '#FFFFFF' }, // Light theme hover
+            { suffix: 'gondola-dark', fill: '#60A5FA', stroke: '#3B82F6' }, // Gondola default dark (blue)
+            { suffix: 'gondola-light', fill: '#2563EB', stroke: '#1D4ED8' }, // Gondola default light (blue)
+            { suffix: 'gondola-manual-dark', fill: '#2DD4BF', stroke: '#14B8A6' }, // Manual/provider gondola dark (teal)
+            { suffix: 'gondola-manual-light', fill: '#0D9488', stroke: '#0F766E' } // Manual/provider gondola light (teal)
         ];
 
         themes.forEach(({ suffix, fill, stroke }) => {
@@ -589,11 +593,25 @@ export function getCircleRadiusExpression(scale = 1) {
 export function updateMapTheme() {
     if (!map || !map.getStyle()) return;
     const isDark = document.body.classList.contains('dark-mode');
+    const manualGondolaExpr = [
+        'all',
+        ['==', ['get', 'mode'], 'GONDOLA'],
+        ['any',
+            ['==', ['get', 'source'], 'config'],
+            ['==', ['get', '_source'], 'config'],
+            ['==', ['get', 'provider'], 'manual-gondola'],
+            ['==', ['get', 'ticketProvider'], 'manual-gondola']
+        ]
+    ];
     const theme = {
         label: isDark ? '#ffffff' : '#000000',
         halo: isDark ? '#000000' : '#ffffff',
         stop: isDark ? '#FFED74' : '#3C3C3C',
         stopStroke: isDark ? '#D4C45A' : '#5C5C5C',
+        gondolaStop: isDark ? '#60A5FA' : '#2563EB',
+        gondolaStopStroke: isDark ? '#3B82F6' : '#1D4ED8',
+        manualGondolaStop: isDark ? '#2DD4BF' : '#0D9488',
+        manualGondolaStopStroke: isDark ? '#14B8A6' : '#0F766E',
         glow: isDark ? '#FFED74' : '#3C3C3C',
         highlightGlow: isDark ? '#FFED74' : '#93C5FD',
         suffix: isDark ? 'dark' : 'light'
@@ -614,19 +632,45 @@ export function updateMapTheme() {
 
     // Update Stop Circle Layers
     if (map.getLayer('stops-layer-circle')) {
-        map.setPaintProperty('stops-layer-circle', 'circle-color', theme.stop);
-        map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', theme.stopStroke);
+        map.setPaintProperty('stops-layer-circle', 'circle-color', [
+            'case',
+            manualGondolaExpr, theme.manualGondolaStop,
+            ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStop,
+            theme.stop
+        ]);
+        map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', [
+            'case',
+            manualGondolaExpr, theme.manualGondolaStopStroke,
+            ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStopStroke,
+            theme.stopStroke
+        ]);
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-width', 1.5);
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', 1);
     }
     if (map.getLayer('stops-layer-circle-hover')) {
-        map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-color', theme.stopStroke);
+        map.setPaintProperty('stops-layer-circle-hover', 'circle-color', [
+            'case',
+            manualGondolaExpr, theme.manualGondolaStop,
+            ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStop,
+            theme.stop
+        ]);
+        map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-color', [
+            'case',
+            manualGondolaExpr, theme.manualGondolaStopStroke,
+            ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStopStroke,
+            theme.stopStroke
+        ]);
         map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-width', 1.5);
     }
 
     // Update Glow Layers
     if (map.getLayer('stops-layer-glow')) {
-        map.setPaintProperty('stops-layer-glow', 'circle-color', theme.glow);
+        map.setPaintProperty('stops-layer-glow', 'circle-color', [
+            'case',
+            manualGondolaExpr, theme.manualGondolaStop,
+            ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStop,
+            theme.glow
+        ]);
         map.setPaintProperty('stops-layer-glow', 'circle-opacity', 0.05);
     }
     if (map.getLayer('stops-highlight-glow')) {
@@ -635,7 +679,14 @@ export function updateMapTheme() {
     }
 
     // Update Symbol Layers (Close-up)
-    const iconImage = ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${theme.suffix}`, `stop-close-up-icon-${theme.suffix}`];
+    const iconImage = [
+        'case',
+        manualGondolaExpr,
+        ['case', ['==', ['get', 'rotation'], 0], `stop-icon-gondola-manual-${theme.suffix}`, `stop-close-up-icon-gondola-manual-${theme.suffix}`],
+        ['==', ['get', 'mode'], 'GONDOLA'],
+        ['case', ['==', ['get', 'rotation'], 0], `stop-icon-gondola-${theme.suffix}`, `stop-close-up-icon-gondola-${theme.suffix}`],
+        ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${theme.suffix}`, `stop-close-up-icon-${theme.suffix}`]
+    ];
     if (map.getLayer('stops-layer')) {
         map.setLayoutProperty('stops-layer', 'icon-image', iconImage);
     }
@@ -643,7 +694,14 @@ export function updateMapTheme() {
         // Hover image update handled in updateStopHoverEffects
     }
     if (map.getLayer('stops-highlight')) {
-        const highlightImage = ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-${theme.suffix}`, `stop-icon-${theme.suffix}`];
+        const highlightImage = [
+            'case',
+            manualGondolaExpr,
+            ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-gondola-manual-${theme.suffix}`, `stop-icon-gondola-manual-${theme.suffix}`],
+            ['==', ['get', 'mode'], 'GONDOLA'],
+            ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-gondola-${theme.suffix}`, `stop-icon-gondola-${theme.suffix}`],
+            ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-${theme.suffix}`, `stop-icon-${theme.suffix}`]
+        ];
         map.setLayoutProperty('stops-highlight', 'icon-image', highlightImage);
     }
 
@@ -777,7 +835,22 @@ export function addStopsToMap(stops, options = {}) {
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
             'symbol-z-order': 'source',
-            'icon-image': ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${themeSuffix}`, `stop-close-up-icon-${themeSuffix}`],
+            'icon-image': [
+                'case',
+                ['all',
+                    ['==', ['get', 'mode'], 'GONDOLA'],
+                    ['any',
+                        ['==', ['get', 'source'], 'config'],
+                        ['==', ['get', '_source'], 'config'],
+                        ['==', ['get', 'provider'], 'manual-gondola'],
+                        ['==', ['get', 'ticketProvider'], 'manual-gondola']
+                    ]
+                ],
+                ['case', ['==', ['get', 'rotation'], 0], `stop-icon-gondola-manual-${themeSuffix}`, `stop-close-up-icon-gondola-manual-${themeSuffix}`],
+                ['==', ['get', 'mode'], 'GONDOLA'],
+                ['case', ['==', ['get', 'rotation'], 0], `stop-icon-gondola-${themeSuffix}`, `stop-close-up-icon-gondola-${themeSuffix}`],
+                ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${themeSuffix}`, `stop-close-up-icon-${themeSuffix}`]
+            ],
             'icon-size': ['interpolate', ['linear'], ['zoom'], 15.2, 0.5, 16, 0.6, 18, 0.8],
             'icon-rotate': ['get', 'rotation'],
             'icon-rotation-alignment': 'map'
@@ -800,7 +873,22 @@ export function addStopsToMap(stops, options = {}) {
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
             'symbol-z-order': 'source',
-            'icon-image': ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${themeSuffix}`, `stop-close-up-icon-${themeSuffix}`],
+            'icon-image': [
+                'case',
+                ['all',
+                    ['==', ['get', 'mode'], 'GONDOLA'],
+                    ['any',
+                        ['==', ['get', 'source'], 'config'],
+                        ['==', ['get', '_source'], 'config'],
+                        ['==', ['get', 'provider'], 'manual-gondola'],
+                        ['==', ['get', 'ticketProvider'], 'manual-gondola']
+                    ]
+                ],
+                ['case', ['==', ['get', 'rotation'], 0], `stop-icon-gondola-manual-${themeSuffix}`, `stop-close-up-icon-gondola-manual-${themeSuffix}`],
+                ['==', ['get', 'mode'], 'GONDOLA'],
+                ['case', ['==', ['get', 'rotation'], 0], `stop-icon-gondola-${themeSuffix}`, `stop-close-up-icon-gondola-${themeSuffix}`],
+                ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${themeSuffix}`, `stop-close-up-icon-${themeSuffix}`]
+            ],
             'icon-size': ['interpolate', ['linear'], ['zoom'], 15.2, 0.5, 16, 0.6, 18, 0.8],
             'icon-rotate': ['get', 'rotation'],
             'icon-rotation-alignment': 'map'
@@ -836,7 +924,22 @@ export function addStopsToMap(stops, options = {}) {
         source: 'selected-stop',
         slot: 'top',
         layout: {
-            'icon-image': ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-${themeSuffix}`, `stop-icon-${themeSuffix}`],
+            'icon-image': [
+                'case',
+                ['all',
+                    ['==', ['get', 'mode'], 'GONDOLA'],
+                    ['any',
+                        ['==', ['get', 'source'], 'config'],
+                        ['==', ['get', '_source'], 'config'],
+                        ['==', ['get', 'provider'], 'manual-gondola'],
+                        ['==', ['get', 'ticketProvider'], 'manual-gondola']
+                    ]
+                ],
+                ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-gondola-manual-${themeSuffix}`, `stop-icon-gondola-manual-${themeSuffix}`],
+                ['==', ['get', 'mode'], 'GONDOLA'],
+                ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-gondola-${themeSuffix}`, `stop-icon-gondola-${themeSuffix}`],
+                ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-${themeSuffix}`, `stop-icon-${themeSuffix}`]
+            ],
             'icon-size': ['case', ['==', ['get', 'mode'], 'SUBWAY'], 1.5, 1.2],
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
@@ -1073,11 +1176,25 @@ export function updateStopHoverEffects(hoveredId) {
 
     const isDark = document.body.classList.contains('dark-mode');
     const safeHoveredId = hoveredId ?? '';
+    const manualGondolaExpr = [
+        'all',
+        ['==', ['get', 'mode'], 'GONDOLA'],
+        ['any',
+            ['==', ['get', 'source'], 'config'],
+            ['==', ['get', '_source'], 'config'],
+            ['==', ['get', 'provider'], 'manual-gondola'],
+            ['==', ['get', 'ticketProvider'], 'manual-gondola']
+        ]
+    ];
 
     // Theme values
     const colors = {
         base: isDark ? '#FFED74' : '#3C3C3C',
         baseStroke: isDark ? '#D4C45A' : '#5C5C5C',
+        gondolaBase: isDark ? '#60A5FA' : '#2563EB',
+        gondolaStroke: isDark ? '#3B82F6' : '#1D4ED8',
+        manualGondolaBase: isDark ? '#2DD4BF' : '#0D9488',
+        manualGondolaStroke: isDark ? '#14B8A6' : '#0F766E',
         hover: isDark ? '#FFFFFF' : '#898989',
         hoverStroke: isDark ? '#E5E7EB' : '#FFFFFF',
         glowBase: 0.05,
@@ -1086,27 +1203,66 @@ export function updateStopHoverEffects(hoveredId) {
 
     // Update Circle Layers
     if (map.getLayer('stops-layer-circle')) {
-        map.setPaintProperty('stops-layer-circle', 'circle-color', ['case', ['==', ['get', 'id'], safeHoveredId], colors.hover, colors.base]);
-        map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', ['case', ['==', ['get', 'id'], safeHoveredId], colors.hoverStroke, colors.baseStroke]);
+        map.setPaintProperty('stops-layer-circle', 'circle-color', [
+            'case',
+            ['==', ['get', 'id'], safeHoveredId], colors.hover,
+            manualGondolaExpr, colors.manualGondolaBase,
+            ['==', ['get', 'mode'], 'GONDOLA'], colors.gondolaBase,
+            colors.base
+        ]);
+        map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', [
+            'case',
+            ['==', ['get', 'id'], safeHoveredId], colors.hoverStroke,
+            manualGondolaExpr, colors.manualGondolaStroke,
+            ['==', ['get', 'mode'], 'GONDOLA'], colors.gondolaStroke,
+            colors.baseStroke
+        ]);
     }
 
     if (map.getLayer('stops-layer-circle-hover')) {
         map.setFilter('stops-layer-circle-hover', ['==', ['get', 'id'], safeHoveredId]);
-        map.setPaintProperty('stops-layer-circle-hover', 'circle-color', colors.hover);
-        map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-color', colors.hoverStroke);
+        map.setPaintProperty('stops-layer-circle-hover', 'circle-color', [
+            'case',
+            ['==', ['get', 'id'], safeHoveredId], colors.hover,
+            manualGondolaExpr, colors.manualGondolaBase,
+            ['==', ['get', 'mode'], 'GONDOLA'], colors.gondolaBase,
+            colors.base
+        ]);
+        map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-color', [
+            'case',
+            ['==', ['get', 'id'], safeHoveredId], colors.hoverStroke,
+            manualGondolaExpr, colors.manualGondolaStroke,
+            ['==', ['get', 'mode'], 'GONDOLA'], colors.gondolaStroke,
+            colors.baseStroke
+        ]);
     }
 
     // Update Glow Layers
     if (map.getLayer('stops-layer-glow')) {
         map.setPaintProperty('stops-layer-glow', 'circle-opacity', ['case', ['==', ['get', 'id'], safeHoveredId], colors.glowHover, colors.glowBase]);
-        map.setPaintProperty('stops-layer-glow', 'circle-color', ['case', ['==', ['get', 'id'], safeHoveredId], colors.hover, colors.base]);
+        map.setPaintProperty('stops-layer-glow', 'circle-color', [
+            'case',
+            ['==', ['get', 'id'], safeHoveredId], colors.hover,
+            manualGondolaExpr, colors.manualGondolaBase,
+            ['==', ['get', 'mode'], 'GONDOLA'], colors.gondolaBase,
+            colors.base
+        ]);
     }
 
     // Update Symbol Layers (Close-up)
     if (map.getLayer('stops-layer-hover')) {
         map.setFilter('stops-layer-hover', ['==', ['get', 'id'], safeHoveredId]);
         const hoverSuffix = isDark ? 'hover-dark' : 'hover-light';
-        map.setLayoutProperty('stops-layer-hover', 'icon-image', ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${hoverSuffix}`, `stop-close-up-icon-${hoverSuffix}`]);
+        const gondolaSuffix = isDark ? 'gondola-dark' : 'gondola-light';
+        const gondolaManualSuffix = isDark ? 'gondola-manual-dark' : 'gondola-manual-light';
+        map.setLayoutProperty('stops-layer-hover', 'icon-image', [
+            'case',
+            manualGondolaExpr,
+            ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${gondolaManualSuffix}`, `stop-close-up-icon-${gondolaManualSuffix}`],
+            ['==', ['get', 'mode'], 'GONDOLA'],
+            ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${gondolaSuffix}`, `stop-close-up-icon-${gondolaSuffix}`],
+            ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${hoverSuffix}`, `stop-close-up-icon-${hoverSuffix}`]
+        ]);
     }
 
     // Metro circle radius hover effect

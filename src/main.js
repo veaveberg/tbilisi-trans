@@ -158,7 +158,7 @@ function onRoutesLoaded(data) {
     if (initialState.type === 'route' && initialState.shortName) {
         const execute = () => {
             api.fetchV3Routes().then(() => {
-                const routeObj = allRoutes.find(r => String(r.shortName) === String(initialState.shortName));
+                const routeObj = resolveRouteByShortName(initialState.shortName, { preferBus: true });
                 if (routeObj) {
                     showRouteOnMap(routeObj, true, { initialDirectionIndex: initialState.direction, fitToRoute: true });
                 }
@@ -1224,7 +1224,11 @@ async function handleDeepLinks() {
                 // Note: showRouteOnMap is async too.
                 try {
                     await api.fetchV3Routes();
-                    const route = allRoutes.find(r => String(r.shortName) === String(state.shortName));
+                    const route = resolveRouteByShortName(state.shortName, {
+                        preferredSource: stop._source,
+                        preferredStopId: stop.id,
+                        preferBus: true
+                    });
                     if (route) {
                         // Fix for Zoom Out issue:
                         // showStopInfo uses flyTo, so map.getZoom() immediately after is unstable (still zooming).
@@ -1287,13 +1291,56 @@ setupPanelDrag('route-info');
 
 // Zoom Logic for Reset Button
 const resetBtn = document.getElementById('reset-view');
+const HOME_REGION_BBOX = Object.freeze({
+    west: 44.5,
+    south: 41.5,
+    east: 45.1,
+    north: 42.0
+});
+const HOME_CENTER = Object.freeze({
+    lng: 44.78,
+    lat: 41.72
+});
+const RETURN_ANIMATION_MAX_DISTANCE_METERS = 30000;
+
+function isWithinHomeRegion(lng, lat) {
+    return lng >= HOME_REGION_BBOX.west &&
+        lng <= HOME_REGION_BBOX.east &&
+        lat >= HOME_REGION_BBOX.south &&
+        lat <= HOME_REGION_BBOX.north;
+}
+
+function distanceMetersBetweenPoints(a, b) {
+    const toRad = (deg) => deg * (Math.PI / 180);
+    const earthRadiusMeters = 6371000;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+
+    const h = Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 2 * earthRadiusMeters * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 resetBtn.addEventListener('click', () => {
-    map.flyTo({ center: [44.78, 41.72], zoom: 12 });
+    stopTracking();
+    const center = map.getCenter();
+    const current = { lng: center.lng, lat: center.lat };
+    const distanceToHome = distanceMetersBetweenPoints(current, HOME_CENTER);
+
+    if (distanceToHome <= RETURN_ANIMATION_MAX_DISTANCE_METERS) {
+        map.flyTo({ center: [HOME_CENTER.lng, HOME_CENTER.lat], zoom: 12 });
+    } else {
+        map.jumpTo({ center: [HOME_CENTER.lng, HOME_CENTER.lat], zoom: 12 });
+    }
 });
 
 map.on('moveend', () => {
     const zoom = map.getZoom();
-    if (zoom < 10) {
+    const center = map.getCenter();
+    const outsideHomeRegion = !isWithinHomeRegion(center.lng, center.lat);
+    if (zoom < 10 || outsideHomeRegion) {
         resetBtn.classList.remove('hidden');
     } else {
         resetBtn.classList.add('hidden');
@@ -1412,6 +1459,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                 });
             }
             if (!map.getLayer('stops-highlight')) {
+                const themeSuffix = document.body.classList.contains('dark-mode') ? 'dark' : 'light';
                 map.addLayer({
                     id: 'stops-highlight',
                     type: 'symbol',
@@ -1419,8 +1467,28 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                     layout: {
                         'icon-image': [
                             'case',
-                            ['>', ['get', 'rotation'], 0], 'stop-selected-icon',
-                            'stop-icon'
+                            ['all',
+                                ['==', ['get', 'mode'], 'GONDOLA'],
+                                ['any',
+                                    ['==', ['get', 'source'], 'config'],
+                                    ['==', ['get', '_source'], 'config'],
+                                    ['==', ['get', 'provider'], 'manual-gondola'],
+                                    ['==', ['get', 'ticketProvider'], 'manual-gondola']
+                                ]
+                            ],
+                            ['case',
+                                ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-gondola-manual-${themeSuffix}`,
+                                `stop-icon-gondola-manual-${themeSuffix}`
+                            ],
+                            ['==', ['get', 'mode'], 'GONDOLA'],
+                            ['case',
+                                ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-gondola-${themeSuffix}`,
+                                `stop-icon-gondola-${themeSuffix}`
+                            ],
+                            ['case',
+                                ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-${themeSuffix}`,
+                                `stop-icon-${themeSuffix}`
+                            ]
                         ],
                         'icon-size': [
                             'case',
@@ -1488,6 +1556,15 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     if (headerExtension) headerExtension.innerHTML = '';
 
     const isMetro = stop.mode === 'SUBWAY' || (stop.id && (stop.id.startsWith('1:metro') || stop.id.includes('metro') || stop.id.includes('Metro')));
+    const isGondola = String(stop.mode || stop.vehicleMode || '').toUpperCase() === 'GONDOLA';
+    const gondolaInfo = String(stop.gondolaInfo || '').trim();
+    if (isGondola && headerExtension && gondolaInfo) {
+        headerExtension.innerHTML = `
+            <div class="gondola-info-card">
+                <div class="gondola-info-content">${formatGondolaInfoHtml(gondolaInfo)}</div>
+            </div>
+        `;
+    }
 
     const editBtn = document.getElementById('btn-edit-stop');
     const filterBtn = document.getElementById('filter-routes-toggle');
@@ -1518,6 +1595,23 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     setSheetState(panel, 'half');
     updateBackButtons();
     applyFavoritesBackButtonsIfNeeded();
+
+    // Gondola stops: show arrivals only when the API returns real data for this exact stop.
+    // Skip static/equivalent stop fallbacks to avoid unrelated route leakage.
+    if (isGondola) {
+        arrivalsController.clear();
+
+        const equivalentIds = getEquivalentStops(stop.id, false);
+        equivalentIds.forEach(id => {
+            stopToRoutesMap.set(id, []);
+        });
+        window.lastRoutes = [];
+        window.lastArrivals = [];
+
+        arrivals.updateArrivalsLoadingState(false);
+        arrivals.renderArrivals([], stop.id);
+        return;
+    }
 
     // --- UNIFIED ARRIVALS LOADING ---
     // Route chips (static, instant)
@@ -1565,10 +1659,17 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                     if (!stopToRoutesMap.has(id)) stopToRoutesMap.set(id, []);
                     const currentList = stopToRoutesMap.get(id);
                     fetchedRoutes.forEach(fr => {
-                        const fetchedSource = fr._source || (fr.id && String(fr.id).startsWith('r') ? 'rustavi' : 'tbilisi');
+                        const fetchedSource = fr._source || sourceToUse || (fr.id && String(fr.id).startsWith('r') ? 'rustavi' : 'tbilisi');
                         let canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName) && r._source === fetchedSource);
                         if (!canonical && fr.id) canonical = allRoutes.find(r => r.id === fr.id);
-                        if (!canonical) canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName));
+                        if (!canonical) {
+                            canonical = resolveRouteByShortName(fr.shortName, {
+                                preferredSource: fetchedSource,
+                                preferredId: fr.id,
+                                preferredStopId: id,
+                                preferBus: true
+                            });
+                        }
                         const routeToAdd = canonical || fr;
                         if (!currentList.includes(routeToAdd)) currentList.push(routeToAdd);
                     });
@@ -1596,7 +1697,10 @@ function getRouteDisplayColor(route) {
 
     // 1. Filter Manager Priority (Selection/Common Routes)
     if (filterManager && filterManager.state && filterManager.state.active) {
-        const routeId = route.id || (allRoutes.find(r => r.shortName === route.shortName) || {}).id;
+        const routeId = route.id || (resolveRouteByShortName(route.shortName, {
+            preferredSource: route._source,
+            preferredId: route.id
+        }) || {}).id;
         if (routeId && filterManager.state.filteredRoutes.includes(routeId)) {
             const filterColor = RouteFilterColorManager.getColorForRoute(routeId);
             if (filterColor) return filterColor;
@@ -1675,7 +1779,11 @@ function getPatternHeadsign(route, directionIndex, defaultHeadsign) {
     const norm = (id) => String(id || '').replace(/^\d+:/, '').replace(/^[rR]/, '');
     const matchedRoute = allRoutes.find(r => String(r.id) === String(route.id)) ||
         allRoutes.find(r => norm(r.id) === norm(route.id)) ||
-        allRoutes.find(r => String(r.shortName) === String(route.shortName));
+        resolveRouteByShortName(route.shortName, {
+            preferredSource: route._source,
+            preferredId: route.id,
+            preferBus: !isRailLikeMode(route.mode)
+        });
 
     const overrides = (matchedRoute && matchedRoute._overrides) ? matchedRoute._overrides : route._overrides;
 
@@ -1718,13 +1826,19 @@ function renderAllRoutes(routesInput, arrivalsInput) {
                 const found = allRoutes.find(x => x.id === cleanId || x.id === r.id);
                 if (found) realRoute = found;
             } else if (r.shortName) {
-                // Fallback by shortName (risky if overridden, but better than nothing)
-                const found = allRoutes.find(x => x.shortName === r.shortName);
+                // Fallback by shortName with source/mode-aware resolution
+                const found = resolveRouteByShortName(r.shortName, {
+                    preferredSource: r._source,
+                    preferredId: r.id,
+                    preferredStopId: window.currentStopId,
+                    preferBus: true
+                });
                 if (found) realRoute = found;
             }
 
-            if (realRoute && realRoute.shortName && !uniqueRoutesMap.has(realRoute.shortName)) {
-                uniqueRoutesMap.set(realRoute.shortName, realRoute);
+            const key = routeUniqKey(realRoute) || String(r.shortName || '');
+            if (realRoute && realRoute.shortName && key && !uniqueRoutesMap.has(key)) {
+                uniqueRoutesMap.set(key, realRoute);
             }
         });
     }
@@ -1734,19 +1848,25 @@ function renderAllRoutes(routesInput, arrivalsInput) {
     if (arrivalsInput && arrivalsInput.length > 0) {
         arrivalsInput.forEach(arr => {
             // Resolve Arrival to Real Route Logic (Similar to renderArrivals)
-            let resolvedShortName = arr.shortName;
             let resolvedRoute = null;
 
             if (v3RoutesMap && v3RoutesMap.has(String(arr.shortName))) {
                 const mappedId = v3RoutesMap.get(String(arr.shortName));
                 const cleanId = mappedId.includes(':') ? mappedId.split(':')[1] : mappedId;
                 resolvedRoute = allRoutes.find(x => x.id === cleanId || x.id === mappedId);
-                if (resolvedRoute) resolvedShortName = resolvedRoute.shortName;
             }
 
-            if (!uniqueRoutesMap.has(resolvedShortName)) {
-                const newRoute = resolvedRoute || { shortName: resolvedShortName, id: null, color: '2563eb' };
-                uniqueRoutesMap.set(resolvedShortName, newRoute);
+            if (!resolvedRoute) {
+                resolvedRoute = resolveRouteByShortName(arr.shortName, {
+                    preferredStopId: window.currentStopId,
+                    preferBus: true
+                });
+            }
+
+            const newRoute = resolvedRoute || { shortName: arr.shortName, id: null, color: '2563eb' };
+            const key = routeUniqKey(newRoute) || `unknown:${String(arr.shortName)}`;
+            if (!uniqueRoutesMap.has(key)) {
+                uniqueRoutesMap.set(key, newRoute);
             }
         });
     }
@@ -1761,8 +1881,14 @@ function renderAllRoutes(routesInput, arrivalsInput) {
 
         routesForStop.sort((a, b) => {
             if (filterManager.state.active) {
-                const idA = a.id || (allRoutes.find(r => r.shortName === a.shortName) || {}).id;
-                const idB = b.id || (allRoutes.find(r => r.shortName === b.shortName) || {}).id;
+                const idA = a.id || (resolveRouteByShortName(a.shortName, {
+                    preferredSource: a._source,
+                    preferredId: a.id
+                }) || {}).id;
+                const idB = b.id || (resolveRouteByShortName(b.shortName, {
+                    preferredSource: b._source,
+                    preferredId: b.id
+                }) || {}).id;
 
                 const matchA = idA && filterManager.state.filteredRoutes.includes(idA);
                 const matchB = idB && filterManager.state.filteredRoutes.includes(idB);
@@ -1806,7 +1932,12 @@ function renderAllRoutes(routesInput, arrivalsInput) {
 
             // Apply Dimming (don't hide)
             if (filterManager.state.active) {
-                const realId = route.id || (allRoutes.find(r => r.shortName === route.shortName) || {}).id;
+                const realId = route.id || (resolveRouteByShortName(route.shortName, {
+                    preferredSource: route._source,
+                    preferredId: route.id,
+                    preferredStopId: window.currentStopId,
+                    preferBus: true
+                }) || {}).id;
                 if (!realId || !filterManager.state.filteredRoutes.includes(realId)) {
                     tile.classList.add('dimmed');
                 } else {
@@ -1824,7 +1955,11 @@ function renderAllRoutes(routesInput, arrivalsInput) {
                 if (route.id) {
                     showRouteOnMap(route, true, { fromStopId: window.currentStopId });
                 } else {
-                    const real = allRoutes.find(r => r.shortName === route.shortName);
+                    const real = resolveRouteByShortName(route.shortName, {
+                        preferredSource: route._source,
+                        preferredStopId: window.currentStopId,
+                        preferBus: true
+                    });
                     if (real) showRouteOnMap(real);
                 }
             });
@@ -1855,6 +1990,88 @@ function renderAllRoutes(routesInput, arrivalsInput) {
 // Used by renderAllRoutes for route resolution
 let v3RoutesMap = null;
 let cachedStopsConfig = null;
+
+function escapeHtml(str) {
+    return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatGondolaInfoHtml(text) {
+    const escaped = escapeHtml(text).replace(/\r?\n/g, '<br>');
+    const withLinks = escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+    return withLinks.replace(/(^|[\s>])(\+?\d[\d\s().-]{6,}\d)(?=$|[\s<])/g, '$1<a href="tel:$2">$2</a>');
+}
+
+function inferRouteSource(route) {
+    if (!route) return null;
+    if (route._source) return route._source;
+    const rid = String(route.id || '');
+    if (rid.startsWith('r') || rid.startsWith('rustavi:')) return 'rustavi';
+    return rid ? 'tbilisi' : null;
+}
+
+function isRailLikeMode(mode) {
+    const m = String(mode || '').toUpperCase();
+    return m === 'SUBWAY' || m === 'GONDOLA';
+}
+
+function routeUniqKey(route) {
+    if (!route || !route.shortName) return null;
+    const source = inferRouteSource(route) || 'unknown';
+    return `${source}:${String(route.shortName)}`;
+}
+
+function resolveRouteByShortName(shortName, options = {}) {
+    const target = String(shortName || '').trim();
+    if (!target) return null;
+
+    const candidates = allRoutes.filter(r => String(r.shortName) === target);
+    if (!candidates.length) return null;
+
+    const preferredSource = options.preferredSource || null;
+    const preferredId = options.preferredId ? String(options.preferredId) : null;
+    const preferBus = options.preferBus !== false;
+    const preferredStopId = options.preferredStopId ? String(options.preferredStopId) : null;
+    const preferredStopNorm = preferredStopId
+        ? preferredStopId.replace(/^rustavi:/i, '').replace(/^[rR]/, '').replace(/^\d+:/, '')
+        : '';
+
+    let best = null;
+    let bestScore = -Infinity;
+
+    for (const c of candidates) {
+        let score = 0;
+        const source = inferRouteSource(c);
+        const mode = String(c.mode || '').toUpperCase();
+        const cId = String(c.id || '');
+
+        if (preferredId && cId === preferredId) score += 120;
+        if (preferredSource && source === preferredSource) score += 60;
+        if (preferBus && mode === 'BUS') score += 45;
+        if (preferBus && isRailLikeMode(mode)) score -= 35;
+        if (!preferBus && isRailLikeMode(mode)) score += 15;
+
+        if (preferredStopNorm && Array.isArray(c.stops) && c.stops.length > 0) {
+            const hasStop = c.stops.some(sid => {
+                const sidStr = String(sid || '');
+                const sidNorm = sidStr.replace(/^rustavi:/i, '').replace(/^[rR]/, '').replace(/^\d+:/, '');
+                return sidNorm === preferredStopNorm;
+            });
+            if (hasStop) score += 55;
+        }
+
+        if (score > bestScore) {
+            bestScore = score;
+            best = c;
+        }
+    }
+
+    return best || candidates[0];
+}
 
 
 
@@ -2778,9 +2995,41 @@ async function updateRouteView(route, options = {}) {
                         }]
                     });
                     if (!map.getLayer('stops-highlight')) {
+                        const themeSuffix = document.body.classList.contains('dark-mode') ? 'dark' : 'light';
                         map.addLayer({
                             id: 'stops-highlight', type: 'symbol', source: 'selected-stop', slot: 'top',
-                            layout: { 'icon-image': ['case', ['>', ['coalesce', ['get', 'rotation'], 0], 0], 'stop-selected-icon', 'stop-icon'], 'icon-size': ['case', ['==', ['get', 'mode'], 'SUBWAY'], 1.5, 1.2], 'icon-allow-overlap': true, 'icon-ignore-placement': true, 'icon-rotate': ['coalesce', ['get', 'rotation'], 0], 'icon-rotation-alignment': 'map' },
+                            layout: {
+                                'icon-image': [
+                                    'case',
+                                    ['all',
+                                        ['==', ['get', 'mode'], 'GONDOLA'],
+                                        ['any',
+                                            ['==', ['get', 'source'], 'config'],
+                                            ['==', ['get', '_source'], 'config'],
+                                            ['==', ['get', 'provider'], 'manual-gondola'],
+                                            ['==', ['get', 'ticketProvider'], 'manual-gondola']
+                                        ]
+                                    ],
+                                    ['case',
+                                        ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-gondola-manual-${themeSuffix}`,
+                                        `stop-icon-gondola-manual-${themeSuffix}`
+                                    ],
+                                    ['==', ['get', 'mode'], 'GONDOLA'],
+                                    ['case',
+                                        ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-gondola-${themeSuffix}`,
+                                        `stop-icon-gondola-${themeSuffix}`
+                                    ],
+                                    ['case',
+                                        ['>', ['coalesce', ['get', 'rotation'], 0], 0], `stop-selected-icon-${themeSuffix}`,
+                                        `stop-icon-${themeSuffix}`
+                                    ]
+                                ],
+                                'icon-size': ['case', ['==', ['get', 'mode'], 'SUBWAY'], 1.5, 1.2],
+                                'icon-allow-overlap': true,
+                                'icon-ignore-placement': true,
+                                'icon-rotate': ['coalesce', ['get', 'rotation'], 0],
+                                'icon-rotation-alignment': 'map'
+                            },
                             paint: { 'icon-opacity': 1, 'icon-emissive-strength': 1 }
                         });
                     }

@@ -52,6 +52,49 @@ function normalizeRouteId(id) {
     return s;
 }
 
+function isRailLikeMode(mode) {
+    const m = String(mode || '').toUpperCase();
+    return m === 'SUBWAY' || m === 'GONDOLA';
+}
+
+function resolveRouteByShortName(shortName, options = {}) {
+    const target = String(shortName || '').trim();
+    if (!target || !deps.allRoutes) return null;
+
+    const pool = deps.allRoutes();
+    if (!Array.isArray(pool) || pool.length === 0) return null;
+    const candidates = pool.filter(r => String(r.shortName) === target);
+    if (!candidates.length) return null;
+
+    const preferredStopId = options.preferredStopId ? String(options.preferredStopId) : '';
+    const preferredStopNorm = preferredStopId
+        ? normalizeRouteId(preferredStopId)
+        : '';
+    const preferBus = options.preferBus !== false;
+
+    let best = null;
+    let bestScore = -Infinity;
+
+    for (const c of candidates) {
+        let score = 0;
+        const mode = String(c.mode || '').toUpperCase();
+        if (preferBus && mode === 'BUS') score += 40;
+        if (preferBus && isRailLikeMode(mode)) score -= 30;
+
+        if (preferredStopNorm && Array.isArray(c.stops) && c.stops.length > 0) {
+            const hasStop = c.stops.some(sid => normalizeRouteId(sid) === preferredStopNorm);
+            if (hasStop) score += 55;
+        }
+
+        if (score > bestScore) {
+            bestScore = score;
+            best = c;
+        }
+    }
+
+    return best || candidates[0];
+}
+
 /**
  * Initialize the arrivals module with dependencies from main.js
  */
@@ -1097,6 +1140,10 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     if (!listEl) return;
 
     const stopId = currentStopId || window.currentStopId;
+    const allStops = (typeof window !== 'undefined' && Array.isArray(window.allStops)) ? window.allStops : [];
+    const stopObj = allStops.find(s => String(s.id) === String(stopId));
+    const activeMode = String(stopObj?.mode || stopObj?.vehicleMode || window.currentStopMode || '').toUpperCase();
+    const isGondolaStop = activeMode === 'GONDOLA';
 
     // --- CROSS-STOP PROTECTION ---
     // If this render is for a stop that is no longer the current one, ignore it.
@@ -1194,7 +1241,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
             const r = deps.allRoutes().find(route => String(route.id) === String(aId)) ||
                 deps.allRoutes().find(route => normalizeRouteId(route.id) === normalizeRouteId(aId)) ||
-                deps.allRoutes().find(route => String(route.shortName) === String(aShort));
+                resolveRouteByShortName(aShort, { preferredStopId: stopId, preferBus: true });
             return r ? isFilteredRouteId(r.id) : false;
         };
 
@@ -1209,7 +1256,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         // Precise matching: exact ID, normalized ID, then shortName
         const r = deps.allRoutes().find(route => String(route.id) === String(a.id)) ||
             deps.allRoutes().find(route => normalizeRouteId(route.id) === normalizeRouteId(a.id)) ||
-            deps.allRoutes().find(route => String(route.shortName) === String(a.shortName));
+            resolveRouteByShortName(a.shortName, { preferredStopId: stopId, preferBus: true });
         return shouldShowRoute(a.shortName, r);
     });
 
@@ -1220,7 +1267,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     // User wants multiple arrivals (e.g. 5', 12') for the same route to be grouped.
     // Group by: ShortName + Direction (Headsign/PatternSuffix)
     const liveGroups = new Map(); // Key -> { primary: arrival, secondaries: [arrival] }
-    const liveShortNames = new Set();
+    const liveRouteKeys = new Set();
 
     console.log(`[Arrivals Debug] Processing ${arrivalsData.length} live arrivals.ShortNames: `, arrivalsData.map(a => a.shortName));
     arrivalsData.forEach(a => {
@@ -1234,10 +1281,12 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         a._calculatedMinutes = minutes; // Store temporarily
 
 
-        // Match by ID first (exact), then normalized ID (handles 1:R835 vs rR835), then shortName
+        const actualStopId = a._sourceStopId || stopId;
+
+        // Match by ID first (exact), then normalized ID (handles 1:R835 vs rR835), then source-aware shortName
         const matchedRouteForColor = deps.allRoutes().find(r => String(r.id) === String(a.id)) ||
             deps.allRoutes().find(r => normalizeRouteId(r.id) === normalizeRouteId(a.id)) ||
-            deps.allRoutes().find(r => r.shortName === a.shortName);
+            resolveRouteByShortName(a.shortName, { preferredStopId: actualStopId, preferBus: true });
 
         // Ensure we have a valid ID for this arrival (use matched route if missing in LIVE data)
         if (!a.id && matchedRouteForColor) a.id = matchedRouteForColor.id;
@@ -1245,11 +1294,10 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             a.displayShortName = matchedRouteForColor.customShortName || matchedRouteForColor.shortName;
         }
 
-        const actualStopId = a._sourceStopId || stopId;
         const resolveStopId = stopId || actualStopId;
         const { directionIndex, headsign, verifiedHeadsign, loopAmbiguous } = resolveDirectionInfo(a, matchedRouteForColor, resolveStopId);
         if (verifiedHeadsign) a._verifiedHeadsign = verifiedHeadsign;
-        const routeIdForKey = (matchedRouteForColor && matchedRouteForColor.id) || a.id || a.shortName;
+        const routeIdForKey = String((matchedRouteForColor && matchedRouteForColor.id) || a.id || a.shortName);
         const cacheKey = `${actualStopId}|${routeIdForKey}|${directionIndex}`;
         if (!a.realtime && minutes !== 999) {
             const schedTime = formatScheduledTime(minutes);
@@ -1263,7 +1311,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                     scheduledArrivalsByStop.set(actualStopId, new Map());
                 }
                 const stopMap = scheduledArrivalsByStop.get(actualStopId);
-                const groupKey = `${a.shortName}_${directionIndex}`;
+                const groupKey = `${routeIdForKey}_${directionIndex}`;
                 stopMap.set(groupKey, {
                     route: {
                         id: routeIdForKey,
@@ -1281,7 +1329,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
         // Group Key: ShortName + Direction Index (or Headsign if fuzzy)
         // We use DirectionIndex as primary differentiator for grouped rows.
-        const groupKey = loopAmbiguous ? `${a.shortName}_loop` : `${a.shortName}_${directionIndex}`;
+        const groupKey = loopAmbiguous ? `${routeIdForKey}_loop` : `${routeIdForKey}_${directionIndex}`;
         if (a.shortName === '387' || a.shortName === '397') {
             console.log('[Arrivals Debug][Loop] Live groupKey', {
                 shortName: a.shortName,
@@ -1294,7 +1342,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             });
         }
         representedKeys.add(groupKey);
-        liveShortNames.add(a.shortName);
+        liveRouteKeys.add(routeIdForKey);
 
         if (!liveGroups.has(groupKey)) {
             liveGroups.set(groupKey, {
@@ -1341,7 +1389,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 return sId === String(stopId) || normalizeRouteId(sId) === normalizeRouteId(stopId);
             });
             if (stopEntry && Array.isArray(stopEntry.patternSuffixes) && stopEntry.patternSuffixes.length > 1) {
-                sharedStopRoutes.add(String(r.shortName));
+                sharedStopRoutes.add(String(r.id || r.shortName));
             }
         });
     }
@@ -1367,18 +1415,19 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             }
         }
         if (!shouldShowRoute(r.shortName, r)) return;
-        if (liveShortNames.has(r.shortName) && sharedStopRoutes.has(String(r.shortName))) return;
+        const routeIdentity = String(r.id || r.shortName);
+        if (liveRouteKeys.has(routeIdentity) && sharedStopRoutes.has(routeIdentity)) return;
 
         const validDirs = getValidDirectionsForRoute(r.id, equivalentIds);
         validDirs.forEach(dirIdx => {
-            const key = `${r.shortName}_${dirIdx}`;
+            const key = `${routeIdentity}_${dirIdx}`;
             if (!representedKeys.has(key)) {
                 const realRoute = deps.allRoutes().find(route => String(route.id) === String(r.id)) ||
                     deps.allRoutes().find(route => normalizeRouteId(route.id) === normalizeRouteId(r.id)) ||
-                    deps.allRoutes().find(route => String(route.shortName) === String(r.shortName)) ||
+                    resolveRouteByShortName(r.shortName, { preferredStopId: stopId, preferBus: true }) ||
                     r;
                 const isLoopRoute = realRoute?._overrides?.isLoop === true || realRoute?.isLoop === true || realRoute?._overrides?.isLoop === 'true';
-                if (liveShortNames.has(r.shortName) && isLoopRoute) return;
+                if (liveRouteKeys.has(routeIdentity) && isLoopRoute) return;
                 // Determine headsign for this direction at this stop
                 const { headsign } = resolveDirectionInfo({ id: realRoute.id, shortName: realRoute.shortName, directionIndex: dirIdx }, realRoute, stopId);
                 const stableId = `route-${realRoute.id || r.id}-${dirIdx}`;
@@ -1424,9 +1473,9 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 };
 
                 // If no live data and this stop has multiple patterns for this route, keep only the earliest scheduled item
-                if (!liveShortNames.has(r.shortName) && sharedStopRoutes.has(String(r.shortName))) {
+                if (!liveRouteKeys.has(routeIdentity) && sharedStopRoutes.has(routeIdentity)) {
                     const existingIdx = renderList.findIndex(item =>
-                        item.type === 'scheduled' && String(item.data.shortName) === String(r.shortName)
+                        item.type === 'scheduled' && String(item.data.id || item.data.shortName) === routeIdentity
                     );
                     if (existingIdx !== -1) {
                         if (scheduledItem.minutes < renderList[existingIdx].minutes) {
@@ -1492,7 +1541,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     const emptyId = 'arrivals-empty-msg';
     const isActuallyLoading = window.arrivalsLoading;
 
-    if (renderList.length === 0 && !isActuallyLoading) {
+    if (renderList.length === 0 && !isActuallyLoading && !isGondolaStop) {
         activeIds.add(emptyId);
         let emptyDiv = document.getElementById(emptyId);
         if (!emptyDiv) {
@@ -1636,7 +1685,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         // Click handler (refresh every time to ensure latest closure)
         let routeObj = deps.allRoutes().find(r => r.id === routeIdForClick) ||
             deps.allRoutes().find(r => normalizeRouteId(r.id) === normalizeRouteId(routeIdForClick)) ||
-            deps.allRoutes().find(r => r.shortName === item.data.shortName);
+            resolveRouteByShortName(item.data.shortName, { preferredStopId: stopId, preferBus: true });
 
         if (routeObj) {
             div.onclick = () => {
@@ -1735,7 +1784,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                                     scheduledArrivalsByStop.set(stopId, new Map());
                                 }
                                 const stopMap = scheduledArrivalsByStop.get(stopId);
-                                const groupKey = `${item.data.shortName}_${item.directionIndex || 0}`;
+                                const groupKey = `${item.data.id || item.data.shortName}_${item.directionIndex || 0}`;
                                 stopMap.set(groupKey, {
                                     route: {
                                         id: item.data.id || item.data.shortName,

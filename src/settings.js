@@ -14,7 +14,6 @@ let onUpdateCallback = null;
 let nativeSettingsInitialized = false;
 let privacyPolicySheetInitialized = false;
 let lastFocusedBeforePrivacySheet = null;
-let privacyPolicyPreviousUrl = null;
 
 const NativeSettingsPlugin = registerPlugin('NativeSettings');
 
@@ -247,7 +246,7 @@ function applyZoomCSS(scale) {
 function getPrivacyPolicyUrl() {
     const base = import.meta.env.BASE_URL || '/';
     const normalizedBase = base.endsWith('/') ? base : `${base}/`;
-    return `${normalizedBase}privacy-policy.html`;
+    return `${normalizedBase}privacy-policy/index.html`;
 }
 
 function openPrivacyPolicySheet() {
@@ -262,14 +261,6 @@ function openPrivacyPolicySheet() {
     if (frame.dataset.loaded !== 'true') {
         frame.src = getPrivacyPolicyUrl();
         frame.dataset.loaded = 'true';
-    }
-
-    if (!privacyPolicyPreviousUrl) {
-        privacyPolicyPreviousUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    }
-    const privacyPath = getPrivacyPolicyUrl();
-    if (window.location.pathname !== privacyPath) {
-        history.pushState({ privacySheet: true }, '', privacyPath);
     }
 
     backdrop.classList.remove('hidden');
@@ -289,11 +280,6 @@ function closePrivacyPolicySheet() {
     backdrop.classList.add('hidden');
     sheet.classList.add('hidden');
     document.body.classList.remove('privacy-sheet-open');
-
-    if (privacyPolicyPreviousUrl) {
-        history.replaceState(null, '', privacyPolicyPreviousUrl);
-        privacyPolicyPreviousUrl = null;
-    }
 
     if (lastFocusedBeforePrivacySheet && typeof lastFocusedBeforePrivacySheet.focus === 'function') {
         lastFocusedBeforePrivacySheet.focus();

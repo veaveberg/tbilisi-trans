@@ -656,3 +656,27 @@ body.dark-mode .schedule-day-tab.active {
     border-radius: 50%;
     flex-shrink: 0;
 }
+
+.gondola-info-card {
+    margin: 0 16px 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border-light);
+    background: color-mix(in srgb, var(--bg-panel), #0d9488 6%);
+}
+
+.gondola-info-content {
+    font-size: 0.9rem;
+    color: var(--text-main);
+    line-height: 1.4;
+}
+
+.gondola-info-content a {
+    color: #0d9488;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+body.dark-mode .gondola-info-content a {
+    color: #2dd4bf;
+}
