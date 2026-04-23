@@ -88,8 +88,8 @@
       display: none !important;
     }
   </style>
-  <script type="module" crossorigin src="/assets/index-Dkuw4JBh.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-qLlZdKs_.css">
+  <script type="module" crossorigin src="/assets/index-BzH8iSaq.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index--Kd5GBLB.css">
 <link rel="manifest" href="/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script></head>
 
 <body class="loading">
@@ -492,6 +492,20 @@
               <span class="slider round"></span>
             </label>
           </div>
+          <div class="menu-item menu-item-dependent" id="menu-minibus-segments-row">
+            <span class="menu-dependency-arrow" aria-hidden="true">
+              <svg viewBox="0 0 28 56" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7 4V40C7 45.5 9.8 48.8 14.2 49.6C17.1 50.2 20.1 50 23 50" />
+                <path d="M23 50L17 44" />
+                <path d="M23 50L17 56" />
+              </svg>
+            </span>
+            <span class="menu-label">Show "stop-anywhere" sections</span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="minibus-segments-switch">
+              <span class="slider round"></span>
+            </label>
+          </div>
           <div class="menu-item" id="menu-rustavi-toggle-row">
             <div class="menu-icon">
               <svg width="21" height="21" viewBox="0 0 27.4219 28.8184" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -520,6 +534,20 @@
         </header>
         <div class="privacy-policy-body">
           <iframe id="privacy-policy-frame" title="Privacy Policy" loading="lazy"></iframe>
+        </div>
+      </section>
+
+      <div id="support-backdrop" class="privacy-policy-backdrop hidden"></div>
+      <section id="support-sheet" class="privacy-policy-sheet hidden" aria-modal="true" role="dialog"
+        aria-labelledby="support-title">
+        <header class="privacy-policy-header">
+          <h2 id="support-title">Support</h2>
+          <button id="support-close" class="icon-btn" type="button" title="Close">
+            <img src="/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+          </button>
+        </header>
+        <div class="privacy-policy-body">
+          <iframe id="support-frame" title="Support" loading="lazy"></iframe>
         </div>
       </section>
 

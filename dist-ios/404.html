@@ -19,6 +19,22 @@
         var pathSegmentsToKeep = 1; // Project Page: /tbilisi-trans/
 
         var l = window.location;
+
+        // GitHub Pages serves directory indexes only with a trailing slash.
+        // Without it, the request hits 404.html and the SPA rewrite can loop forever.
+        // Fix known directory pages explicitly.
+        try {
+            var base = l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/');
+            var rest = l.pathname.slice(1).split('/').slice(pathSegmentsToKeep).join('/');
+            if (rest === 'privacy-policy') {
+                l.replace(
+                    l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+                    base + '/privacy-policy/' + l.search + l.hash
+                );
+                return;
+            }
+        } catch (e) { }
+
         l.replace(
             l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
             l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/') + '/?p=/' +
