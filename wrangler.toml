@@ -1,0 +1,7 @@
+name = "ttc-proxy"
+main = "cloudflare-worker.js"
+compatibility_date = "2026-04-15"
+
+# For early setup, deploy to a workers.dev subdomain.
+# Later you can attach a custom domain/route in the Cloudflare dashboard.
+workers_dev = true

@@ -36,9 +36,15 @@ export class FilterManager {
             active: false,
             picking: false,
             originId: null,
+            context: null,
+            originIdsOverride: null,
+            originIdsFallback: null,
             targetIds: new Set(),
             reachableStopIds: new Set(),
-            filteredRoutes: [] // Array of route IDs
+            filteredRoutes: [], // Array of route IDs
+            filteredRoutePatterns: null, // Optional Map of routeId -> Set(patternSuffix)
+            allowedPatternSuffixes: null, // Optional Map of routeId -> Set(patternSuffix) to constrain segment direction
+            allowedRouteIds: null // Optional Set of route IDs to constrain filtering
         };
 
         this.destinationMarkers = new Map(); // Map<stopId, Marker>
@@ -67,7 +73,7 @@ export class FilterManager {
     }
 
     async toggleFilterMode(currentStopId, isPickModeActive, setEditPickMode, options = {}) {
-        const { forceEnable = false, skipFlyTo = false } = options;
+        const { forceEnable = false, skipFlyTo = false, allowedRouteIds = null, originIdsOverride = null, originIdsFallback = null, context = null } = options;
         // console.log('[FilterManager] toggleFilterMode. Active:', this.state.active, 'Picking:', this.state.picking, 'Stop:', currentStopId, 'forceEnable:', forceEnable);
 
         if (isPickModeActive && setEditPickMode) setEditPickMode(null);
@@ -80,13 +86,15 @@ export class FilterManager {
             }
             // Normal toggle behavior - turn off
             if (!forceEnable) {
-                this.clearFilter(currentStopId, { restoreStop: true });
+                const restoreStop = this.state.context !== 'segment';
+                this.clearFilter(currentStopId, { restoreStop });
                 const btn = document.getElementById('filter-routes-toggle');
                 if (btn) btn.classList.remove('active');
                 return;
             }
             // forceEnable but different origin - clear and re-enable for new origin
-            this.clearFilter(currentStopId, { restoreStop: true });
+            const restoreStop = this.state.context !== 'segment';
+            this.clearFilter(currentStopId, { restoreStop });
         }
 
         if (!currentStopId) {
@@ -96,6 +104,22 @@ export class FilterManager {
 
         this.state.picking = true;
         this.state.originId = currentStopId;
+        if (context) this.state.context = context;
+        if (Array.isArray(originIdsOverride)) {
+            const originSet = originIdsOverride.map(id => String(id)).filter(Boolean);
+            this.state.originIdsOverride = originSet.length > 0 ? new Set(originSet) : null;
+        } else {
+            this.state.originIdsOverride = null;
+        }
+        if (Array.isArray(originIdsFallback)) {
+            const originSet = originIdsFallback.map(id => String(id)).filter(Boolean);
+            this.state.originIdsFallback = originSet.length > 0 ? new Set(originSet) : null;
+        } else {
+            this.state.originIdsFallback = null;
+        }
+        if (Array.isArray(allowedRouteIds)) {
+            this.state.allowedRouteIds = allowedRouteIds.length > 0 ? new Set(allowedRouteIds.map(id => String(id))) : null;
+        }
 
         // UI Update
         const btn = document.getElementById('filter-routes-toggle');
@@ -111,6 +135,20 @@ export class FilterManager {
 
         // Only fly to stop if not skipped (deep links handle camera with fitBounds)
         if (!skipFlyTo) {
+            const hasMultipleOrigins = this.state.context === 'segment' &&
+                this.state.originIdsOverride &&
+                this.state.originIdsOverride.size > 1;
+            if (hasMultipleOrigins) {
+                const targetZoom = 13;
+                const currentZoom = this.map.getZoom();
+                const zoom = currentZoom > targetZoom ? targetZoom : currentZoom;
+                this.map.flyTo({
+                    center: this.map.getCenter(),
+                    zoom,
+                    duration: 900,
+                    essential: true
+                });
+            } else {
             const allStops = this.dataProvider.getAllStops();
             const stop = allStops.find(s => s.id === currentStopId);
             if (stop) {
@@ -136,16 +174,33 @@ export class FilterManager {
                     essential: true
                 });
             }
+            }
         }
 
         // Reachability Logic
         await this.updateReachableStops();
+        if (this.state.context === 'segment' && this.state.allowedRouteIds && this.state.allowedRouteIds.size > 0 && this.state.reachableStopIds.size === 0) {
+            // Try once more after hydrating route details from cache
+            try {
+                const allRoutes = this.dataProvider.getAllRoutes() || [];
+                const routesToHydrate = allRoutes.filter(r => this.state.allowedRouteIds.has(String(r.id)));
+                if (routesToHydrate.length > 0) {
+                    await hydrateRouteDetails(routesToHydrate, { strategy: 'cache-only' });
+                }
+            } catch (e) { }
+            await this.updateReachableStops();
+        }
 
         // console.log(`[FilterManager] Pick Mode. Reachable: ${this.state.reachableStopIds.size}`);
 
         if (this.state.reachableStopIds.size === 0) {
-            alert("No route data available for filtering (Stops list empty).");
-            this.clearFilter(currentStopId, { restoreStop: true });
+            const hasRouteConstraint = this.state.allowedRouteIds && this.state.allowedRouteIds.size > 0;
+            if (!hasRouteConstraint) {
+                alert("No route data available for filtering (Stops list empty).");
+            } else {
+                console.warn('[FilterManager] No reachable stops for constrained routes.');
+            }
+            this.clearFilter(currentStopId, { restoreStop: !hasRouteConstraint });
             return;
         }
 
@@ -195,6 +250,11 @@ export class FilterManager {
         const normTargetId = redirectMap.get(targetId) || targetId;
         const equivalentStops = this.getEquivalentStops(normTargetId);
 
+        if (this.state.context === 'segment' && this.state.reachableStopIds && this.state.reachableStopIds.size > 0) {
+            const isReachable = equivalentStops.some(id => this.state.reachableStopIds.has(id));
+            if (!isReachable) return;
+        }
+
         let isAnySelected = false;
         equivalentStops.forEach(id => {
             if (this.state.targetIds.has(id)) isAnySelected = true;
@@ -213,36 +273,60 @@ export class FilterManager {
         const redirectMap = this.dataProvider.getRedirectMap();
         const mergeSourcesMap = this.dataProvider.getMergeSourcesMap();
 
-        // Hub equivalents only for EXCLUDING destinations
-        const originEqForExclusion = new Set(this.getEquivalentStops(this.state.originId));
+        const buildOriginContext = (baseOrigins) => {
+            const originEqForExclusion = new Set();
+            const originIdsForRoutes = new Set();
+            baseOrigins.forEach((baseId) => {
+                if (!baseId) return;
+                const base = String(baseId);
+                this.getEquivalentStops(base).forEach(id => originEqForExclusion.add(id));
+                originIdsForRoutes.add(base);
+                if (redirectMap.has(base)) {
+                    originIdsForRoutes.add(redirectMap.get(base));
+                }
+                if (mergeSourcesMap.has(base)) {
+                    mergeSourcesMap.get(base).forEach(s => originIdsForRoutes.add(s));
+                }
+            });
+            return { originEqForExclusion, originIdsForRoutes };
+        };
 
-        // For route lookup, only use selected origin and its merge sources (not full hub)
-        const originIdsForRoutes = new Set();
-        originIdsForRoutes.add(this.state.originId);
-        if (redirectMap.has(this.state.originId)) {
-            originIdsForRoutes.add(redirectMap.get(this.state.originId));
-        }
-        if (mergeSourcesMap.has(this.state.originId)) {
-            mergeSourcesMap.get(this.state.originId).forEach(s => originIdsForRoutes.add(s));
-        }
+        const baseOriginsPrimary = (this.state.originIdsOverride && this.state.originIdsOverride.size > 0)
+            ? Array.from(this.state.originIdsOverride)
+            : [this.state.originId];
+        let { originEqForExclusion, originIdsForRoutes } = buildOriginContext(baseOriginsPrimary);
 
         const stopToRoutesMap = this.dataProvider.getStopToRoutesMap();
 
-        const buildOriginRoutes = () => {
+        const buildOriginRoutes = (originIds) => {
             const originRoutesSet = new Set();
-            originIdsForRoutes.forEach(oid => {
+            originIds.forEach(oid => {
                 const routes = stopToRoutesMap.get(oid) || [];
                 routes.forEach(r => originRoutesSet.add(r));
             });
-            return Array.from(originRoutesSet).filter(r => shouldShowRoute(r.shortName, r));
+            let routes = Array.from(originRoutesSet).filter(r => shouldShowRoute(r.shortName, r));
+            if (this.state.allowedRouteIds && this.state.allowedRouteIds.size > 0) {
+                routes = routes.filter(r => this.state.allowedRouteIds.has(String(r.id)));
+            }
+            if (routes.length === 0 && this.state.allowedRouteIds && this.state.allowedRouteIds.size > 0) {
+                const allRoutes = this.dataProvider.getAllRoutes() || [];
+                routes = allRoutes
+                    .filter(r => this.state.allowedRouteIds.has(String(r.id)))
+                    .filter(r => shouldShowRoute(r.shortName, r));
+            }
+            return routes;
         };
 
-        let originRoutes = buildOriginRoutes();
+        let originRoutes = buildOriginRoutes(originIdsForRoutes);
 
-        const computeCommonRoutes = () => {
-            return originRoutes.filter(r => {
+        const computeCommonRoutes = (originIds, routes) => {
+            const matchedPatterns = new Map();
+            const filtered = routes.filter(r => {
                 let routeStopsNormalized = null;
                 let globalMatch = false;
+                const allowedSuffixes = (this.state.context === 'segment' && this.state.allowedPatternSuffixes instanceof Map)
+                    ? this.state.allowedPatternSuffixes.get(String(r.id))
+                    : null;
 
                 for (const tid of this.state.targetIds) {
                     const targetEq = new Set(this.getEquivalentStops(tid));
@@ -251,8 +335,20 @@ export class FilterManager {
                     if (r._details && r._details.patterns) {
                         matches = r._details.patterns.some(p => {
                             if (!p.stops) return false;
-                            const idxO = p.stops.findIndex(s => originIdsForRoutes.has(redirectMap.get(s.id) || s.id));
+                            if (allowedSuffixes && allowedSuffixes.size > 0 && p.patternSuffix && !allowedSuffixes.has(p.patternSuffix)) {
+                                return false;
+                            }
+                            const idxO = p.stops.findIndex(s => originIds.has(redirectMap.get(s.id) || s.id));
                             if (idxO === -1) return false;
+
+                            if (this.state.context === 'segment') {
+                                const originNormId = redirectMap.get(p.stops[idxO].id) || p.stops[idxO].id;
+                                if (targetEq.has(originNormId)) {
+                                    if (!matchedPatterns.has(String(r.id))) matchedPatterns.set(String(r.id), new Set());
+                                    if (p.patternSuffix) matchedPatterns.get(String(r.id)).add(p.patternSuffix);
+                                    return true;
+                                }
+                            }
 
                             // Check if this is a loop route:
                             // 1. CSV override flag isLoop
@@ -288,6 +384,8 @@ export class FilterManager {
                                     // If origin is on return leg (after terminus), target must be after origin
                                     // (which is already satisfied by idxT > idxO check above)
                                 }
+                                if (!matchedPatterns.has(String(r.id))) matchedPatterns.set(String(r.id), new Set());
+                                if (p.patternSuffix) matchedPatterns.get(String(r.id)).add(p.patternSuffix);
                                 return true;
                             }
 
@@ -298,6 +396,8 @@ export class FilterManager {
                                 const firstStop = p.stops[0];
                                 const firstNormId = redirectMap.get(firstStop.id) || firstStop.id;
                                 if (targetEq.has(firstNormId)) {
+                                    if (!matchedPatterns.has(String(r.id))) matchedPatterns.set(String(r.id), new Set());
+                                    if (p.patternSuffix) matchedPatterns.get(String(r.id)).add(p.patternSuffix);
                                     return true;
                                 }
                             }
@@ -307,14 +407,31 @@ export class FilterManager {
                     } else if (r.stops) {
                         if (!routeStopsNormalized) routeStopsNormalized = r.stops.map(sid => redirectMap.get(sid) || sid);
                         const stops = routeStopsNormalized;
-                        const idxO = stops.findIndex(sid => originIdsForRoutes.has(sid));
+                        const idxO = stops.findIndex(sid => originIds.has(sid));
                         if (idxO !== -1) {
-                            const idxT = stops.findIndex((sid, i) => i > idxO && targetEq.has(sid));
-                            matches = (idxT !== -1);
+                            if (this.state.context === 'segment' && targetEq.has(stops[idxO])) {
+                                matches = true;
+                            } else {
+                                const idxT = stops.findIndex((sid, i) => i > idxO && targetEq.has(sid));
+                                matches = (idxT !== -1);
+                            }
+                        }
+                    } else if (r._details && Array.isArray(r._details.stops)) {
+                        if (!routeStopsNormalized) routeStopsNormalized = r._details.stops.map(s => redirectMap.get(s.id) || s.id);
+                        const stops = routeStopsNormalized;
+                        const idxO = stops.findIndex(sid => originIds.has(sid));
+                        if (idxO !== -1) {
+                            if (this.state.context === 'segment' && targetEq.has(stops[idxO])) {
+                                matches = true;
+                            } else {
+                                const idxT = stops.findIndex((sid, i) => i > idxO && targetEq.has(sid));
+                                matches = (idxT !== -1);
+                            }
                         }
                     }
                     if (matches) {
                         globalMatch = true;
+                        if (!matchedPatterns.has(String(r.id))) matchedPatterns.set(String(r.id), new Set());
                         return true;
                     }
                 }
@@ -323,17 +440,26 @@ export class FilterManager {
                 }
                 return globalMatch;
             });
+            return { routes: filtered, patternMap: matchedPatterns };
         };
 
-        const applyFilteredRoutes = (commonRoutes, updateRouter = false) => {
+        const applyFilteredRoutes = (commonRoutes, patternMap, updateRouter = false) => {
             this.state.filteredRoutes = commonRoutes.map(r => r.id);
+            this.state.filteredRoutePatterns = patternMap || null;
             this.state.active = true;
 
             this.updateMapFilterState();
             this.uiCallbacks.updateConnectionLine(this.state.originId, this.state.targetIds, false);
+            if (this.state.context === 'stop' && typeof this.uiCallbacks.updateFilterLiveBuses === 'function') {
+                this.uiCallbacks.updateFilterLiveBuses(this.state.filteredRoutes, this.state.filteredRoutePatterns);
+            }
 
             // UI Updates
-            if (currentStopId === this.state.originId) {
+            if (this.state.context === 'segment') {
+                if (typeof this.uiCallbacks.applySegmentFilter === 'function') {
+                    this.uiCallbacks.applySegmentFilter(this.state.filteredRoutes, this.state.filteredRoutePatterns);
+                }
+            } else if (currentStopId === this.state.originId) {
                 if (lastArrivals) {
                     this.uiCallbacks.renderArrivals(lastArrivals, this.state.originId);
                     if (lastRoutes) this.uiCallbacks.renderAllRoutes(lastRoutes, lastArrivals);
@@ -345,11 +471,11 @@ export class FilterManager {
                 }
             }
 
-            if (updateRouter) {
+            if (updateRouter && this.state.context === 'stop') {
                 this.router.updateStop(this.state.originId, true, Array.from(this.state.targetIds));
             }
 
-            if (currentStopId === this.state.originId) {
+            if (currentStopId === this.state.originId && this.state.context === 'stop') {
                 const allStops = this.dataProvider.getAllStops();
                 const stop = allStops.find(s => String(s.id) === String(this.state.originId));
                 if (stop) {
@@ -366,13 +492,14 @@ export class FilterManager {
         };
 
         // Fast path: apply filter using whatever data is already available.
-        applyFilteredRoutes(computeCommonRoutes(), false);
+        const fast = computeCommonRoutes(originIdsForRoutes, originRoutes);
+        applyFilteredRoutes(fast.routes, fast.patternMap, false);
 
         // Fill in missing routes for the origin (cache-only). This can be slow, so do it after the fast pass.
         await this.ensureLazyRoutesForStop(this.state.originId, originIdsForRoutes);
 
         // Recompute origin routes after lazy hydration.
-        originRoutes = buildOriginRoutes();
+        originRoutes = buildOriginRoutes(originIdsForRoutes);
 
         // Ensure Hydration (Critical for Fresh Data reload)
         const routesNeedingFetch = originRoutes.filter(r => !r._details || !r._details.patterns);
@@ -384,8 +511,16 @@ export class FilterManager {
         }
 
         // Recompute with hydrated details (if any) and update UI/router.
-        const commonRoutes = computeCommonRoutes();
-        applyFilteredRoutes(commonRoutes, true);
+        let common = computeCommonRoutes(originIdsForRoutes, originRoutes);
+
+        if (common.routes.length === 0 && this.state.context === 'segment' && this.state.originIdsFallback && this.state.originIdsFallback.size > 0) {
+            const baseOriginsFallback = Array.from(this.state.originIdsFallback);
+            ({ originEqForExclusion, originIdsForRoutes } = buildOriginContext(baseOriginsFallback));
+            originRoutes = buildOriginRoutes(originIdsForRoutes);
+            common = computeCommonRoutes(originIdsForRoutes, originRoutes);
+        }
+
+        applyFilteredRoutes(common.routes, common.patternMap, true);
     }
 
     async updateReachableStops() {
@@ -394,119 +529,180 @@ export class FilterManager {
         // Ensure static data is loaded before proceeding with reachability calculation
         await api.preloadStaticRoutesDetails();
 
-        // Hub equivalents are only for EXCLUDING nearby stops from destinations
-        // We should NOT include routes from all hub members - only from the selected origin
-        const originEqForExclusion = new Set(this.getEquivalentStops(this.state.originId));
-
-        // For route lookup, only use the selected origin and its merge sources (not full hub)
         const redirectMap = this.dataProvider.getRedirectMap();
         const mergeSourcesMap = this.dataProvider.getMergeSourcesMap();
-        const originIdsForRoutes = new Set();
-        originIdsForRoutes.add(this.state.originId);
-        // Include redirect target if this is a redirected stop
-        if (redirectMap.has(this.state.originId)) {
-            originIdsForRoutes.add(redirectMap.get(this.state.originId));
-        }
-        // Include merge sources if this is a parent stop
-        if (mergeSourcesMap.has(this.state.originId)) {
-            mergeSourcesMap.get(this.state.originId).forEach(s => originIdsForRoutes.add(s));
-        }
 
-        await this.ensureLazyRoutesForStop(this.state.originId, originIdsForRoutes);
+        const computeReachableStops = async (originIdsForRoutes, originEqForExclusion) => {
+            await this.ensureLazyRoutesForStop(this.state.originId, originIdsForRoutes);
+            const includeOriginAsReachable = this.state.context === 'segment';
 
-        const stopToRoutesMap = this.dataProvider.getStopToRoutesMap();
-        const routes = new Set();
-        originIdsForRoutes.forEach(oid => {
-            const r = stopToRoutesMap.get(oid) || [];
-            r.forEach(route => {
-                if (shouldShowRoute(route.shortName, route)) {
-                    routes.add(route);
-                }
+            const stopToRoutesMap = this.dataProvider.getStopToRoutesMap();
+            const routes = new Set();
+            originIdsForRoutes.forEach(oid => {
+                const r = stopToRoutesMap.get(oid) || [];
+                r.forEach(route => {
+                    if (shouldShowRoute(route.shortName, route)) {
+                        routes.add(route);
+                    }
+                });
             });
-        });
-        const originRoutes = Array.from(routes);
+            let originRoutes = Array.from(routes);
+            if (this.state.allowedRouteIds && this.state.allowedRouteIds.size > 0) {
+                originRoutes = originRoutes.filter(r => this.state.allowedRouteIds.has(String(r.id)));
+            }
+            if (originRoutes.length === 0 && this.state.allowedRouteIds && this.state.allowedRouteIds.size > 0) {
+                const allRoutes = this.dataProvider.getAllRoutes() || [];
+                originRoutes = allRoutes
+                    .filter(r => this.state.allowedRouteIds.has(String(r.id)))
+                    .filter(r => shouldShowRoute(r.shortName, r));
+            }
 
-        // Fetch Missing Details
-        const routesNeedingFetch = originRoutes.filter(r => !r._details || !r._details.patterns);
-        if (routesNeedingFetch.length > 0) {
-            try {
-                await hydrateRouteDetails(routesNeedingFetch, { strategy: 'cache-only' });
-            } catch (err) { console.error('[FilterManager] Hydration error', err); }
-        }
+            const routesNeedingFetch = originRoutes.filter(r => !r._details || !r._details.patterns);
+            if (routesNeedingFetch.length > 0) {
+                try {
+                    await hydrateRouteDetails(routesNeedingFetch, { strategy: 'cache-only' });
+                } catch (err) { console.error('[FilterManager] Hydration error', err); }
+            }
 
-        const reachableStopIds = new Set();
+            const reachableStopIds = new Set();
 
-        originRoutes.forEach(r => {
-            if (r._details && r._details.patterns) {
-                r._details.patterns.forEach(p => {
-                    if (p.stops) {
-                        // Use originIdsForRoutes (selected origin only) to find position, not full hub
-                        const idx = p.stops.findIndex(s => originIdsForRoutes.has(redirectMap.get(s.id) || s.id));
+            const forwardOnlyPatternMap = (this.state.context === 'segment' && this.state.allowedPatternSuffixes instanceof Map)
+                ? this.state.allowedPatternSuffixes
+                : null;
 
-                        if (idx !== -1 && idx < p.stops.length - 1) {
-                            // Check if this is a loop route:
-                            // 1. CSV override flag isLoop
-                            // 2. Virtual split pattern (has _PART in suffix)
-                            const isLoopRoute = r._overrides?.isLoop === true ||
-                                r._overrides?.isLoop === 'true' ||
-                                (p.patternSuffix && p.patternSuffix.includes('_PART'));
-
-                            // For loop routes: only add stops from origin to just past the terminal
-                            let stopsToAdd;
-                            // Fix: If it's a virtual pattern (_PART), it's already sliced linearly. Treat as standard.
-                            if (isLoopRoute && !p.patternSuffix.includes('_PART')) {
-                                // Find terminus index: prefer CSV override, fall back to midpoint
-                                let terminusIdx = -1;
-                                const terminusStopId = r._overrides?.terminusStopIdOverride || r._overrides?.terminusStopId;
-                                if (terminusStopId) {
-                                    // Find the terminus stop in the pattern
-                                    terminusIdx = p.stops.findIndex(s => {
-                                        const normId = redirectMap.get(s.id) || s.id;
-                                        return normId === terminusStopId || s.id === terminusStopId;
-                                    });
-                                }
-                                // Fall back to midpoint if terminus not found
-                                if (terminusIdx === -1) {
-                                    terminusIdx = Math.ceil(p.stops.length * 0.5) - 1;
-                                }
-
-                                // If origin is before terminus, add stops from origin to terminus + 1
-                                if (idx <= terminusIdx) {
-                                    stopsToAdd = p.stops.slice(idx + 1, terminusIdx + 2);
-                                } else {
-                                    // Origin is on return leg: add remaining stops (back to origin)
-                                    stopsToAdd = p.stops.slice(idx + 1);
-                                }
-                            } else {
-                                // Regular non-loop route: add all stops after origin
-                                stopsToAdd = p.stops.slice(idx + 1);
-
-                                // Special case for circular routes 387/397: bus continues from last to first stop
-                                // These routes wrap around - add first stop as reachable
-                                const CIRCULAR_ROUTES = ['387', '397'];
-                                if (CIRCULAR_ROUTES.includes(String(r.shortName)) && p.stops.length >= 5 && idx > 0) {
-                                    stopsToAdd = [...stopsToAdd, p.stops[0]];
+            originRoutes.forEach(r => {
+                if (r._details && r._details.patterns) {
+                    r._details.patterns.forEach(p => {
+                        if (p.stops) {
+                            if (forwardOnlyPatternMap) {
+                                const allowed = forwardOnlyPatternMap.get(String(r.id));
+                                if (allowed && allowed.size > 0 && p.patternSuffix && !allowed.has(p.patternSuffix)) {
+                                    return;
                                 }
                             }
+                            const idx = p.stops.findIndex(s => originIdsForRoutes.has(redirectMap.get(s.id) || s.id));
 
+                            if (idx !== -1 && idx < p.stops.length) {
+                                const isLoopRoute = r._overrides?.isLoop === true ||
+                                    r._overrides?.isLoop === 'true' ||
+                                    (p.patternSuffix && p.patternSuffix.includes('_PART'));
 
+                                let stopsToAdd;
+                                if (isLoopRoute && !p.patternSuffix.includes('_PART')) {
+                                    let terminusIdx = -1;
+                                    const terminusStopId = r._overrides?.terminusStopIdOverride || r._overrides?.terminusStopId;
+                                    if (terminusStopId) {
+                                        terminusIdx = p.stops.findIndex(s => {
+                                            const normId = redirectMap.get(s.id) || s.id;
+                                            return normId === terminusStopId || s.id === terminusStopId;
+                                        });
+                                    }
+                                    if (terminusIdx === -1) {
+                                        terminusIdx = Math.ceil(p.stops.length * 0.5) - 1;
+                                    }
 
-                            stopsToAdd.forEach(s => {
-                                const normId = redirectMap.get(s.id) || s.id;
-                                this.getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
+                                    if (idx <= terminusIdx) {
+                                        const start = includeOriginAsReachable ? idx : idx + 1;
+                                        stopsToAdd = p.stops.slice(start, terminusIdx + 2);
+                                    } else {
+                                        stopsToAdd = p.stops.slice(idx + 1);
+                                    }
+                                } else {
+                                    const start = includeOriginAsReachable ? idx : idx + 1;
+                                    stopsToAdd = p.stops.slice(start);
+
+                                    const CIRCULAR_ROUTES = ['387', '397'];
+                                    if (CIRCULAR_ROUTES.includes(String(r.shortName)) && p.stops.length >= 5 && idx > 0) {
+                                        stopsToAdd = [...stopsToAdd, p.stops[0]];
+                                    }
+                                }
+
+                                stopsToAdd.forEach(s => {
+                                    const normId = redirectMap.get(s.id) || s.id;
+                                    this.getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
+                                });
+                            }
+                        }
+                    });
+                } else if (r._details && r._details.stops) {
+                    if (this.state.context === 'segment') {
+                        const stops = r._details.stops.map(s => redirectMap.get(s.id) || s.id);
+                        const idx = stops.findIndex(sid => originIdsForRoutes.has(sid));
+                        if (idx !== -1 && idx < stops.length) {
+                            const start = includeOriginAsReachable ? idx : idx + 1;
+                            let stopsToAdd = stops.slice(start);
+
+                            const CIRCULAR_ROUTES = ['387', '397'];
+                            if (CIRCULAR_ROUTES.includes(String(r.shortName)) && stops.length >= 5 && idx > 0) {
+                                stopsToAdd = [...stopsToAdd, stops[0]];
+                            }
+
+                            stopsToAdd.forEach(sid => {
+                                this.getEquivalentStops(sid).forEach(eqId => reachableStopIds.add(eqId));
                             });
                         }
+                    } else {
+                        r._details.stops.forEach(s => {
+                            const normId = redirectMap.get(s.id) || s.id;
+                            if (!originEqForExclusion.has(normId)) {
+                                this.getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
+                            }
+                        });
                     }
-                });
-            } else if (r._details && r._details.stops) {
-                r._details.stops.forEach(s => {
-                    const normId = redirectMap.get(s.id) || s.id;
-                    if (!originEqForExclusion.has(normId)) {
-                        this.getEquivalentStops(normId).forEach(eqId => reachableStopIds.add(eqId));
+                } else if (Array.isArray(r.stops)) {
+                    const stops = r.stops.map(sid => redirectMap.get(sid) || sid);
+                    const idx = stops.findIndex(sid => originIdsForRoutes.has(sid));
+                    if (idx !== -1 && idx < stops.length) {
+                        const start = includeOriginAsReachable ? idx : idx + 1;
+                        let stopsToAdd = stops.slice(start);
+
+                        const CIRCULAR_ROUTES = ['387', '397'];
+                        if (CIRCULAR_ROUTES.includes(String(r.shortName)) && stops.length >= 5 && idx > 0) {
+                            stopsToAdd = [...stopsToAdd, stops[0]];
+                        }
+
+                        stopsToAdd.forEach(sid => {
+                            this.getEquivalentStops(sid).forEach(eqId => reachableStopIds.add(eqId));
+                        });
                     }
-                });
+                }
+            });
+
+            return reachableStopIds;
+        };
+
+        const originEqForExclusion = new Set();
+        const originIdsForRoutes = new Set();
+        const baseOrigins = (this.state.originIdsOverride && this.state.originIdsOverride.size > 0)
+            ? Array.from(this.state.originIdsOverride)
+            : [this.state.originId];
+        baseOrigins.forEach((baseId) => {
+            if (!baseId) return;
+            const base = String(baseId);
+            this.getEquivalentStops(base).forEach(id => originEqForExclusion.add(id));
+            originIdsForRoutes.add(base);
+            if (redirectMap.has(base)) {
+                originIdsForRoutes.add(redirectMap.get(base));
+            }
+            if (mergeSourcesMap.has(base)) {
+                mergeSourcesMap.get(base).forEach(s => originIdsForRoutes.add(s));
             }
         });
+
+        let reachableStopIds = await computeReachableStops(originIdsForRoutes, originEqForExclusion);
+
+        if (reachableStopIds.size === 0 && this.state.allowedRouteIds && this.state.allowedRouteIds.size > 0) {
+            const expandedOriginIds = new Set();
+            const fallbackBases = (this.state.originIdsOverride && this.state.originIdsOverride.size > 0)
+                ? Array.from(this.state.originIdsOverride)
+                : [this.state.originId];
+            fallbackBases.forEach((baseId) => {
+                if (!baseId) return;
+                this.getEquivalentStops(String(baseId)).forEach(id => expandedOriginIds.add(id));
+            });
+            const expandedExclusion = new Set(expandedOriginIds);
+            reachableStopIds = await computeReachableStops(expandedOriginIds, expandedExclusion);
+        }
 
         this.state.reachableStopIds = reachableStopIds;
     }
@@ -536,8 +732,19 @@ export class FilterManager {
         this.state.active = false;
         this.state.picking = false;
         this.state.originId = null;
+        this.state.originIdsOverride = null;
+        this.state.originIdsFallback = null;
         this.state.targetIds = new Set();
         this.state.filteredRoutes = [];
+        this.state.filteredRoutePatterns = null;
+        this.state.allowedPatternSuffixes = null;
+        this.state.allowedRouteIds = null;
+        if (this.state.context === 'segment' && typeof this.uiCallbacks.applySegmentFilter === 'function') {
+            this.uiCallbacks.applySegmentFilter(null, null);
+        }
+        if (typeof this.uiCallbacks.clearFilterLiveBuses === 'function') {
+            this.uiCallbacks.clearFilterLiveBuses();
+        }
         RouteFilterColorManager.reset();
         window.isFilterModeActive = false;
 
@@ -636,6 +843,7 @@ export class FilterManager {
         const reachableArray = Array.from(this.state.reachableStopIds || []);
         const selectedArray = Array.from(this.state.targetIds || []);
         const originId = this.state.originId;
+        const useOriginHighlight = this.state.context !== 'segment';
 
         const highOpacityIds = new Set(reachableArray);
         // Exclude selected (targets) from highOpacityIds because they have their own 0-opacity rule
@@ -644,7 +852,7 @@ export class FilterManager {
             highOpacityIds.delete(id);
         });
 
-        if (originId) highOpacityIds.add(originId);
+        if (originId && useOriginHighlight) highOpacityIds.add(originId);
 
         // Exclude editId from highOpacityIds as well, as it has its own priority branch
         if (editId && highOpacityIds.has(editId)) {
@@ -665,10 +873,12 @@ export class FilterManager {
         const caseExpression = [
             'case',
             ['in', ['get', 'id'], ['literal', selectedArray]], 1000,
-            ['==', ['get', 'id'], originId], 900,
             ['in', ['get', 'id'], ['literal', reachableArray]], 100,
             0
         ];
+        if (useOriginHighlight) {
+            caseExpression.splice(3, 0, ['==', ['get', 'id'], originId], 900);
+        }
 
         if (this.map.getLayer('stops-layer')) {
             this.map.setPaintProperty('stops-layer', 'icon-opacity', opacityExpression);
@@ -750,9 +960,11 @@ export class FilterManager {
                 'case',
                 ['in', ['get', 'id'], ['literal', selectedArray]], 0,
                 ['in', ['get', 'id'], ['literal', reachableArray]], 1,
-                ['==', ['get', 'id'], originId], 1,
                 dimmedOpacity
             ];
+            if (useOriginHighlight) {
+                finalOpacity.splice(5, 0, ['==', ['get', 'id'], originId], 1);
+            }
             this.map.setPaintProperty('metro-layer-circle', 'circle-opacity', finalOpacity);
             this.map.setPaintProperty('metro-layer-circle', 'circle-stroke-opacity', finalOpacity);
         }

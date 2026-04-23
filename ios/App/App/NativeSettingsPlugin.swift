@@ -27,6 +27,7 @@ public class NativeSettingsPlugin: CAPPlugin, CAPBridgedPlugin {
     private let iCloudCardHistoryKey = "sync.card_history_v1"
     private let iCloudFavoritesKey = "sync.favorites_v1"
     private let iCloudSyncEnabledKey = "icloudSyncEnabled"
+    private let supportUrlString = "https://veaveberg.github.io/tbilisi-trans/support.html"
     private let privacyPolicyUrlString = "https://veaveberg.github.io/tbilisi-trans/privacy-policy.html"
 
     private weak var settingsController: SettingsViewController?
@@ -92,6 +93,9 @@ public class NativeSettingsPlugin: CAPPlugin, CAPBridgedPlugin {
                 controller.onOpenPrivacyPolicy = { [weak self] in
                     self?.presentPrivacyPolicySheet()
                 }
+                controller.onOpenSupport = { [weak self] in
+                    self?.presentSupportPage()
+                }
             }
 
             controller.applySettings(initialSettings)
@@ -149,6 +153,9 @@ public class NativeSettingsPlugin: CAPPlugin, CAPBridgedPlugin {
                 }
                 controller.onOpenPrivacyPolicy = { [weak self] in
                     self?.presentPrivacyPolicySheet()
+                }
+                controller.onOpenSupport = { [weak self] in
+                    self?.presentSupportPage()
                 }
             }
 
@@ -386,6 +393,16 @@ public class NativeSettingsPlugin: CAPPlugin, CAPBridgedPlugin {
     private func presentPrivacyPolicySheet() {
         guard let presenter = settingsNavController?.topViewController ?? bridge?.viewController else { return }
         guard let url = URL(string: privacyPolicyUrlString) else { return }
+
+        let safari = SFSafariViewController(url: url)
+        safari.dismissButtonStyle = .close
+        safari.preferredControlTintColor = .label
+        presenter.present(safari, animated: true)
+    }
+
+    private func presentSupportPage() {
+        guard let presenter = settingsNavController?.topViewController ?? bridge?.viewController else { return }
+        guard let url = URL(string: supportUrlString) else { return }
 
         let safari = SFSafariViewController(url: url)
         safari.dismissButtonStyle = .close

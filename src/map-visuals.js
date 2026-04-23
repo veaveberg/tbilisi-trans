@@ -1096,74 +1096,439 @@ export function addStopsToMap(stops, options = {}) {
     }
 }
 
+function ensureLiveBusLayers() {
+    if (!map.getSource('live-buses')) {
+        map.addSource('live-buses', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    }
+
+    if (!map.getLayer('live-buses-bg')) {
+        // Layer 1: White circle background for stroke effect
+        map.addLayer({
+            id: 'live-buses-bg',
+            type: 'symbol',
+            source: 'live-buses',
+            layout: {
+                'icon-image': 'bus-circle-bg',
+                'icon-size': 1.1,
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true,
+                'icon-rotate': ['coalesce', ['get', 'heading'], 0],
+                'icon-rotation-alignment': 'map'
+            }
+        });
+    }
+
+    if (!map.getLayer('live-buses-circle')) {
+        // Layer 2: Colored solid circle
+        map.addLayer({
+            id: 'live-buses-circle',
+            type: 'symbol',
+            source: 'live-buses',
+            layout: {
+                'icon-image': 'bus-circle',
+                'icon-size': 1.0,
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true,
+                'icon-rotate': ['coalesce', ['get', 'heading'], 0],
+                'icon-rotation-alignment': 'map'
+            },
+            paint: {
+                'icon-color': ['get', 'color']
+            }
+        });
+    }
+
+    if (!map.getLayer('live-buses-arrow')) {
+        // Layer 3: White arrow on top
+        map.addLayer({
+            id: 'live-buses-arrow',
+            type: 'symbol',
+            source: 'live-buses',
+            layout: {
+                'icon-image': 'bus-arrow-fg',
+                'icon-size': 1.0,
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true,
+                'icon-rotate': ['coalesce', ['get', 'heading'], 0],
+                'icon-rotation-alignment': 'map'
+            }
+        });
+    }
+
+    // Keep live buses above stop markers
+    if (map.getLayer('live-buses-bg')) map.moveLayer('live-buses-bg');
+    if (map.getLayer('live-buses-circle')) map.moveLayer('live-buses-circle');
+    if (map.getLayer('live-buses-arrow')) map.moveLayer('live-buses-arrow');
+
+    if (!map.__liveBusHandlersAttached) {
+        map.__liveBusHandlersAttached = true;
+        const onEnter = () => { map.getCanvas().style.cursor = 'pointer'; };
+        const onLeave = () => { map.getCanvas().style.cursor = ''; };
+        map.on('mouseenter', 'live-buses-circle', onEnter);
+        map.on('mouseleave', 'live-buses-circle', onLeave);
+        map.on('click', 'live-buses-circle', (e) => {
+            const f = e?.features?.[0];
+            const id = f?.properties?.id;
+            if (!id) return;
+            toggleLiveBusFollow(String(id));
+        });
+    }
+}
+
+let liveBusAnimationId = null;
+let liveBusLastFeatures = new Map(); // vehicleId -> feature
+let liveBusCurrentFeatures = new Map(); // vehicleId -> feature (current animated frame)
+const liveBusLineCache = new Map(); // lineKey -> { coords, cumDist, total }
+const LIVE_BUS_UPDATE_INTERVAL_MS = 5000;
+const LIVE_BUS_FORWARD_OFFSET_M = 50;
+let liveBusFollowId = null;
+
+function easeInOutCubic(t) {
+    return t < 0.5
+        ? 4 * t * t * t
+        : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function buildLiveBusFeature(id, lon, lat, heading, color, extraProps = null) {
+    return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [lon, lat] },
+        properties: { id, heading, color, ...(extraProps || {}) }
+    };
+}
+
+function normalizeHeading(deg) {
+    if (!Number.isFinite(deg)) return null;
+    const h = deg % 360;
+    return h < 0 ? h + 360 : h;
+}
+
+function interpolateHeading(a, b, t) {
+    const ha = normalizeHeading(a);
+    const hb = normalizeHeading(b);
+    if (ha === null && hb === null) return null;
+    if (ha === null) return hb;
+    if (hb === null) return ha;
+    let delta = hb - ha;
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    const out = ha + delta * t;
+    return normalizeHeading(out);
+}
+
+function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+}
+
+function haversineMeters(a, b) {
+    const toRad = (deg) => deg * (Math.PI / 180);
+    const dLat = toRad(b[1] - a[1]);
+    const dLon = toRad(b[0] - a[0]);
+    const lat1 = toRad(a[1]);
+    const lat2 = toRad(b[1]);
+    const sinLat = Math.sin(dLat / 2);
+    const sinLon = Math.sin(dLon / 2);
+    const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
+    return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function buildLineMeta(coords) {
+    const cumDist = [0];
+    let total = 0;
+    for (let i = 1; i < coords.length; i += 1) {
+        total += haversineMeters(coords[i - 1], coords[i]);
+        cumDist.push(total);
+    }
+    return { coords, cumDist, total };
+}
+
+function pointAlongLine(meta, fraction) {
+    if (!meta || !meta.coords || meta.coords.length === 0) return null;
+    if (meta.coords.length === 1) return meta.coords[0];
+    const f = Math.max(0, Math.min(1, fraction));
+    const target = meta.total * f;
+    const cum = meta.cumDist;
+    let idx = 0;
+    while (idx < cum.length - 1 && cum[idx + 1] < target) idx += 1;
+    const segStart = meta.coords[idx];
+    const segEnd = meta.coords[idx + 1] || segStart;
+    const segLen = cum[idx + 1] - cum[idx];
+    if (segLen <= 0) return segStart;
+    const t = (target - cum[idx]) / segLen;
+    return [
+        segStart[0] + (segEnd[0] - segStart[0]) * t,
+        segStart[1] + (segEnd[1] - segStart[1]) * t
+    ];
+}
+
+function setLiveBusData(features = []) {
+    ensureLiveBusLayers();
+    if (map.getSource('live-buses')) {
+        map.getSource('live-buses').setData({ type: 'FeatureCollection', features });
+    }
+}
+
+function offsetPointByHeading(lon, lat, headingDeg, meters) {
+    if (!Number.isFinite(headingDeg) || !Number.isFinite(lon) || !Number.isFinite(lat)) return [lon, lat];
+    const R = 6371000;
+    const brng = (headingDeg * Math.PI) / 180;
+    const lat1 = (lat * Math.PI) / 180;
+    const lon1 = (lon * Math.PI) / 180;
+    const dr = meters / R;
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dr) + Math.cos(lat1) * Math.sin(dr) * Math.cos(brng));
+    const lon2 = lon1 + Math.atan2(Math.sin(brng) * Math.sin(dr) * Math.cos(lat1), Math.cos(dr) - Math.sin(lat1) * Math.sin(lat2));
+    return [(lon2 * 180) / Math.PI, (lat2 * 180) / Math.PI];
+}
+
+export function renderLiveBuses(features = []) {
+    try {
+        if (!Array.isArray(features) || features.length === 0) {
+            if (liveBusAnimationId) cancelAnimationFrame(liveBusAnimationId);
+            liveBusAnimationId = null;
+            liveBusCurrentFeatures.clear();
+            return;
+        }
+
+        const nextById = new Map();
+        features.forEach(f => {
+            const id = f?.properties?.id;
+            if (!id) return;
+            nextById.set(String(id), f);
+        });
+
+        const startById = new Map();
+        nextById.forEach((next, id) => {
+            const current = liveBusCurrentFeatures.get(id);
+            const prev = liveBusLastFeatures.get(id);
+            if (current && current.geometry && next.geometry) {
+                startById.set(id, current);
+            } else if (prev && prev.geometry && next.geometry) {
+                startById.set(id, prev);
+            } else {
+                startById.set(id, next);
+            }
+        });
+
+        const startTime = performance.now();
+        const defaultMoveMs = 900;
+        const totalMs = LIVE_BUS_UPDATE_INTERVAL_MS;
+
+        if (liveBusAnimationId) cancelAnimationFrame(liveBusAnimationId);
+
+        const animate = (now) => {
+            const elapsed = now - startTime;
+            const blended = [];
+
+            nextById.forEach((next, id) => {
+                const start = startById.get(id) || next;
+                const startProps = start.properties || {};
+                const endProps = next.properties || {};
+                const staleTicks = Number.isFinite(startProps._stale) ? startProps._stale : 0;
+                const dtRaw = (Number.isFinite(startProps._ts) && Number.isFinite(endProps._ts))
+                    ? (endProps._ts - startProps._ts)
+                    : defaultMoveMs;
+                const dtAdjusted = (dtRaw > 0 ? dtRaw : defaultMoveMs) * Math.max(1, staleTicks + 1);
+                const moveMs = Math.max(300, Math.min(totalMs, dtAdjusted));
+                const tMove = Math.min(1, elapsed / moveMs);
+                const kMove = easeOutCubic(tMove);
+                const lineKey = endProps._lineKey || startProps._lineKey || null;
+                const hasLine = lineKey && liveBusLineCache.has(lineKey) &&
+                    Number.isFinite(startProps._lineFrac) && Number.isFinite(endProps._lineFrac);
+
+                if (hasLine) {
+                    const meta = liveBusLineCache.get(lineKey);
+                    const rawDelta = endProps._lineFrac - startProps._lineFrac;
+                    if (Math.abs(rawDelta) < 0.001) {
+                        const hold = start.geometry?.coordinates || next.geometry?.coordinates;
+                        const frozenHeading = normalizeHeading(startProps.heading);
+                        blended.push(buildLiveBusFeature(
+                            id,
+                            hold[0],
+                            hold[1],
+                            frozenHeading,
+                            next.properties?.color,
+                            {
+                                _lineKey: lineKey,
+                                _lineFrac: startProps._lineFrac,
+                                _stale: Math.min(4, staleTicks + 1)
+                            }
+                        ));
+                        return;
+                    }
+                    const interpHeading = interpolateHeading(startProps.heading, endProps.heading, kMove);
+                    // If the fraction jumps too far, snap to end to avoid flashes.
+                    if (Math.abs(rawDelta) > 0.25) {
+                        const endCoords = next.geometry?.coordinates || start.geometry?.coordinates;
+                        blended.push(buildLiveBusFeature(
+                            id,
+                            endCoords[0],
+                            endCoords[1],
+                            interpHeading,
+                            next.properties?.color,
+                            {
+                                _lineKey: lineKey,
+                                _lineFrac: endProps._lineFrac
+                            }
+                        ));
+                        return;
+                    }
+                    let frac = startProps._lineFrac + rawDelta * kMove;
+                    // Forward-only clamp (no backtracking)
+                    if (rawDelta >= 0) {
+                        frac = Math.max(startProps._lineFrac, Math.min(endProps._lineFrac, frac));
+                    } else {
+                        frac = Math.min(startProps._lineFrac, Math.max(endProps._lineFrac, frac));
+                    }
+                    frac = Math.max(0, Math.min(1, frac));
+                    const forwardFrac = meta.total > 0 ? (LIVE_BUS_FORWARD_OFFSET_M / meta.total) : 0;
+                    if (rawDelta >= 0) frac = Math.min(1, frac + forwardFrac);
+                    else frac = Math.max(0, frac - forwardFrac);
+                    const p = pointAlongLine(meta, frac) || (next.geometry?.coordinates || start.geometry?.coordinates);
+                    blended.push(buildLiveBusFeature(
+                        id,
+                        p[0],
+                        p[1],
+                        interpHeading,
+                        next.properties?.color,
+                        {
+                            _lineKey: lineKey,
+                            _lineFrac: frac,
+                            _stale: 0
+                        }
+                    ));
+                } else {
+                    const a = start.geometry?.coordinates || next.geometry.coordinates;
+                    const b = next.geometry.coordinates;
+                    const dx = b[0] - a[0];
+                    const dy = b[1] - a[1];
+                    const distSq = dx * dx + dy * dy;
+                    if (distSq < 1e-10) {
+                        const frozenHeading = normalizeHeading(startProps.heading);
+                        blended.push(buildLiveBusFeature(
+                            id,
+                            a[0],
+                            a[1],
+                            frozenHeading,
+                            next.properties?.color,
+                            {
+                                _stale: Math.min(4, staleTicks + 1)
+                            }
+                        ));
+                        return;
+                    }
+                    const interpHeading = interpolateHeading(startProps.heading, endProps.heading, kMove);
+                    if (distSq > 0.0004) {
+                        blended.push(buildLiveBusFeature(
+                            id,
+                            b[0],
+                            b[1],
+                            interpHeading,
+                            next.properties?.color
+                        ));
+                        return;
+                    }
+                    const lon = a[0] + (b[0] - a[0]) * kMove;
+                    const lat = a[1] + (b[1] - a[1]) * kMove;
+                    const offset = offsetPointByHeading(lon, lat, interpHeading, LIVE_BUS_FORWARD_OFFSET_M);
+                    blended.push(buildLiveBusFeature(
+                        id,
+                        offset[0],
+                        offset[1],
+                        interpHeading,
+                        next.properties?.color,
+                        {
+                            _stale: 0
+                        }
+                    ));
+                }
+            });
+
+            setLiveBusData(blended);
+            liveBusCurrentFeatures = new Map();
+            blended.forEach((f) => {
+                const fid = f?.properties?.id;
+                if (fid) liveBusCurrentFeatures.set(String(fid), f);
+            });
+            if (liveBusFollowId) {
+                const follow = liveBusCurrentFeatures.get(String(liveBusFollowId));
+                const coords = follow?.geometry?.coordinates;
+                if (coords && Number.isFinite(coords[0]) && Number.isFinite(coords[1])) {
+                    map.easeTo({ center: coords, duration: 300, easing: (x) => x * (2 - x) });
+                }
+            }
+
+            if (elapsed < totalMs) {
+                liveBusAnimationId = requestAnimationFrame(animate);
+            } else {
+                liveBusAnimationId = null;
+                liveBusLastFeatures = new Map(liveBusCurrentFeatures);
+                liveBusCurrentFeatures = new Map(liveBusCurrentFeatures);
+            }
+        };
+
+        liveBusAnimationId = requestAnimationFrame(animate);
+    } catch (error) {
+        console.error('Failed to render live buses:', error);
+    }
+}
+
+export function registerLiveBusLine(lineKey, coords) {
+    if (!lineKey || !Array.isArray(coords) || coords.length < 2) return;
+    if (liveBusLineCache.has(lineKey)) return;
+    liveBusLineCache.set(lineKey, buildLineMeta(coords));
+}
+
+export function clearLiveBuses() {
+    if (liveBusAnimationId) cancelAnimationFrame(liveBusAnimationId);
+    liveBusAnimationId = null;
+    liveBusLastFeatures.clear();
+    liveBusCurrentFeatures.clear();
+    liveBusFollowId = null;
+    setLiveBusData([]);
+}
+
+export function holdLiveBuses() {
+    if (liveBusAnimationId) cancelAnimationFrame(liveBusAnimationId);
+    liveBusAnimationId = null;
+}
+
+function applyLiveBusOpacity() {
+    const opacityExpr = liveBusFollowId
+        ? ['case', ['==', ['get', 'id'], String(liveBusFollowId)], 1.0, 0.5]
+        : 1.0;
+    if (map.getLayer('live-buses-bg')) {
+        map.setPaintProperty('live-buses-bg', 'icon-opacity', opacityExpr);
+    }
+    if (map.getLayer('live-buses-circle')) {
+        map.setPaintProperty('live-buses-circle', 'icon-opacity', opacityExpr);
+    }
+    if (map.getLayer('live-buses-arrow')) {
+        map.setPaintProperty('live-buses-arrow', 'icon-opacity', opacityExpr);
+    }
+}
+
+export function toggleLiveBusFollow(busId) {
+    // Follow mode temporarily disabled.
+    liveBusFollowId = null;
+    applyLiveBusOpacity();
+}
+
 export async function updateLiveBuses(routeId, patternSuffix, color) {
     try {
         const positionsData = await api.fetchBusPositionsV3(routeId, patternSuffix);
         const buses = positionsData[patternSuffix] || [];
-
-        const busGeoJSON = {
-            type: 'FeatureCollection',
-            features: buses.map(bus => ({
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: [bus.lon, bus.lat] },
-                properties: {
-                    heading: bus.heading,
-                    id: bus.vehicleId,
-                    color: color
-                }
-            }))
-        };
-
-        if (map.getSource('live-buses')) {
-            map.getSource('live-buses').setData(busGeoJSON);
-        } else {
-            map.addSource('live-buses', { type: 'geojson', data: busGeoJSON });
-            // Layer 1: White circle background for stroke effect
-            map.addLayer({
-                id: 'live-buses-bg',
-                type: 'symbol',
-                source: 'live-buses',
-                layout: {
-                    'icon-image': 'bus-circle-bg',
-                    'icon-size': 1.1,
-                    'icon-allow-overlap': true,
-                    'icon-ignore-placement': true,
-                    'icon-rotate': ['coalesce', ['get', 'heading'], 0],
-                    'icon-rotation-alignment': 'map'
-                }
-            });
-            // Layer 2: Colored solid circle
-            map.addLayer({
-                id: 'live-buses-circle',
-                type: 'symbol',
-                source: 'live-buses',
-                layout: {
-                    'icon-image': 'bus-circle',
-                    'icon-size': 1.0,
-                    'icon-allow-overlap': true,
-                    'icon-ignore-placement': true,
-                    'icon-rotate': ['coalesce', ['get', 'heading'], 0],
-                    'icon-rotation-alignment': 'map'
-                },
-                paint: {
-                    'icon-color': ['get', 'color']
-                }
-            });
-            // Layer 3: White arrow on top
-            map.addLayer({
-                id: 'live-buses-arrow',
-                type: 'symbol',
-                source: 'live-buses',
-                layout: {
-                    'icon-image': 'bus-arrow-fg',
-                    'icon-size': 1.0,
-                    'icon-allow-overlap': true,
-                    'icon-ignore-placement': true,
-                    'icon-rotate': ['coalesce', ['get', 'heading'], 0],
-                    'icon-rotation-alignment': 'map'
-                }
-            });
-        }
+        const nowTs = Date.now();
+        const features = buses.map(bus => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [bus.lon, bus.lat] },
+            properties: {
+                heading: bus.heading,
+                id: bus.vehicleId,
+                color: color,
+                _ts: nowTs
+            }
+        }));
+        renderLiveBuses(features);
     } catch (error) {
         console.error('Failed to update live buses:', error);
     }

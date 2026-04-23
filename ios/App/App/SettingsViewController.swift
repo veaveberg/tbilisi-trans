@@ -48,6 +48,7 @@ final class SettingsViewController: UITableViewController {
         Section(title: "Routes", items: [
             Item(key: "simplifyNumbers", title: "Simplify Route Numbers", icon: "numbers.rectangle"),
             Item(key: "showMinibuses", title: "Show Minibuses"),
+            Item(key: "showMinibusSegments", title: "Show \"stop-anywhere\" Sections"),
             Item(key: "showRustaviBuses", title: "Show Rustavi Buses")
         ]),
         Section(title: "Map", items: [
@@ -61,6 +62,7 @@ final class SettingsViewController: UITableViewController {
             Item(key: "pageScale", title: "Interface Scale", type: .scaleSlider)
         ]),
         Section(title: "", items: [
+            Item(key: "support", title: "Support", type: .submenu),
             Item(key: "privacyPolicy", title: "Privacy Policy", type: .submenu)
         ])
     ]
@@ -77,6 +79,7 @@ final class SettingsViewController: UITableViewController {
     var onToggle: ((String, Any) -> Void)?
     var onDone: (([String: Any]) -> Void)?
     var onOpenPrivacyPolicy: (() -> Void)?
+    var onOpenSupport: (() -> Void)?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -166,6 +169,19 @@ final class SettingsViewController: UITableViewController {
         return result
     }
 
+    private func displayedItems(in section: Int) -> [Item] {
+        var items = sections[section].items
+        let sectionTitle = sections[section].title
+        if sectionTitle == "Routes", boolValues["showMinibuses"] == false {
+            items.removeAll { $0.key == "showMinibusSegments" }
+        }
+        return items
+    }
+
+    private func routesSectionIndex() -> Int? {
+        sections.firstIndex { $0.title == "Routes" }
+    }
+
     @objc private func doneTapped() {
         onDone?(getAllSettings())
         dismiss(animated: true)
@@ -176,7 +192,7 @@ final class SettingsViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        sections[section].items.count
+        displayedItems(in: section).count
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
@@ -185,7 +201,7 @@ final class SettingsViewController: UITableViewController {
     }
     
     override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        let item = sections[indexPath.section].items[indexPath.row]
+        let item = displayedItems(in: indexPath.section)[indexPath.row]
         switch item.type {
         case .themeSegment:
             return 44
@@ -199,7 +215,7 @@ final class SettingsViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let item = sections[indexPath.section].items[indexPath.row]
+        let item = displayedItems(in: indexPath.section)[indexPath.row]
         
         switch item.type {
         case .toggle:
@@ -274,12 +290,14 @@ final class SettingsViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        let item = sections[indexPath.section].items[indexPath.row]
+        let item = displayedItems(in: indexPath.section)[indexPath.row]
         defer { tableView.deselectRow(at: indexPath, animated: true) }
         guard item.type == .submenu else { return }
 
         if item.key == "favoritesMenu" {
             openFavoritesMenu()
+        } else if item.key == "support" {
+            onOpenSupport?()
         } else if item.key == "privacyPolicy" {
             onOpenPrivacyPolicy?()
         }
@@ -321,6 +339,9 @@ final class SettingsViewController: UITableViewController {
 
         boolValues[key] = sender.isOn
         onToggle?(key, sender.isOn)
+        if key == "showMinibuses", let routesSection = routesSectionIndex() {
+            tableView.reloadSections(IndexSet(integer: routesSection), with: .automatic)
+        }
     }
 
     private func presentICloudEnableChoice(for sender: UISwitch) {

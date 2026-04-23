@@ -16,7 +16,7 @@ import * as metro from './metro.js';
 const { handleMetroStop } = metro;
 import { setupGeolocation, isTrackingActive, stopTracking, isUserInteractingWithMap, LOCATION_STATES } from './geolocation.js';
 import { map, getMapHash } from './map-setup.js';
-import { setupVisuals, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, setMapLightPreset } from './map-visuals.js';
+import { setupVisuals, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, renderLiveBuses, registerLiveBusLine, clearLiveBuses, holdLiveBuses, setMapLightPreset } from './map-visuals.js';
 import { setMapFocus, setupHoverHandlers, setupClickHandlers, addMetroHoverLogic, clearStopHoverState } from './map-interactions.js';
 import stopRotations from './data/stop_bearings.json';
 import { db } from './db.js';
@@ -32,7 +32,7 @@ import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
 
 
-import { initSettings, simplifyNumber, shouldShowRoute, openNativeFavoritesMenu } from './settings.js';
+import { initSettings, settings, simplifyNumber, shouldShowRoute, openNativeFavoritesMenu } from './settings.js';
 import { initICloudHistorySync } from './icloud-sync.js';
 import { favoritesManager } from './favorites.js';
 
@@ -57,7 +57,16 @@ const hubSourcesMap = new Map();
 const mergeSourcesMap = new Map();
 
 let busUpdateInterval = null;
+let filterBusUpdateInterval = null;
+let filterBusUpdateToken = 0;
+const filterBusThrottle = new Map(); // routeId -> { lastTs, failCount, cooldownUntil }
+let liveBusRequestGateTs = 0;
+const LIVE_BUS_REQUEST_INTERVAL_MS = 1000;
 // State declarations
+
+function shouldShowMinibusSegmentsLayer() {
+    return settings.showMinibuses && settings.showMinibusSegments;
+}
 
 // Initialize Settings
 initSettings({
@@ -120,6 +129,7 @@ document.addEventListener('sheet:closed', () => {
     if (infoHidden && routeHidden) {
         window.currentStopId = null;
         window.currentStopMode = null;
+        clearSelectedMinibusSegments();
         try { setMapFocus(false); } catch (err) { console.error('Reset Focus Error', err); }
     }
 });
@@ -268,6 +278,11 @@ async function handleBack() {
         return;
     }
 
+    if (filterManager?.state?.context === 'segment' && (filterManager.state.active || filterManager.state.picking)) {
+        filterManager.clearFilter(getActiveStopId(), { restoreStop: false });
+        return;
+    }
+
     const previous = popHistory();
     if (previous) {
         if (previous.type === 'stop') {
@@ -289,6 +304,11 @@ async function handleBack() {
             }
         } else if (previous.type === 'route') {
             showRouteOnMap(previous.data, false, { preserveBounds: true });
+        } else if (previous.type === 'segment') {
+            const ids = previous.data?.segmentIds || [];
+            if (ids.length > 0 && typeof window.openSegmentCardForIds === 'function') {
+                window.openSegmentCardForIds(ids);
+            }
         }
     } else {
         // If going back to nothing (empty stack), clear everything
@@ -351,6 +371,17 @@ const uiCallbacks = {
     setSheetState,
     updateConnectionLine,
     showStopInfo,
+    applySegmentFilter: (routeIds, patternMap) => {
+        if (typeof window.updateSegmentCardFilteredRoutes === 'function') {
+            window.updateSegmentCardFilteredRoutes(routeIds, patternMap);
+        }
+    },
+    updateFilterLiveBuses: (routeIds, patternMap) => {
+        startFilterLiveBuses(routeIds, patternMap);
+    },
+    clearFilterLiveBuses: () => {
+        clearFilterLiveBuses();
+    },
     getCircleRadiusExpression: (scale) => getCircleRadiusExpression(scale)
 };
 
@@ -418,7 +449,29 @@ setupClickHandlers({
 });
 
 // Forwarding functions for UI event handlers
-window.toggleFilterMode = () => filterManager.toggleFilterMode(getActiveStopId(), window.isPickModeActive, setEditPickMode);
+window.toggleFilterMode = () => {
+    const top = peekHistory();
+    const isSegment = top && top.type === 'segment';
+    const allowedRouteIds = isSegment && Array.isArray(top.data?.allowedRouteIds)
+        ? top.data.allowedRouteIds
+        : null;
+    const originOverride = isSegment && top.data?.filterOriginStopId
+        ? String(top.data.filterOriginStopId)
+        : null;
+    const originIdsOverride = isSegment && Array.isArray(top.data?.filterOriginStopIds)
+        ? top.data.filterOriginStopIds
+        : null;
+    const originIdsFallback = isSegment && Array.isArray(top.data?.filterOriginFallbackStopIds)
+        ? top.data.filterOriginFallbackStopIds
+        : null;
+    const originId = originOverride || getActiveStopId();
+    return filterManager.toggleFilterMode(originId, window.isPickModeActive, setEditPickMode, {
+        allowedRouteIds,
+        originIdsOverride,
+        originIdsFallback,
+        context: isSegment ? 'segment' : 'stop'
+    });
+};
 window.applyFilter = (targetId) => filterManager.applyFilter(targetId, getActiveStopId(), window.lastArrivals, window.lastRoutes);
 window.clearFilter = (stopId = getActiveStopId(), options = {}) => filterManager.clearFilter(stopId, options);
 
@@ -429,6 +482,33 @@ import { ThemeManager } from './theme.js';
 
 // Global Theme Manager
 let themeManager;
+let selectedMinibusSegmentIds = new Set();
+
+function clearSelectedMinibusSegments() {
+    if (!map.getSource('minibus-segments')) {
+        selectedMinibusSegmentIds.clear();
+        return;
+    }
+    selectedMinibusSegmentIds.forEach((id) => {
+        if (id === undefined || id === null) return;
+        try {
+            map.setFeatureState({ source: 'minibus-segments', id }, { selected: false });
+        } catch (e) { }
+    });
+    selectedMinibusSegmentIds.clear();
+}
+
+function setSelectedMinibusSegments(ids) {
+    clearSelectedMinibusSegments();
+    if (!Array.isArray(ids) || ids.length === 0) return;
+    ids.forEach((id) => {
+        if (id === undefined || id === null) return;
+        selectedMinibusSegmentIds.add(id);
+        try {
+            map.setFeatureState({ source: 'minibus-segments', id }, { selected: true });
+        } catch (e) { }
+    });
+}
 
 // Legacy function cleanup
 // toggleFilterMode, updateMapFilterState, ensureLazyRoutesForStop, refreshRouteFilter, applyFilter, clearFilter 
@@ -688,6 +768,7 @@ async function loadMinibusSegments() {
             layerId: 'minibus-segments-layer',
             edits: editsFromFile || undefined
         });
+        window.minibusSegmentsData = renderedData;
 
         if (map.getSource('minibus-segments')) {
             map.getSource('minibus-segments').setData(renderedData);
@@ -698,7 +779,7 @@ async function loadMinibusSegments() {
             });
 
             // 1. Check Initial Setting (Default: Hidden)
-            const isVisible = localStorage.getItem('showMinibusSegments') === 'true';
+            const isVisible = shouldShowMinibusSegmentsLayer();
 
             // Add minibus layer BEFORE stops to ensure it's underneath
             const beforeId = map.getLayer('stops-layer-glow') ? 'stops-layer-glow' : undefined;
@@ -718,12 +799,16 @@ async function loadMinibusSegments() {
                     'line-emissive-strength': document.body.classList.contains('dark-mode') ? 0.8 : 0,
                     'line-width': [
                         'case',
+                        ['boolean', ['feature-state', 'selected'], false],
+                        12,
                         ['boolean', ['feature-state', 'hover'], false],
                         12,
                         8
                     ],
                     'line-opacity': [
                         'case',
+                        ['boolean', ['feature-state', 'selected'], false],
+                        0.9,
                         ['boolean', ['feature-state', 'hover'], false],
                         0.8,
                         0.5
@@ -733,6 +818,203 @@ async function loadMinibusSegments() {
 
             // Hover listeners are now handled centrally in map-interactions.js via setupHoverHandlers
             // to ensure mutual exclusivity with stops.
+
+            const normalizeRouteIdForMatch = (id) => String(id || '')
+                .replace(/^\d+:/, '')
+                .replace(/^[rR]/, '');
+            const normalizeStopNameForMatch = (name) => String(name || '')
+                .toLowerCase()
+                .replace(/[^a-z0-9\u10A0-\u10FF]+/g, '')
+                .trim();
+
+            const resolveSegmentEndpointStopIds = (segment, route) => {
+                if (!route?.id || !api.getStaticRouteDetails) {
+                    return { fromStopId: null, toStopId: null };
+                }
+                const details = api.getStaticRouteDetails(route.id);
+                if (!details?._stopsOfPatterns?.length) {
+                    return { fromStopId: null, toStopId: null };
+                }
+
+                const fullEntries = details._stopsOfPatterns.filter(x => x?.stop?.id);
+                let entries = fullEntries;
+                if (segment.patternSuffix) {
+                    const scoped = fullEntries.filter(entry =>
+                        Array.isArray(entry.patternSuffixes) && entry.patternSuffixes.includes(segment.patternSuffix)
+                    );
+                    if (scoped.length > 0) entries = scoped;
+                }
+
+                const seen = new Set();
+                const stops = entries
+                    .map(entry => entry.stop)
+                    .filter(stop => {
+                        const id = String(stop.id || '');
+                        if (!id || seen.has(id)) return false;
+                        seen.add(id);
+                        return true;
+                    });
+
+                const pickByName = (targetName) => {
+                    const targetNorm = normalizeStopNameForMatch(targetName);
+                    if (!targetNorm) return null;
+
+                    const exact = stops.find(stop => normalizeStopNameForMatch(stop.name) === targetNorm);
+                    if (exact) return String(exact.id);
+
+                    const partial = stops.find(stop => {
+                        const nameNorm = normalizeStopNameForMatch(stop.name);
+                        return nameNorm.includes(targetNorm) || targetNorm.includes(nameNorm);
+                    });
+                    return partial ? String(partial.id) : null;
+                };
+
+                let fromStopId = pickByName(segment.from);
+                let toStopId = pickByName(segment.to);
+
+                const pattern = details.patterns?.find(p => p.patternSuffix === segment.patternSuffix) || details.patterns?.[0];
+                if (!fromStopId) fromStopId = pattern?.firstStop?.id ? String(pattern.firstStop.id) : null;
+                if (!toStopId) toStopId = pattern?.lastStop?.id ? String(pattern.lastStop.id) : null;
+
+                return { fromStopId, toStopId };
+            };
+
+            const formatSegmentArrivalValue = (arrivalData) => {
+                if (!arrivalData) return '—';
+                if (arrivalData.realtime === true && Number.isFinite(arrivalData.realtimeArrivalMinutes)) {
+                    return `${Math.max(0, Math.round(arrivalData.realtimeArrivalMinutes))}'`;
+                }
+                if (Number.isFinite(arrivalData.scheduledArrivalMinutes)) {
+                    return `${arrivals.formatScheduledTime(arrivalData.scheduledArrivalMinutes)}˚`;
+                }
+                return '—';
+            };
+
+            const pickBestArrivalForSegmentStop = (arrivalsAtStop, route, stopId, targetDirectionIndex) => {
+                if (!Array.isArray(arrivalsAtStop) || arrivalsAtStop.length === 0) return null;
+
+                const routeNormId = normalizeRouteIdForMatch(route?.id);
+                const routeShort = String(route?.shortName || '');
+                const candidates = arrivalsAtStop.filter(a => {
+                    const aNormId = normalizeRouteIdForMatch(a.id || a.routeId || '');
+                    return aNormId === routeNormId || String(a.shortName || '') === routeShort;
+                });
+                if (candidates.length === 0) return null;
+
+                const scored = candidates.map((a) => {
+                    const info = arrivals.resolveDirectionForStop(a, route, stopId);
+                    const minutes = (a.realtime === true && Number.isFinite(a.realtimeArrivalMinutes))
+                        ? a.realtimeArrivalMinutes
+                        : a.scheduledArrivalMinutes;
+                    return { arrival: a, directionIndex: info.directionIndex, minutes: Number(minutes) };
+                }).filter(x => Number.isFinite(x.minutes));
+
+                if (Number.isInteger(targetDirectionIndex)) {
+                    const dirMatched = scored
+                        .filter(x => x.directionIndex === targetDirectionIndex)
+                        .sort((a, b) => a.minutes - b.minutes);
+                    if (dirMatched.length > 0) return dirMatched[0].arrival;
+                }
+
+                scored.sort((a, b) => a.minutes - b.minutes);
+                return scored.length > 0 ? scored[0].arrival : null;
+            };
+
+            const buildSegmentRoutesFromFeatures = (features) => {
+                const segmentRoutes = [];
+                const seenRoutes = new Set();
+
+                features.forEach(f => {
+                    const props = f.properties || {};
+                    if (props.routeRoutes) {
+                        try {
+                            const routes = typeof props.routeRoutes === 'string' ? JSON.parse(props.routeRoutes) : props.routeRoutes;
+                            routes.forEach(r => {
+                                const routeNumber = r.routeNumber || r.shortName;
+                                const key = `${routeNumber}_${r.from || ''}_${r.to || ''}_${r.routeId || ''}_${r.patternSuffix || ''}`;
+                                if (!seenRoutes.has(key)) {
+                                    seenRoutes.add(key);
+                                    segmentRoutes.push({
+                                        routeNumber,
+                                        routeId: r.routeId || null,
+                                        patternSuffix: r.patternSuffix || null,
+                                        from: r.from || '',
+                                        to: r.to || ''
+                                    });
+                                }
+                            });
+                        } catch (err) { }
+                    } else if (props.routeNumber) {
+                        const key = `${props.routeNumber}_${props.from || ''}_${props.to || ''}_${props.routeId || ''}_${props.patternSuffix || ''}`;
+                        if (!seenRoutes.has(key)) {
+                            seenRoutes.add(key);
+                            segmentRoutes.push({
+                                routeNumber: props.routeNumber,
+                                routeId: props.routeId || null,
+                                patternSuffix: props.patternSuffix || null,
+                                from: props.from || '',
+                                to: props.to || ''
+                            });
+                        }
+                    }
+                });
+
+                return segmentRoutes;
+            };
+
+            const getSegmentIdsFromFeatures = (features) => {
+                const ids = [];
+                features.forEach(f => {
+                    if (f && f.id !== undefined && f.id !== null) {
+                        ids.push(String(f.id));
+                    }
+                });
+                return Array.from(new Set(ids)).sort();
+            };
+
+            const getSegmentFeaturesByIds = (ids) => {
+                const wanted = new Set((ids || []).map(id => String(id)));
+                if (!window.minibusSegmentsData?.features || wanted.size === 0) return [];
+                return window.minibusSegmentsData.features.filter(f => wanted.has(String(f.id)));
+            };
+
+            const getSegmentBounds = (features) => {
+                if (!Array.isArray(features) || features.length === 0) return null;
+                const bounds = new mapboxgl.LngLatBounds();
+                let hasPoint = false;
+                features.forEach(f => {
+                    const geom = f?.geometry;
+                    if (!geom || !Array.isArray(geom.coordinates)) return;
+                    if (geom.type === 'LineString') {
+                        geom.coordinates.forEach(coord => {
+                            if (Array.isArray(coord) && coord.length >= 2) {
+                                bounds.extend(coord);
+                                hasPoint = true;
+                            }
+                        });
+                    } else if (geom.type === 'MultiLineString') {
+                        geom.coordinates.forEach(line => {
+                            if (!Array.isArray(line)) return;
+                            line.forEach(coord => {
+                                if (Array.isArray(coord) && coord.length >= 2) {
+                                    bounds.extend(coord);
+                                    hasPoint = true;
+                                }
+                            });
+                        });
+                    }
+                });
+                return hasPoint ? bounds : null;
+            };
+
+            const openSegmentCardForIds = (segmentIds) => {
+                const featuresById = getSegmentFeaturesByIds(segmentIds);
+                if (!featuresById.length) return false;
+                const routes = buildSegmentRoutesFromFeatures(featuresById);
+                if (!routes.length) return false;
+                showSegmentCard(routes, { updateURL: false, segmentIds, segmentFeatures: featuresById });
+                return true;
+            };
 
             // Add popup on click (Radius Search)
             map.on('click', (e) => {
@@ -763,55 +1045,19 @@ async function loadMinibusSegments() {
                 // Stop prop if we found something (optional, but good if other clicks exist)
                 // e.originalEvent.stopPropagation(); 
 
-                // Aggregate Routes
-                const allRoutes = [];
-                const seenRoutes = new Set();
+                const segmentRoutes = buildSegmentRoutesFromFeatures(features);
+                const segmentIds = getSegmentIdsFromFeatures(features);
 
-                features.forEach(f => {
-                    const props = f.properties;
-                    if (props.routeRoutes) {
-                        try {
-                            const routes = typeof props.routeRoutes === 'string' ? JSON.parse(props.routeRoutes) : props.routeRoutes;
-                            routes.forEach(r => {
-                                const key = `${r.routeNumber}_${r.from}_${r.to}`;
-                                if (!seenRoutes.has(key)) {
-                                    seenRoutes.add(key);
-                                    allRoutes.push(r);
-                                }
-                            });
-                        } catch (err) { }
-                    } else if (props.routeNumber) {
-                        // Fallback for single route
-                        // routeNumber might be "402, 503" string in merged props?
-                        // If merged logic from previous steps holds:
-                        // routeRoutes handles "merged".
-                        // If not merged, routeNumber is single.
-                        // But we reverted to unmerged data?
-                        // Wait, user's request came AFTER I reverted to unmerged.
-                        // So we have UNMERGED segments.
-                        // Each feature has ONE routeNumber.
-                        // So we aggregate features.
-                        const key = `${props.routeNumber}_${props.from}_${props.to}`;
-                        if (!seenRoutes.has(key)) {
-                            seenRoutes.add(key);
-                            allRoutes.push({
-                                routeNumber: props.routeNumber,
-                                from: props.from,
-                                to: props.to
-                            });
-                        }
-                    }
-                });
-
-                if (allRoutes.length === 0) return;
+                if (segmentRoutes.length === 0) return;
 
                 // Open Segment Card instead of Popup
-                console.log('[Map Click] Opening Segment Card with routes:', allRoutes);
-                showSegmentCard(allRoutes);
+                console.log('[Map Click] Opening Segment Card with routes:', segmentRoutes);
+                showSegmentCard(segmentRoutes, { updateURL: true, segmentIds, segmentFeatures: features });
             });
 
-            function showSegmentCard(routes) {
+            function showSegmentCard(routes, options = {}) {
                 console.log('[showSegmentCard] Invoked with:', routes.length, 'routes');
+                const { updateURL = true, segmentIds = [], segmentFeatures = [] } = options;
 
                 // --- CLEANUP STOP STATE ---
                 if (window.busUpdateInterval) { // It seems busUpdateInterval is global
@@ -824,6 +1070,7 @@ async function loadMinibusSegments() {
                 }
 
                 stopTracking(); // Stop GPS if active on stop
+                clearRoute();
                 window.currentStopId = null;
 
                 const panel = document.getElementById('info-panel');
@@ -831,6 +1078,9 @@ async function loadMinibusSegments() {
                 const listEl = document.getElementById('arrivals-list');
                 const filterBtn = document.getElementById('filter-routes-toggle');
                 const editBtn = document.getElementById('btn-edit-stop');
+                let segmentOriginStopId = null;
+                const segmentOriginStopIds = new Set();
+                const segmentEndStopIds = new Set();
 
                 // 1. Open Sheet
                 setSheetState(document.getElementById('route-info'), 'hidden'); // Close route info if open
@@ -838,83 +1088,189 @@ async function loadMinibusSegments() {
 
                 // 2. Set Title & Hide Controls
                 nameEl.textContent = 'Minibus Segment';
-                if (filterBtn) filterBtn.classList.add('hidden');
                 if (editBtn) editBtn.classList.add('hidden');
+                if (updateURL) {
+                    Router.updateSegment(segmentIds);
+                }
 
-                // 3. Render Route Chips (Use renderAllRoutes which finds real colors)
-                // Map to format expected by renderAllRoutes
-                const routeObjects = routes.map(r => ({ shortName: r.routeNumber }));
-                renderAllRoutes(routeObjects, []);
+                // Anchor filter origin(s) to the previous stop of each segment route (if resolvable)
+                routes.forEach(routeEntry => {
+                    const realById = routeEntry.routeId
+                        ? allRoutes.find(x => normalizeRouteIdForMatch(x.id) === normalizeRouteIdForMatch(routeEntry.routeId))
+                        : null;
+                    const realRoute = realById || allRoutes.find(x => String(x.shortName) === String(routeEntry.routeNumber));
+                    if (!realRoute) return;
+                    const endpoints = resolveSegmentEndpointStopIds(routeEntry, realRoute);
+                    const originId = endpoints.fromStopId || null;
+                    if (originId) segmentOriginStopIds.add(String(originId));
+                    const endId = endpoints.toStopId || null;
+                    if (endId) segmentEndStopIds.add(String(endId));
+                });
+                if (segmentOriginStopIds.size > 0) {
+                    segmentOriginStopId = Array.from(segmentOriginStopIds)[0];
+                }
+                window.currentStopId = null;
+                window.currentStopMode = null;
+                let segmentAllowedRouteIds = [];
+                if (filterManager?.state) {
+                    filterManager.state.context = 'segment';
+                    filterManager.state.originIdsOverride = segmentEndStopIds.size > 0 ? new Set(segmentEndStopIds) : null;
+                    filterManager.state.originIdsFallback = segmentOriginStopIds.size > 0 ? new Set(segmentOriginStopIds) : null;
+                    const allowed = new Set();
+                    const allowedPatterns = new Map();
+                    routes.forEach(routeEntry => {
+                        const realById = routeEntry.routeId
+                            ? allRoutes.find(x => normalizeRouteIdForMatch(x.id) === normalizeRouteIdForMatch(routeEntry.routeId))
+                            : null;
+                        const realRoute = realById || allRoutes.find(x => String(x.shortName) === String(routeEntry.routeNumber));
+                        if (realRoute?.id) {
+                            allowed.add(String(realRoute.id));
+                            const routeKey = String(realRoute.id);
+                            const suffix = routeEntry.patternSuffix;
+                            if (suffix) {
+                                if (!allowedPatterns.has(routeKey)) allowedPatterns.set(routeKey, new Set());
+                                const suffixes = new Set([suffix]);
+                                const details = api.getStaticRouteDetails ? api.getStaticRouteDetails(realRoute.id) : null;
+                                if (details && Array.isArray(details.patterns)) {
+                                    const hasExact = details.patterns.some(p => p.patternSuffix === suffix);
+                                    if (!hasExact) {
+                                        const base = suffix.split('_PART')[0];
+                                        details.patterns.forEach(p => {
+                                            if (!p?.patternSuffix) return;
+                                            if (p.patternSuffix === base || p.patternSuffix.startsWith(`${base}_PART`)) {
+                                                suffixes.add(p.patternSuffix);
+                                            }
+                                        });
+                                    }
+                                }
+                                const setForRoute = allowedPatterns.get(routeKey);
+                                suffixes.forEach(sfx => setForRoute.add(sfx));
+                            }
+                        }
+                    });
+                    segmentAllowedRouteIds = Array.from(allowed);
+                    filterManager.state.allowedRouteIds = allowed.size > 0 ? allowed : null;
+                    filterManager.state.allowedPatternSuffixes = allowedPatterns.size > 0 ? allowedPatterns : null;
+                }
+                addToHistory('segment', {
+                    id: segmentIds.join('-'),
+                    segmentIds: [...segmentIds],
+                    segmentFeatures: segmentFeatures.map(f => ({
+                        id: f.id,
+                        geometry: f.geometry,
+                        properties: f.properties
+                    })),
+                    allowedRouteIds: segmentAllowedRouteIds,
+                    filterOriginStopId: segmentEndStopIds.size > 0 ? String(Array.from(segmentEndStopIds)[0]) : null,
+                    filterOriginStopIds: Array.from(segmentEndStopIds),
+                    filterOriginFallbackStopIds: Array.from(segmentOriginStopIds)
+                });
+                setSelectedMinibusSegments(segmentIds);
+                if (filterBtn) {
+                    if (segmentOriginStopId) {
+                        filterBtn.classList.remove('hidden');
+                        const iconEl = filterBtn.querySelector('.filter-icon');
+                        const textEl = filterBtn.querySelector('.filter-text');
+                        if (iconEl) iconEl.src = iconFilterOutline;
+                        if (textEl) textEl.textContent = 'Filter routes';
+                    } else {
+                        filterBtn.classList.add('hidden');
+                    }
+                }
 
-                // 4. Render Virtual Arrivals with Stop Card UI
-                listEl.innerHTML = '';
+                const bounds = getSegmentBounds(segmentFeatures);
+                if (bounds && !bounds.isEmpty()) {
+                    const rawPanelHeight = panel ? panel.offsetHeight : 200;
+                    const maxPadding = Math.min(window.innerHeight * 0.4, 300);
+                    const panelHeight = Math.min(rawPanelHeight, maxPadding);
+                    map.fitBounds(bounds, {
+                        padding: {
+                            top: 100,
+                            bottom: panelHeight + 60,
+                            left: 50,
+                            right: 50
+                        },
+                        maxZoom: 16,
+                        duration: 900
+                    });
+                }
 
-                // Sort routes again just in case
-                routes.sort((a, b) => parseInt(a.routeNumber) - parseInt(b.routeNumber));
+                const resolveRealRouteFromEntry = (entry) => {
+                    const realById = entry.routeId
+                        ? allRoutes.find(x => normalizeRouteIdForMatch(x.id) === normalizeRouteIdForMatch(entry.routeId))
+                        : null;
+                    return realById || allRoutes.find(x => String(x.shortName) === String(entry.routeNumber)) || null;
+                };
 
-                routes.forEach(r => {
+                const buildRouteObjects = (entries) => entries.map(entry => {
+                    const real = resolveRealRouteFromEntry(entry);
+                    return real || { shortName: entry.routeNumber };
+                });
+
+                const stopArrivalsPromiseCache = new Map();
+                const getStopArrivals = async (stopId) => {
+                    if (!stopId) return [];
+                    const key = String(stopId);
+                    if (stopArrivalsPromiseCache.has(key)) return stopArrivalsPromiseCache.get(key);
+
+                    const p = (async () => {
+                        try {
+                            const liveOrScheduled = await arrivals.fetchArrivals(stopId);
+                            if (Array.isArray(liveOrScheduled) && liveOrScheduled.length > 0) return liveOrScheduled;
+                        } catch (err) { }
+                        try {
+                            return await arrivals.fetchArrivalsOptimistic(stopId);
+                        } catch (err) {
+                            return [];
+                        }
+                    })();
+
+                    stopArrivalsPromiseCache.set(key, p);
+                    return p;
+                };
+
+                const renderSegmentArrivalsList = (entries) => {
+                    listEl.innerHTML = '';
+                    renderAllRoutes(buildRouteObjects(entries), []);
+
+                    if (entries.length === 0) {
+                        const empty = document.createElement('div');
+                        empty.className = 'empty';
+                        empty.textContent = 'No routes for selected destination';
+                        listEl.appendChild(empty);
+                        return;
+                    }
+
+                    entries.sort((a, b) => String(a.routeNumber).localeCompare(String(b.routeNumber), undefined, { numeric: true }));
+
+                    entries.forEach(r => {
                     const item = document.createElement('div');
-                    item.className = 'arrival-item'; // Use 'arrival-item' class from CSS not 'arrival-card'
-                    item.style.display = 'flex'; // Ensure flex layout if CSS relies on it
+                    item.className = 'arrival-item';
+                    item.style.display = 'flex';
                     item.style.opacity = '1';
 
-                    // Find color
-                    // Find color and real info
-                    let color = 'gray'; // Default
-                    let intervalDesc = '';
-                    let prettyTo = r.to;
-
-                    const realRoute = allRoutes.find(x => x.shortName === r.routeNumber); // allRoutes is global
+                    const realRoute = resolveRealRouteFromEntry(r);
+                    let color = 'var(--primary)';
+                    let headingText = r.to || 'Destination';
+                    let targetHeadsign = r.to || '';
                     if (realRoute) {
-                        if (realRoute.color) color = `#${realRoute.color}`;
-
-                        // 1. Get Interval Description
-                        if (realRoute.id) {
-                            const desc = getIntervalDescription(realRoute.id);
-                            if (desc) intervalDesc = desc;
-                        }
-
-                        // 2. Resolve Headsign with Overrides
-                        // We have r.to (segment destination). Let's see if it matches direction 0 or 1 overrides.
-                        // getPatternHeadsign(route, directionIndex, default) - it is local in main.js
-                        const h0 = getPatternHeadsign(realRoute, 0, '');
-                        const h1 = getPatternHeadsign(realRoute, 1, '');
-
-                        // Simple fuzzy match strategy:
-                        // if r.to is very similar to h0, use h0 (which has overrides)
-                        // if r.to is very similar to h1, use h1
-                        const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-                        const nTo = normalize(r.to);
-
-                        if (h0 && (nTo.includes(normalize(h0)) || normalize(h0).includes(nTo))) {
-                            prettyTo = h0;
-                        } else if (h1 && (nTo.includes(normalize(h1)) || normalize(h1).includes(nTo))) {
-                            prettyTo = h1;
-                        }
+                        color = getRouteDisplayColor(realRoute);
                     }
 
-                    // Format Interval
-                    let bottomContent = `<span class="schedule-times">From: ${r.from}</span>`;
-                    if (intervalDesc) {
-                        // Clean up __FULL__ prefix if present (internal marker in intervals.js)
-                        const cleanDesc = intervalDesc.replace('__FULL__', '').trim();
-                        bottomContent += ` <span class="interval-desc" style="color:#888; font-size:11px;">• ${cleanDesc}</span>`;
-                    }
-
-                    // Use exact structure from arrivals.js
                     item.innerHTML = `
                          <div class="arrival-card-left">
                              <div class="arrival-card-top">
-                                 <div class="route-number" style="color: ${color}">${r.routeNumber}</div>
-                                 <div class="destination" title="${prettyTo}">${prettyTo}</div>
+                                 <div class="route-number" style="color: ${color}">${simplifyNumber(r.routeNumber)}</div>
+                                 <div class="destination" title="${headingText}">${headingText}</div>
                              </div>
                              <div class="arrival-card-bottom">
-                                 ${bottomContent}
+                                 <div class="schedule-times">From: ${r.from || 'Previous stop'} • <span class="segment-time-from">—</span></div>
+                                 <div class="schedule-times">To: ${r.to || 'Next stop'} • <span class="segment-time-to">—</span></div>
                              </div>
                          </div>
                          <div class="arrival-card-right">
                              <div class="time-container">
-                                 <div class="led-text scheduled-time" style="color:#d9534f">-:--</div>
+                                 <div class="led-text scheduled-time" style="color:#d9534f">—</div>
                              </div>
                          </div>
                      `;
@@ -923,14 +1279,112 @@ async function loadMinibusSegments() {
                     if (realRoute) {
                         item.onclick = () => {
                             showRouteOnMap(realRoute, true, {
-                                targetHeadsign: r.to
-                                // We don't have stop ID or direction index easily, so just show pattern
+                                targetHeadsign
                             });
                         };
                     }
 
                     listEl.appendChild(item);
+
+                    if (!realRoute) return;
+
+                    (async () => {
+                        const endpointStops = resolveSegmentEndpointStopIds(r, realRoute);
+                        const anchorStopId = endpointStops.fromStopId || endpointStops.toStopId;
+                        let targetDirectionIndex = null;
+
+                        if (anchorStopId) {
+                            const isLoopRoute = realRoute?._overrides?.isLoop === true ||
+                                realRoute?.isLoop === true ||
+                                realRoute?._overrides?.isLoop === 'true';
+                            let info = null;
+
+                            if (!isLoopRoute) {
+                                const dirs = arrivals.getValidDirectionsForStop(realRoute.id, anchorStopId);
+                                const dirIndex = Array.isArray(dirs) && dirs.length ? dirs[0] : null;
+                                if (Number.isInteger(dirIndex)) {
+                                    targetDirectionIndex = dirIndex;
+                                    info = arrivals.resolveDirectionForStop({
+                                        id: realRoute.id,
+                                        shortName: realRoute.shortName,
+                                        directionIndex: dirIndex
+                                    }, realRoute, anchorStopId);
+                                }
+                            }
+
+                            if (!info) {
+                                info = arrivals.resolveDirectionForStop({
+                                    id: realRoute.id,
+                                    shortName: realRoute.shortName,
+                                    patternSuffix: r.patternSuffix || undefined
+                                }, realRoute, anchorStopId);
+                                targetDirectionIndex = info.directionIndex;
+                            }
+
+                            if (info?.headsign) {
+                                headingText = info.headsign;
+                                targetHeadsign = info.headsign;
+                            }
+                        }
+
+                        const [fromArrivals, toArrivals] = await Promise.all([
+                            getStopArrivals(endpointStops.fromStopId),
+                            getStopArrivals(endpointStops.toStopId)
+                        ]);
+
+                        const fromArrival = pickBestArrivalForSegmentStop(fromArrivals, realRoute, endpointStops.fromStopId, targetDirectionIndex);
+                        const toArrival = pickBestArrivalForSegmentStop(toArrivals, realRoute, endpointStops.toStopId, targetDirectionIndex);
+
+                        if (!item.isConnected) return;
+
+                        const fromEl = item.querySelector('.segment-time-from');
+                        if (fromEl) fromEl.textContent = formatSegmentArrivalValue(fromArrival);
+
+                        const toEl = item.querySelector('.segment-time-to');
+                        if (toEl) toEl.textContent = formatSegmentArrivalValue(toArrival);
+
+                        const destinationEl = item.querySelector('.destination');
+                        if (destinationEl) {
+                            destinationEl.textContent = headingText;
+                            destinationEl.title = headingText;
+                        }
+
+                        const primaryTimeEl = item.querySelector('.arrival-card-right .led-text');
+                        if (primaryTimeEl) {
+                            primaryTimeEl.textContent = formatSegmentArrivalValue(toArrival) || '—';
+                        }
+                    })();
                 });
+                };
+
+                const applySegmentFilterToCard = (filteredRouteIds, patternMap) => {
+                    if (!Array.isArray(filteredRouteIds)) {
+                        renderSegmentArrivalsList(routes);
+                        return;
+                    }
+                    const allowedSet = new Set(filteredRouteIds.map(id => String(id)));
+                    const filtered = routes.filter(entry => {
+                        const real = resolveRealRouteFromEntry(entry);
+                        const id = real?.id ? String(real.id) : null;
+                        if (!id || !allowedSet.has(id)) return false;
+                        if (patternMap && patternMap instanceof Map) {
+                            const allowedPatterns = patternMap.get(id);
+                            if (allowedPatterns && allowedPatterns.size > 0) {
+                                if (entry.patternSuffix) {
+                                    return allowedPatterns.has(entry.patternSuffix);
+                                }
+                                return true;
+                            }
+                        }
+                        return true;
+                    });
+                    renderSegmentArrivalsList(filtered);
+                };
+
+                window.updateSegmentCardFilteredRoutes = applySegmentFilterToCard;
+
+                // 3. Render segment arrivals with stop-card UI
+                renderSegmentArrivalsList(routes);
 
                 // Clear any selected stop Highlight if we were on one
                 if (map.getSource('selected-stop')) {
@@ -938,6 +1392,9 @@ async function loadMinibusSegments() {
                 }
                 window.currentStopId = null;
             }
+
+            // Expose for deep links
+            window.openSegmentCardForIds = openSegmentCardForIds;
 
             // Change cursor
             map.on('mouseenter', 'minibus-segments-layer', () => {
@@ -1143,6 +1600,20 @@ function fitFilterBounds(originStop, targetIds) {
 
 async function handleDeepLinks() {
     const state = Router.parse();
+    if (state.type === 'segment' && Array.isArray(state.segmentIds) && state.segmentIds.length > 0) {
+        const tryOpen = () => {
+            if (typeof window.openSegmentCardForIds === 'function') {
+                const success = window.openSegmentCardForIds(state.segmentIds);
+                if (success) return true;
+            }
+            return false;
+        };
+        if (tryOpen()) return true;
+        setTimeout(() => {
+            tryOpen();
+        }, 200);
+        return true;
+    }
     if (state.stopId) {
         const rawStopId = state.stopId;
         // Router might force '1:' prefix for nested routes, but internal IDs might be '3955'
@@ -1354,6 +1825,13 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
 
     // Stop location tracking if we are selecting something specific
     stopTracking();
+    if (filterManager?.state) {
+        filterManager.state.allowedRouteIds = null;
+        filterManager.state.originIdsOverride = null;
+        filterManager.state.context = 'stop';
+        filterManager.state.allowedPatternSuffixes = null;
+    }
+    clearSelectedMinibusSegments();
     if (!stop) return;
 
     const prevStopId = window.currentStopId;
@@ -1747,6 +2225,221 @@ function cssColorToHex(input) {
     const clamp = (n) => Math.max(0, Math.min(255, Math.round(n)));
     const toHex = (n) => clamp(n).toString(16).padStart(2, '0');
     return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function haversineMeters(a, b) {
+    const toRad = (deg) => deg * (Math.PI / 180);
+    const dLat = toRad(b[1] - a[1]);
+    const dLon = toRad(b[0] - a[0]);
+    const lat1 = toRad(a[1]);
+    const lat2 = toRad(b[1]);
+    const sinLat = Math.sin(dLat / 2);
+    const sinLon = Math.sin(dLon / 2);
+    const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
+    return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function lineLength(coords) {
+    let total = 0;
+    for (let i = 1; i < coords.length; i += 1) {
+        total += haversineMeters(coords[i - 1], coords[i]);
+    }
+    return total;
+}
+
+function nearestFractionOnLine(coords, lngLat) {
+    const total = lineLength(coords);
+    if (!total) return 0;
+    const xScale = Math.cos((lngLat.lat * Math.PI) / 180);
+    const toXY = (c) => ({ x: c[0] * xScale, y: c[1] });
+    const p = { x: lngLat.lng * xScale, y: lngLat.lat };
+    let best = { dist: Infinity, fraction: 0 };
+    let traveled = 0;
+    for (let i = 1; i < coords.length; i += 1) {
+        const a = coords[i - 1];
+        const b = coords[i];
+        const aXY = toXY(a);
+        const bXY = toXY(b);
+        const abx = bXY.x - aXY.x;
+        const aby = bXY.y - aXY.y;
+        const abLen2 = abx * abx + aby * aby;
+        if (abLen2 === 0) continue;
+        const apx = p.x - aXY.x;
+        const apy = p.y - aXY.y;
+        let t = (apx * abx + apy * aby) / abLen2;
+        t = clamp(t, 0, 1);
+        const proj = { x: aXY.x + abx * t, y: aXY.y + aby * t };
+        const dx = p.x - proj.x;
+        const dy = p.y - proj.y;
+        const dist2 = dx * dx + dy * dy;
+        const segLen = haversineMeters(a, b);
+        const along = traveled + segLen * t;
+        if (dist2 < best.dist) {
+            best = { dist: dist2, fraction: along / total };
+        }
+        traveled += segLen;
+    }
+    return clamp(best.fraction, 0, 1);
+}
+
+function getPatternPolyline(routeId, suffix) {
+    const route = allRoutes.find(r => String(r.id) === String(routeId));
+    if (!route || !route._details || !Array.isArray(route._details.patterns)) return null;
+    const pattern = route._details.patterns.find(p =>
+        String(p.patternSuffix || p.suffix) === String(suffix)
+    );
+    if (pattern && !pattern.suffix && pattern.patternSuffix) {
+        pattern.suffix = pattern.patternSuffix;
+    }
+    const coords = pattern?._decodedPolyline;
+    return coords && Array.isArray(coords) && coords.length >= 2 ? { route, pattern, coords } : null;
+}
+
+function isRoutePanelVisible() {
+    const panel = document.getElementById('route-info');
+    return !!(panel && !panel.classList.contains('hidden'));
+}
+
+function clearFilterLiveBuses() {
+    if (filterBusUpdateInterval) {
+        clearInterval(filterBusUpdateInterval);
+        filterBusUpdateInterval = null;
+    }
+    if (!window.currentRoute || !isRoutePanelVisible()) {
+        clearLiveBuses();
+    }
+}
+
+function getFilterRouteColor(routeId) {
+    const id = String(routeId);
+    const direct = RouteFilterColorManager.getColorForRoute(id);
+    if (direct) return direct;
+    const routeObj = allRoutes.find(r => String(r.id) === id);
+    return getRouteDisplayColor(routeObj) || '#888888';
+}
+
+async function updateFilteredLiveBuses(routeIds, patternMap) {
+    if (!filterManager?.state?.active || !filterManager.state.targetIds || filterManager.state.targetIds.size === 0) {
+        clearFilterLiveBuses();
+        return;
+    }
+    if (window.currentRoute && isRoutePanelVisible()) return;
+
+    if (!Array.isArray(routeIds) || routeIds.length === 0) {
+        clearLiveBuses();
+        return;
+    }
+    if (!(patternMap instanceof Map)) {
+        clearLiveBuses();
+        return;
+    }
+
+    const requestToken = ++filterBusUpdateToken;
+    const features = [];
+    const tasks = [];
+    const uniqueByVehicle = new Map();
+    let hadError = false;
+
+    const nowTs = Date.now();
+    const MAX_ROUTES = 8;
+    let scheduled = 0;
+    routeIds.forEach(routeId => {
+        if (scheduled >= MAX_ROUTES) return;
+        const rid = String(routeId);
+        const throttle = filterBusThrottle.get(rid) || { lastTs: 0, failCount: 0, cooldownUntil: 0 };
+        if (throttle.cooldownUntil && nowTs < throttle.cooldownUntil) return;
+        if (nowTs - throttle.lastTs < 2000) return;
+        throttle.lastTs = nowTs;
+        filterBusThrottle.set(rid, throttle);
+        const suffixesSet = patternMap.get(rid);
+        if (!suffixesSet || suffixesSet.size === 0) return;
+        const suffixes = Array.from(suffixesSet);
+        const color = getFilterRouteColor(rid);
+
+        tasks.push(async () => {
+            try {
+                const data = await api.fetchBusPositionsV3Multi(rid, suffixes);
+                const throttleState = filterBusThrottle.get(rid) || { lastTs: nowTs, failCount: 0, cooldownUntil: 0 };
+                throttleState.failCount = 0;
+                throttleState.cooldownUntil = 0;
+                filterBusThrottle.set(rid, throttleState);
+                suffixes.forEach((suffix) => {
+                    const buses = data && data[suffix] ? data[suffix] : [];
+                    const lineInfo = getPatternPolyline(rid, suffix);
+                    const lineKey = lineInfo ? `${rid}:${suffix}` : null;
+                    if (lineInfo && lineKey) {
+                        registerLiveBusLine(lineKey, lineInfo.coords);
+                    } else if (lineInfo && lineInfo.pattern && !lineInfo.pattern._fetchingPolyline) {
+                        // Attempt to fill cache-only geometry for smoother motion next tick
+                        RouteGeometry.fetchAndCacheGeometry(lineInfo.route, lineInfo.pattern, { strategy: 'cache-only' });
+                    }
+                    buses.forEach(bus => {
+                        if (!bus || !Number.isFinite(bus.lon) || !Number.isFinite(bus.lat)) return;
+                        const key = bus.vehicleId ? String(bus.vehicleId) : `${rid}:${suffix}:${bus.lon}:${bus.lat}`;
+                        if (uniqueByVehicle.has(key)) return;
+                        uniqueByVehicle.set(key, true);
+                        const fraction = (lineInfo && lineInfo.coords)
+                            ? nearestFractionOnLine(lineInfo.coords, { lng: bus.lon, lat: bus.lat })
+                            : null;
+                        features.push({
+                            type: 'Feature',
+                            geometry: { type: 'Point', coordinates: [bus.lon, bus.lat] },
+                            properties: {
+                                heading: bus.heading,
+                                id: bus.vehicleId || key,
+                                color,
+                                _ts: nowTs,
+                                _lineKey: lineKey,
+                                _lineFrac: Number.isFinite(fraction) ? fraction : null
+                            }
+                        });
+                    });
+                });
+            } catch {
+                hadError = true;
+                const throttleState = filterBusThrottle.get(rid) || { lastTs: nowTs, failCount: 0, cooldownUntil: 0 };
+                throttleState.failCount += 1;
+                if (throttleState.failCount >= 2) {
+                    throttleState.cooldownUntil = nowTs + Math.min(60000, 5000 * throttleState.failCount);
+                }
+                filterBusThrottle.set(rid, throttleState);
+            }
+        });
+        scheduled += 1;
+    });
+
+    if (tasks.length === 0) {
+        clearLiveBuses();
+        return;
+    }
+
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    for (let i = 0; i < tasks.length; i += 1) {
+        const now = Date.now();
+        const wait = Math.max(0, liveBusRequestGateTs - now);
+        if (wait > 0) await sleep(wait);
+        liveBusRequestGateTs = Date.now() + LIVE_BUS_REQUEST_INTERVAL_MS;
+        await tasks[i]();
+    }
+    if (requestToken !== filterBusUpdateToken) return;
+    if (features.length === 0 && hadError) {
+        holdLiveBuses();
+        return;
+    }
+    renderLiveBuses(features);
+}
+
+function startFilterLiveBuses(routeIds, patternMap) {
+    clearFilterLiveBuses();
+    updateFilteredLiveBuses(routeIds, patternMap);
+    filterBusUpdateInterval = setInterval(() => {
+        if (document.hidden) return;
+        updateFilteredLiveBuses(filterManager?.state?.filteredRoutes, filterManager?.state?.filteredRoutePatterns);
+    }, 5000);
 }
 
 function resolveRouteFavoriteColor(route) {
@@ -2449,6 +3142,13 @@ let currentPatternIndex = 0;
 async function showRouteOnMap(route, addToStack = true, options = {}) {
     // Stop location tracking if we are selecting something specific
     stopTracking();
+    if (filterManager?.state) {
+        filterManager.state.allowedRouteIds = null;
+        filterManager.state.originIdsOverride = null;
+        filterManager.state.context = 'route';
+        filterManager.state.allowedPatternSuffixes = null;
+    }
+    clearSelectedMinibusSegments();
     // Snapshot current Zoom into the previous state (the Stop view) 
     // This allows "Back" to restore the exact zoom level.
     const top = peekHistory();
@@ -3575,10 +4275,17 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
         window._lastRenderedStopId = null; // Clear arrivals internal state
         window.lastRoutes = [];
         window.lastArrivals = [];
+        if (arrivalsController) arrivalsController.clear();
+        if (window.arrivalsCountdownTimer) {
+            clearInterval(window.arrivalsCountdownTimer);
+            window.arrivalsCountdownTimer = null;
+        }
 
         if (window.selectDevStop) window.selectDevStop(null); // Notify DevTools
 
         try { clearFilter(getActiveStopId(), { restoreStop: false }); } catch (err) { console.error('Clear Filter Error', err); }
+        try { clearFilterLiveBuses(); } catch (err) { console.error('Clear Live Buses Error', err); }
+        try { renderLiveBuses([]); } catch (err) { console.error('Render Live Buses Error', err); }
 
         // Always try to reset map focus
         try { setMapFocus(false); } catch (err) { console.error('Reset Focus Error', err); }
@@ -3756,6 +4463,14 @@ function distanceMeters(a, b) {
 function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId = null) {
     if (!originId) return;
 
+    const isSegmentContext = filterManager?.state?.context === 'segment';
+    const originOverrideSet = isSegmentContext && filterManager?.state?.originIdsOverride instanceof Set
+        ? filterManager.state.originIdsOverride
+        : null;
+    const baseOrigins = originOverrideSet && originOverrideSet.size > 0
+        ? Array.from(originOverrideSet)
+        : [originId];
+
     // Normalize Inputs
     let targets = new Set();
     if (targetIdsInput instanceof Set) {
@@ -3768,17 +4483,20 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
         targets.add(hoverId); // Add the hover target to the set to be drawn
     }
 
-    const originStop = allStops.find(s => s.id === originId);
-    if (!originStop) return;
+    const originStop = baseOrigins
+        .map(id => allStops.find(s => s.id === id))
+        .find(Boolean) || null;
+    if (!originStop && !isSegmentContext) return;
 
     // State change tracking for potential future debugging
     const currentTargetsKey = Array.from(targets).sort().join(',');
-    const stateChanged = _lastLoggedFilterState.originId !== originId ||
+    const originKey = baseOrigins.slice().sort().join(',');
+    const stateChanged = _lastLoggedFilterState.originId !== originKey ||
         _lastLoggedFilterState.targets !== currentTargetsKey ||
         _lastLoggedFilterState.isHover !== isHover;
 
     if (stateChanged) {
-        _lastLoggedFilterState = { originId, targets: currentTargetsKey, isHover };
+        _lastLoggedFilterState = { originId: originKey, targets: currentTargetsKey, isHover };
     }
 
     const features = [];
@@ -3833,15 +4551,19 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
         // Find connecting routes - only from selected origin, not all hub members
         // Hub equivalents should only be used for excluding destinations, not for route lookup
         const originIdsForRoutes = new Set();
-        originIdsForRoutes.add(originId);
-        // Include redirect target if this is a redirected stop
-        if (redirectMap.has(originId)) {
-            originIdsForRoutes.add(redirectMap.get(originId));
-        }
-        // Include merge sources if this is a parent stop
-        if (mergeSourcesMap.has(originId)) {
-            mergeSourcesMap.get(originId).forEach(s => originIdsForRoutes.add(s));
-        }
+        baseOrigins.forEach((baseId) => {
+            if (!baseId) return;
+            const base = String(baseId);
+            originIdsForRoutes.add(base);
+            // Include redirect target if this is a redirected stop
+            if (redirectMap.has(base)) {
+                originIdsForRoutes.add(redirectMap.get(base));
+            }
+            // Include merge sources if this is a parent stop
+            if (mergeSourcesMap.has(base)) {
+                mergeSourcesMap.get(base).forEach(s => originIdsForRoutes.add(s));
+            }
+        });
 
         const originRoutesSet = new Set();
         originIdsForRoutes.forEach(oid => {
@@ -3853,13 +4575,14 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
 
 
         // Group Routes by Path Signature
-        const pathGroups = new Map(); // signature -> { routes: [], patternStops: [], pattern: patternObj }
+        const pathGroups = new Map(); // signature -> { routes: [], patternStops: [], pattern: patternObj, originStop: stopObj }
 
         originRoutes.forEach(r => {
             // Strict Check Logic (Duplicates applyFilter logic but per target)
             // We need to EXTRACT the specific path segment for this route to generate signature
             let segmentStops = null;
             let matchedPattern = null;
+            let originStopForGroup = null;
 
             const targetEq = new Set(getEquivalentStops(targetId));
 
@@ -3933,8 +4656,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                             return refStop ? { ...s, id: normId, lat: refStop.lat, lon: refStop.lon } : { ...s, id: normId };
                         });
 
-
-
+                        originStopForGroup = segmentStops[0] || null;
                         matchedPattern = p;
                         return true;
                     }
@@ -3957,6 +4679,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                             return refStop ? { ...firstStop, id: normId, lat: refStop.lat, lon: refStop.lon } : { ...firstStop, id: normId };
                         })();
                         segmentStops = [...afterOrigin, firstStopHydrated];
+                        originStopForGroup = segmentStops[0] || null;
                         matchedPattern = p;
                         return true;
                     }
@@ -3985,6 +4708,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                         const normId = redirectMap.get(sid) || sid;
                         return allStops.find(s => s.id === normId);
                     }).filter(Boolean);
+                    originStopForGroup = segmentStops[0] || null;
                 }
             }
 
@@ -3998,10 +4722,15 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                     pathGroups.set(ids, {
                         routes: [],
                         stops: segmentStops,
-                        pattern: matchedPattern
+                        pattern: matchedPattern,
+                        originStop: originStopForGroup
                     });
                 }
-                if (ids) pathGroups.get(ids).routes.push(r);
+                if (ids) {
+                    const group = pathGroups.get(ids);
+                    if (group && !group.originStop && originStopForGroup) group.originStop = originStopForGroup;
+                    group.routes.push(r);
+                }
             }
         });
 
@@ -4069,6 +4798,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             }
 
             const selectedPatternStops = group.stops.map(s => [s.lon, s.lat]);
+            const originStopForSlice = group.originStop || originStop;
 
             // DEBUG: Check if stops have valid coordinates
             if (stateChanged && (originId === '3963' || originId === 3963)) {
@@ -4099,7 +4829,7 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                     if (bestPattern._decodedPolyline) {
                         // Using polyline from pattern for accurate route geometry
                         try {
-                            const sliced = RouteGeometry.slicePolyline(bestPattern._decodedPolyline, originStop, targetStop, group.stops);
+                            const sliced = RouteGeometry.slicePolyline(bestPattern._decodedPolyline, originStopForSlice, targetStop, group.stops);
 
 
                             // Sanity check: reject sliced polylines that are too short or don't span enough distance
@@ -4141,8 +4871,8 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             let simpleCoordinates = null;
             if (selectedPatternStops.length >= 2) {
                 simpleCoordinates = RouteGeometry.getCatmullRomSpline(selectedPatternStops);
-            } else {
-                simpleCoordinates = [[originStop.lon, originStop.lat], [targetStop.lon, targetStop.lat]];
+            } else if (originStopForSlice && targetStop) {
+                simpleCoordinates = [[originStopForSlice.lon, originStopForSlice.lat], [targetStop.lon, targetStop.lat]];
             }
 
             // If we lack accurate polyline, us simpleCoordinates as the main line.
@@ -4195,11 +4925,12 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
             if (isSelected && group.routes.length > 0 && stopCount !== null) {
                 const bestRoute = group.routes[0];
                 const suffix = group.pattern?.patternSuffix || group.pattern?.suffix || null;
+                const travelOriginId = originStopForSlice?.id || originId;
                 travelMinutes = filterTravelTimeHelper.requestScheduledTravelMinutes({
                     signature,
                     routeId: bestRoute.id,
                     patternSuffix: suffix,
-                    originId,
+                    originId: travelOriginId,
                     targetId
                 });
             }

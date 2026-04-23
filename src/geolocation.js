@@ -773,10 +773,23 @@ export function setupGeolocation(map) {
         if (!granted) return;
 
         const path = window.location?.pathname || '';
-        const hasDeepLink = path.includes('/stop') || path.includes('/bus') || path.includes('/filtered') || !!window.currentStopId;
+        const hash = window.location?.hash || '';
+        const hashParts = hash.replace('#', '').split('/');
+        const hasMapHash = hashParts.length >= 3 &&
+            !Number.isNaN(parseFloat(hashParts[0])) &&
+            !Number.isNaN(parseFloat(hashParts[1])) &&
+            !Number.isNaN(parseFloat(hashParts[2]));
+        const hasDeepLink = path.includes('/stop') ||
+            path.includes('/bus') ||
+            path.includes('/filtered') ||
+            path.includes('/segment') ||
+            hasMapHash ||
+            !!window.currentStopId;
 
-        // Do not enter follow mode on launch; just center if allowed.
+        // Do not auto-center or trigger geolocation on deep links.
         isAutoFlyOnLaunch = !hasDeepLink;
+        if (hasDeepLink) return;
+
         if (localStorage.getItem('compassPermissionGranted') === 'true') {
             startPersistentOrientationTracking(map);
         }

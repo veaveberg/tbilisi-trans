@@ -42,6 +42,24 @@ export const Router = {
 
         const parts = path.split('/');
 
+        // Segment Deep Link: /segment/ID-ID
+        if (parts[0] === 'segment' || parts[0].startsWith('segment')) {
+            let raw = '';
+            if (parts[0] === 'segment') {
+                raw = parts[1] || '';
+            } else {
+                raw = parts[0].substring('segment'.length);
+            }
+            const ids = raw.split('-').filter(Boolean);
+            const state = {
+                type: 'segment',
+                segmentIds: ids
+            };
+            this._lastParsedPath = location.pathname;
+            this._lastParsedState = state;
+            return state;
+        }
+
         // Route Parsing (Simplified /bus306a)
         // Check for Nested: /stopXXX/busXXXa or /busXXXa
 
@@ -185,6 +203,19 @@ export const Router = {
         let url = `${this.base}bus${shortName}${suffix}`;
         console.log('[Router] Push State (Route):', url);
         history.pushState({ type: 'route', shortName, direction }, '', url);
+    },
+
+    updateSegment(segmentIds = [], mapHash = '') {
+        const cleanIds = (segmentIds || []).map(id => String(id)).filter(Boolean);
+        if (cleanIds.length === 0) {
+            const url = this.base + mapHash;
+            history.pushState(null, '', url);
+            return;
+        }
+        const slug = cleanIds.join('-');
+        const url = `${this.base}segment/${slug}`;
+        console.log('[Router] Push State (Segment):', url);
+        history.pushState({ type: 'segment', segmentIds: cleanIds }, '', url);
     },
 
     updateNested(stopId, shortName, direction = 0) {

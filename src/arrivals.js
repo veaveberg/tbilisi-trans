@@ -465,6 +465,19 @@ function getValidDirectionsForRoute(routeId, stopIds) {
     return finalDirs.size > 0 ? Array.from(finalDirs) : [0];
 }
 
+// Public wrapper to match stop-card direction resolution behavior.
+export function getValidDirectionsForStop(routeId, stopIds) {
+    return getValidDirectionsForRoute(routeId, stopIds);
+}
+
+/**
+ * Public wrapper for stop-card direction/headsign resolution.
+ * Reuses the same internal logic used by arrivals rendering.
+ */
+export function resolveDirectionForStop(arrivalLike, route, stopId) {
+    return resolveDirectionInfo(arrivalLike, route, stopId);
+}
+
 /**
  * Format minutes from now to HH:mm (Tbilisi Time)
  */

@@ -1636,6 +1636,52 @@ export async function fetchBusPositionsV3(routeId, patternSuffix) {
     return [];
 }
 
+export async function fetchBusPositionsV3Multi(routeId, patternSuffixes = []) {
+    const requested = Array.isArray(patternSuffixes) ? patternSuffixes.filter(Boolean) : [];
+    if (requested.length === 0) return {};
+
+    const aliases = {};
+    const realSuffixesSet = new Set();
+    requested.forEach((s) => {
+        if (s.includes('_PART')) {
+            const real = s.split('_PART')[0];
+            aliases[s] = real;
+            realSuffixesSet.add(real);
+        } else {
+            realSuffixesSet.add(s);
+        }
+    });
+
+    const realSuffixesStr = Array.from(realSuffixesSet).join(',');
+    const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${encodeURIComponent(id)}/positions?patternSuffixes=${encodeURIComponent(realSuffixesStr)}`;
+
+    async function tryFetch(source) {
+        const apiId = restoreApiId(routeId, source);
+        const url = urlGen(source, apiId);
+        const res = await fetch(url, { headers: { 'x-api-key': API_KEY } });
+        if (!res.ok) throw new Error('Not OK');
+        const data = await res.json();
+        const out = { ...data };
+        Object.keys(aliases).forEach((virtual) => {
+            const real = aliases[virtual];
+            if (out[real] && !out[virtual]) out[virtual] = out[real];
+        });
+        return out;
+    }
+
+    try {
+        return await tryFetch(defaultSource);
+    } catch (e) {
+        for (const source of sources) {
+            if (source.id === defaultSource.id) continue;
+            try {
+                return await tryFetch(source);
+            } catch (err) { }
+        }
+    }
+    return {};
+}
+
 export async function fetchRoutePolylineV3(routeId, patternSuffixes, options = {}) {
     // 1. Map requested suffixes to real (deduplicated)
     const aliases = {}; // virtual -> real

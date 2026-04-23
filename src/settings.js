@@ -5,6 +5,7 @@ import { favoritesManager } from './favorites.js';
 export const settings = {
     simplifyNumbers: false,
     showMinibuses: true,
+    showMinibusSegments: false,
     showRustaviBuses: true,
     showPoiLabels: false,
     pageScale: 1.0
@@ -14,6 +15,8 @@ let onUpdateCallback = null;
 let nativeSettingsInitialized = false;
 let privacyPolicySheetInitialized = false;
 let lastFocusedBeforePrivacySheet = null;
+let supportSheetInitialized = false;
+let lastFocusedBeforeSupportSheet = null;
 
 const NativeSettingsPlugin = registerPlugin('NativeSettings');
 
@@ -52,6 +55,12 @@ function syncCheckbox(id, value) {
     }
 }
 
+function syncMinibusSegmentsRowVisibility() {
+    const row = document.getElementById('menu-minibus-segments-row');
+    if (!row) return;
+    row.style.display = settings.showMinibuses ? '' : 'none';
+}
+
 function applyNativeSetting(key, value) {
     switch (key) {
         case 'simplifyNumbers':
@@ -64,6 +73,19 @@ function applyNativeSetting(key, value) {
             settings.showMinibuses = !!value;
             localStorage.setItem('showMinibuses', settings.showMinibuses);
             syncCheckbox('minibus-switch', settings.showMinibuses);
+            syncMinibusSegmentsRowVisibility();
+            window.dispatchEvent(new CustomEvent('minibusSegmentsChange', {
+                detail: settings.showMinibuses && settings.showMinibusSegments
+            }));
+            if (onUpdateCallback) onUpdateCallback();
+            break;
+        case 'showMinibusSegments':
+            settings.showMinibusSegments = !!value;
+            localStorage.setItem('showMinibusSegments', settings.showMinibusSegments);
+            syncCheckbox('minibus-segments-switch', settings.showMinibusSegments);
+            window.dispatchEvent(new CustomEvent('minibusSegmentsChange', {
+                detail: settings.showMinibuses && settings.showMinibusSegments
+            }));
             if (onUpdateCallback) onUpdateCallback();
             break;
         case 'showRustaviBuses':
@@ -184,8 +206,7 @@ function initNativeSettingsBridge() {
 async function applyInitialNativeZoom() {
     if (!isNativeSettingsAvailable()) return;
 
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    const defaultScale = isMobile ? 1.25 : 1.0;
+    const defaultScale = 1.0;
     const storedScale = localStorage.getItem('pageScale');
     let currentScale = storedScale ? parseFloat(storedScale) : defaultScale;
     if (isIOSAppOnMac()) {
@@ -249,6 +270,28 @@ function getPrivacyPolicyUrl() {
     return `${normalizedBase}privacy-policy/index.html`;
 }
 
+function getSupportUrl() {
+    const base = import.meta.env.BASE_URL || '/';
+    const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+    return `${normalizedBase}support/index.html`;
+}
+
+function getBasePath() {
+    const base = import.meta.env.BASE_URL || '/';
+    return base.endsWith('/') ? base : `${base}/`;
+}
+
+function getCurrentAppSubpath() {
+    const basePath = getBasePath();
+    let path = location.pathname;
+    if (path.startsWith(basePath)) {
+        path = path.slice(basePath.length);
+    } else if (path.startsWith('/')) {
+        path = path.slice(1);
+    }
+    return path.replace(/^\/+|\/+$/g, '');
+}
+
 function openPrivacyPolicySheet() {
     const backdrop = document.getElementById('privacy-policy-backdrop');
     const sheet = document.getElementById('privacy-policy-sheet');
@@ -272,6 +315,29 @@ function openPrivacyPolicySheet() {
     }, 0);
 }
 
+function openSupportSheet() {
+    const backdrop = document.getElementById('support-backdrop');
+    const sheet = document.getElementById('support-sheet');
+    const frame = document.getElementById('support-frame');
+    const closeBtn = document.getElementById('support-close');
+    if (!backdrop || !sheet || !frame) return;
+
+    lastFocusedBeforeSupportSheet = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    if (frame.dataset.loaded !== 'true') {
+        frame.src = getSupportUrl();
+        frame.dataset.loaded = 'true';
+    }
+
+    backdrop.classList.remove('hidden');
+    sheet.classList.remove('hidden');
+    document.body.classList.add('privacy-sheet-open');
+
+    setTimeout(() => {
+        closeBtn?.focus();
+    }, 0);
+}
+
 function closePrivacyPolicySheet() {
     const backdrop = document.getElementById('privacy-policy-backdrop');
     const sheet = document.getElementById('privacy-policy-sheet');
@@ -281,8 +347,32 @@ function closePrivacyPolicySheet() {
     sheet.classList.add('hidden');
     document.body.classList.remove('privacy-sheet-open');
 
+    // Clean up URL if it has privacy-policy in it
+    if (getCurrentAppSubpath() === 'privacy-policy') {
+        window.history.replaceState(null, '', getBasePath());
+    }
+
     if (lastFocusedBeforePrivacySheet && typeof lastFocusedBeforePrivacySheet.focus === 'function') {
         lastFocusedBeforePrivacySheet.focus();
+    }
+}
+
+function closeSupportSheet() {
+    const backdrop = document.getElementById('support-backdrop');
+    const sheet = document.getElementById('support-sheet');
+    if (!backdrop || !sheet) return;
+
+    backdrop.classList.add('hidden');
+    sheet.classList.add('hidden');
+    document.body.classList.remove('privacy-sheet-open');
+
+    // Clean up URL if it has support in it
+    if (getCurrentAppSubpath() === 'support') {
+        window.history.replaceState(null, '', getBasePath());
+    }
+
+    if (lastFocusedBeforeSupportSheet && typeof lastFocusedBeforeSupportSheet.focus === 'function') {
+        lastFocusedBeforeSupportSheet.focus();
     }
 }
 
@@ -295,11 +385,21 @@ function initPrivacyPolicySheetControls(menuPopup) {
 
     menuPopup?.addEventListener('click', (e) => {
         const trigger = e.target.closest('#menu-privacy-policy-row');
-        if (!trigger) return;
-        e.preventDefault();
-        e.stopPropagation();
-        menuPopup.classList.add('hidden');
-        openPrivacyPolicySheet();
+        if (trigger) {
+            e.preventDefault();
+            e.stopPropagation();
+            menuPopup.classList.add('hidden');
+            openPrivacyPolicySheet();
+            return;
+        }
+
+        const supportTrigger = e.target.closest('#menu-support-row');
+        if (supportTrigger) {
+            e.preventDefault();
+            e.stopPropagation();
+            menuPopup.classList.add('hidden');
+            openSupportSheet();
+        }
     });
 
     backdrop?.addEventListener('click', closePrivacyPolicySheet);
@@ -310,8 +410,77 @@ function initPrivacyPolicySheetControls(menuPopup) {
         const sheet = document.getElementById('privacy-policy-sheet');
         if (sheet && !sheet.classList.contains('hidden')) {
             closePrivacyPolicySheet();
+            return;
+        }
+
+        const supportSheet = document.getElementById('support-sheet');
+        if (supportSheet && !supportSheet.classList.contains('hidden')) {
+            closeSupportSheet();
         }
     });
+}
+
+function initSupportSheetControls() {
+    if (supportSheetInitialized) return;
+    supportSheetInitialized = true;
+
+    const backdrop = document.getElementById('support-backdrop');
+    const closeBtn = document.getElementById('support-close');
+
+    backdrop?.addEventListener('click', closeSupportSheet);
+    closeBtn?.addEventListener('click', closeSupportSheet);
+}
+
+function openSheetForCurrentPath() {
+    const subpath = getCurrentAppSubpath();
+    if (subpath === 'privacy-policy') {
+        openPrivacyPolicySheet();
+        return true;
+    }
+    if (subpath === 'support') {
+        openSupportSheet();
+        return true;
+    }
+    return false;
+}
+
+function addSupportMenuItem(menuPopup) {
+    if (!menuPopup || document.getElementById('menu-support-row')) return;
+
+    const button = document.createElement('button');
+    button.id = 'menu-support-row';
+    button.type = 'button';
+    button.className = 'menu-item menu-item-button menu-footer-link';
+    button.textContent = 'Support';
+    menuPopup.appendChild(button);
+}
+
+function addContactSection() {
+    const menuPopup = document.getElementById('map-menu-popup');
+    if (!menuPopup || document.getElementById('menu-contact-section')) return;
+
+    const section = document.createElement('div');
+    section.id = 'menu-contact-section';
+    section.className = 'menu-contact-section';
+    section.innerHTML = `
+        <p class="menu-contact-copy">
+            Made by Sasha Berg<br>
+            for Tbilisi commuters ♥
+        </p>
+        <div class="menu-contact-links">
+            <a class="menu-contact-link" href="https://www.instagram.com/samshabrg" target="_blank" rel="noopener noreferrer">Insta</a>
+            <a class="menu-contact-link" href="https://github.com/veaveberg" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <a class="menu-contact-link" href="https://twitter.com/alex_mechta" target="_blank" rel="noopener noreferrer">Twitter</a>
+            <a class="menu-contact-link" href="mailto:samshabrg@gmail.com">e-mail</a>
+        </div>
+    `;
+
+    const statusRow = Array.from(menuPopup.children).find((child) => child.innerHTML && child.innerHTML.includes('APP'));
+    if (statusRow) {
+        menuPopup.insertBefore(section, statusRow);
+    } else {
+        menuPopup.appendChild(section);
+    }
 }
 
 function addPrivacyPolicyMenuItem(menuPopup) {
@@ -328,9 +497,8 @@ function addPrivacyPolicyMenuItem(menuPopup) {
 async function openNativeSettings(options = {}) {
     const plugin = getNativeSettingsPlugin();
     if (!plugin) return false;
-    // Load scale with mobile defaults
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    const defaultScale = isMobile ? 1.25 : 1.0;
+    // Load scale default
+    const defaultScale = 1.0;
     const storedScale = localStorage.getItem('pageScale');
     let currentScale = storedScale ? parseFloat(storedScale) : defaultScale;
     if (isIOSAppOnMac()) {
@@ -350,6 +518,7 @@ async function openNativeSettings(options = {}) {
     const payload = {
         simplifyNumbers: getStoredBoolean('simplifyNumbers', false),
         showMinibuses: getStoredBoolean('showMinibuses', true),
+        showMinibusSegments: getStoredBoolean('showMinibusSegments', false),
         showRustaviBuses: getStoredBoolean('showRustaviBuses', true),
         show3DBuildings: getStoredBoolean('show3DBuildings', false),
         show3DTerrain: getStoredBoolean('show3DTerrain', false),
@@ -434,6 +603,8 @@ export function initSettings({ onUpdate }) {
     const menuPopup = document.getElementById('map-menu-popup');
     const simplifySwitch = document.getElementById('simplify-switch');
     initPrivacyPolicySheetControls(menuPopup);
+    initSupportSheetControls();
+    openSheetForCurrentPath();
 
     // Toggle Menu
     if (menuBtn && menuPopup) {
@@ -501,10 +672,15 @@ export function initSettings({ onUpdate }) {
             settings.showMinibuses = true;
             minibusesSwitch.checked = true;
         }
+        syncMinibusSegmentsRowVisibility();
 
         minibusesSwitch.addEventListener('change', (e) => {
             settings.showMinibuses = e.target.checked;
             localStorage.setItem('showMinibuses', settings.showMinibuses);
+            syncMinibusSegmentsRowVisibility();
+            window.dispatchEvent(new CustomEvent('minibusSegmentsChange', {
+                detail: settings.showMinibuses && settings.showMinibusSegments
+            }));
             if (onUpdate) onUpdate();
         });
 
@@ -514,6 +690,30 @@ export function initSettings({ onUpdate }) {
                 if (e.target.closest('.toggle-switch')) return;
                 minibusesSwitch.checked = !minibusesSwitch.checked;
                 minibusesSwitch.dispatchEvent(new Event('change'));
+            });
+        }
+    }
+
+    // Show "Stop-Anywhere" Sections Switch
+    const segmentsSwitch = document.getElementById('minibus-segments-switch');
+    if (segmentsSwitch) {
+        settings.showMinibusSegments = localStorage.getItem('showMinibusSegments') === 'true';
+        segmentsSwitch.checked = settings.showMinibusSegments;
+
+        segmentsSwitch.addEventListener('change', (e) => {
+            settings.showMinibusSegments = e.target.checked;
+            localStorage.setItem('showMinibusSegments', settings.showMinibusSegments);
+            window.dispatchEvent(new CustomEvent('minibusSegmentsChange', {
+                detail: settings.showMinibuses && settings.showMinibusSegments
+            }));
+        });
+
+        const row = document.getElementById('menu-minibus-segments-row');
+        if (row) {
+            row.addEventListener('click', (e) => {
+                if (e.target.closest('.toggle-switch')) return;
+                segmentsSwitch.checked = !segmentsSwitch.checked;
+                segmentsSwitch.dispatchEvent(new Event('change'));
             });
         }
     }
@@ -546,83 +746,16 @@ export function initSettings({ onUpdate }) {
         }
     }
 
-    // --- Dark Mode Switch ---
-    // Inject or bind existing markup. Since we need to update HTML likely,
-    // I will dynamically append it if not present, OR assume user manually added it?
-    // Better to inject it for this task, as I can't see index.html easily to edit it reliably without full read.
-    // Let's create the element dynamically in initSettings to be safe.
-
-    // Actually, I should probably check if index.html has it. 
-    // Given the constraints, I'll append a new row to the menu programmatically.
-
     addMapSection();
     addInterfaceSection();
     init3DToggleButton();
+    addContactSection();
 
     // Online Status Indicator
     initOnlineStatus();
 
-    // Dev Tools Section (Local Only)
-    initDevSettings();
-
-    // Keep policy link as the final, low-emphasis row.
+    addSupportMenuItem(menuPopup);
     addPrivacyPolicyMenuItem(menuPopup);
-}
-
-function initDevSettings() {
-    const isDev = import.meta.env.DEV || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    if (!isDev) return;
-
-    const menuPopup = document.getElementById('map-menu-popup');
-    if (!menuPopup) return;
-
-    // Check if already exists
-    if (document.getElementById('dev-section')) return;
-
-    const section = document.createElement('div');
-    section.id = 'dev-section';
-    section.className = 'menu-section';
-    section.style.cssText = 'padding: 10px 0 0 0; border-top: 1px solid var(--border-light);';
-
-    const showSegments = localStorage.getItem('showMinibusSegments') === 'true';
-
-    section.innerHTML = `
-        <div style="font-weight:600; font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; padding: 0 12px;">Dev Tools</div>
-        
-        <div class="menu-item" id="menu-minibus-segments-row">
-            <div class="menu-icon">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-                </svg>
-            </div>
-            <span class="menu-label">Show Minibus Segments</span>
-            <label class="toggle-switch">
-                <input type="checkbox" id="minibus-segments-switch" ${showSegments ? 'checked' : ''}>
-                <span class="slider round"></span>
-            </label>
-        </div>
-    `;
-
-    menuPopup.appendChild(section);
-
-    // Switch Logic
-    const segmentsSwitch = document.getElementById('minibus-segments-switch');
-    if (segmentsSwitch) {
-        segmentsSwitch.addEventListener('change', (e) => {
-            const enabled = e.target.checked;
-            localStorage.setItem('showMinibusSegments', enabled);
-            window.dispatchEvent(new CustomEvent('minibusSegmentsChange', { detail: enabled }));
-        });
-
-        const row = document.getElementById('menu-minibus-segments-row');
-        if (row) {
-            row.addEventListener('click', (e) => {
-                if (e.target.closest('.toggle-switch')) return;
-                segmentsSwitch.checked = !segmentsSwitch.checked;
-                segmentsSwitch.dispatchEvent(new Event('change'));
-            });
-        }
-    }
 }
 
 function addInterfaceSection() {
@@ -638,8 +771,7 @@ function addInterfaceSection() {
     section.style.cssText = 'padding: 10px 16px; border-top: 1px solid var(--border-light);';
 
     // Load initial scale
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    const defaultScale = isMobile ? 1.25 : 1.0;
+    const defaultScale = 1.0;
     const storedScale = localStorage.getItem('pageScale');
     settings.pageScale = storedScale ? parseFloat(storedScale) : defaultScale;
 
