@@ -400,8 +400,8 @@ export default defineConfig({
                 ]
             },
             manifest: {
-                name: 'Tbilisi Transit',
-                short_name: 'TTC',
+      name: 'Tbilisi Trans',
+      short_name: 'Tbilisi Trans',
                 description: 'Real-time Tbilisi Transport',
                 theme_color: '#ffffff',
                 icons: [

@@ -102,13 +102,72 @@ final class SettingsViewController: UITableViewController {
         let build = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "?"
         
-        let footerLabel = UILabel()
-        footerLabel.text = "Version \(version) (\(build))"
-        footerLabel.font = .systemFont(ofSize: 13)
-        footerLabel.textColor = .secondaryLabel
-        footerLabel.textAlignment = .center
-        footerLabel.frame = CGRect(x: 0, y: 0, width: 0, height: 44)
-        tableView.tableFooterView = footerLabel
+        let footerContainer = UIView()
+        
+        let stackView = UIStackView()
+        stackView.axis = .vertical
+        stackView.alignment = .center
+        stackView.spacing = 6
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        
+        let creditsLabel = UILabel()
+        creditsLabel.text = "Made by Sasha Berg for Tbilisi commuters ♥"
+        creditsLabel.font = .systemFont(ofSize: 13)
+        creditsLabel.textColor = .secondaryLabel
+        creditsLabel.textAlignment = .center
+        
+        let linksTextView = UITextView()
+        linksTextView.isEditable = false
+        linksTextView.isScrollEnabled = false
+        linksTextView.backgroundColor = .clear
+        linksTextView.textContainerInset = .zero
+        linksTextView.textContainer.lineFragmentPadding = 0
+        linksTextView.linkTextAttributes = [.foregroundColor: UIColor.systemBlue]
+        
+        let linkText = "Insta   GitHub   Twitter   e-mail"
+        let attributedString = NSMutableAttributedString(string: linkText, attributes: [
+            .font: UIFont.systemFont(ofSize: 13),
+            .foregroundColor: UIColor.secondaryLabel
+        ])
+        
+        if let range = linkText.range(of: "Insta") {
+            attributedString.addAttribute(.link, value: "https://www.instagram.com/samshabrg", range: NSRange(range, in: linkText))
+        }
+        if let range = linkText.range(of: "GitHub") {
+            attributedString.addAttribute(.link, value: "https://github.com/veaveberg", range: NSRange(range, in: linkText))
+        }
+        if let range = linkText.range(of: "Twitter") {
+            attributedString.addAttribute(.link, value: "https://twitter.com/alex_mechta", range: NSRange(range, in: linkText))
+        }
+        if let range = linkText.range(of: "e-mail") {
+            attributedString.addAttribute(.link, value: "mailto:samshabrg+tbstrans@gmail.com", range: NSRange(range, in: linkText))
+        }
+        
+        linksTextView.attributedText = attributedString
+        
+        let versionLabel = UILabel()
+        versionLabel.text = "Version \(version) (\(build))"
+        versionLabel.font = .systemFont(ofSize: 13)
+        versionLabel.textColor = .tertiaryLabel
+        versionLabel.textAlignment = .center
+        
+        stackView.addArrangedSubview(creditsLabel)
+        stackView.addArrangedSubview(linksTextView)
+        stackView.addArrangedSubview(versionLabel)
+        stackView.setCustomSpacing(16, after: linksTextView)
+        
+        footerContainer.addSubview(stackView)
+        NSLayoutConstraint.activate([
+            stackView.topAnchor.constraint(equalTo: footerContainer.topAnchor, constant: 16),
+            stackView.bottomAnchor.constraint(equalTo: footerContainer.bottomAnchor, constant: -24),
+            stackView.centerXAnchor.constraint(equalTo: footerContainer.centerXAnchor),
+            stackView.widthAnchor.constraint(lessThanOrEqualTo: footerContainer.widthAnchor, constant: -32)
+        ])
+        
+        let size = stackView.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        footerContainer.frame = CGRect(x: 0, y: 0, width: 0, height: size.height + 40)
+        
+        tableView.tableFooterView = footerContainer
     }
 
     func applySettings(_ settings: [String: Any]) {

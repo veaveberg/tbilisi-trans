@@ -1,6 +1,6 @@
 {
   "appId": "tbilisi.trans",
-  "appName": "Tbilisi Transit",
+  "appName": "Tbilisi Trans",
   "webDir": "dist",
   "plugins": {
     "CapacitorHttp": {

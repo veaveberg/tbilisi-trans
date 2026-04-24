@@ -155,23 +155,11 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
     const headerContainer = document.createElement('div');
     headerContainer.className = 'metro-header';
 
-    if (cleanMetroName(stop.name) === 'Varketili') {
-        headerContainer.innerHTML = `
-            <div class="metro-hours-badge warning">
-                <span class="icon">⚠️</span>
-                <div style="display: flex; flex-direction: column;">
-                     <span>Entrance open 7:00 – 23:00</span>
-                     <span style="font-weight: 500; font-size: 0.85em; margin-top: 4px; line-height: 1.3;">In mornings 6:00–7:00 and evenings 23:00–0:00 use bus 174 between Samgori and Varketili</span>
-                </div>
-            </div>
-        `;
-    } else {
-        headerContainer.innerHTML = `
-            <div class="metro-hours-badge">
-                <span class="icon">🕒</span> Entrance open 6:00 – 0:00
-            </div>
-        `;
-    }
+    headerContainer.innerHTML = `
+        <div class="metro-hours-badge">
+            <span class="icon">🕒</span> Entrance open 6:00 – 0:00
+        </div>
+    `;
     // Insert after name
     const existingHeader = panel.querySelector('.metro-header');
     if (existingHeader) existingHeader.remove();
@@ -301,11 +289,6 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                             if (intervalDesc) {
                                 bottomHTML += `,<span class="interval-desc">&nbsp;${intervalDesc}</span>`;
                             }
-                            const showVarketiliWarning = headsign === 'Varketili' || (route.shortName === '1' && headsign.includes('Varketili'));
-                            const warningHTML = showVarketiliWarning
-                                ? `<div class="metro-inline-warning"><span class="icon">⚠️</span><span class="text">In mornings 6:00–7:00 and evenings 23:00–0:00 trains terminate at Samgori. Between Samgori and Varketili use replacement bus 174</span></div>`
-                                : '';
-
                             arrivalItems.push(`
                                 <div class="arrival-item metro-consolidated-item" 
                                      style="border-left-color: #${route.color || 'ef4444'}; cursor: pointer;"
@@ -318,7 +301,6 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                         </div>
                                         <div class="arrival-card-bottom">
                                             ${bottomHTML}
-                                            ${warningHTML}
                                         </div>
                                     </div>
                                     <div class="arrival-card-right">

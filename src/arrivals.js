@@ -520,6 +520,57 @@ export function getMinutesFromNow(timeStr) {
     return diff;
 }
 
+function getCurrentTbilisiMinutes() {
+    const now = new Date();
+    const tbilisiParts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Tbilisi',
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: false
+    }).formatToParts(now);
+
+    const h = parseInt(tbilisiParts.find(p => p.type === 'hour').value, 10);
+    const m = parseInt(tbilisiParts.find(p => p.type === 'minute').value, 10);
+    return h * 60 + m;
+}
+
+function shouldShowLateDepotWarning(etaMinutes, lastScheduledMinutes) {
+    const eta = Number(etaMinutes);
+    const lastScheduled = Number(lastScheduledMinutes);
+
+    if (!Number.isFinite(eta) || !Number.isFinite(lastScheduled)) return false;
+    if (eta < 0 || eta === 999) return false;
+
+    let currentMinutes = getCurrentTbilisiMinutes();
+
+    // If the schedule extends past midnight, compare against the same extended-day frame.
+    if (lastScheduled >= 24 * 60 && currentMinutes < 4 * 60) {
+        currentMinutes += 24 * 60;
+    }
+
+    const predictedArrivalMinutes = currentMinutes + eta;
+    return predictedArrivalMinutes > lastScheduled + 15;
+}
+
+function isRealtimeArrival(value) {
+    return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function buildLateArrivalWarningHtml(item, lastScheduledMinutes) {
+    const showLateWarning = item.type === 'live' &&
+        isRealtimeArrival(item.data?.realtime) &&
+        shouldShowLateDepotWarning(item.minutes, lastScheduledMinutes);
+
+    return showLateWarning
+        ? '<div class="arrival-warning">Too late for this route. Could be going to depot</div>'
+        : '';
+}
+
+function buildArrivalBottomHtml(baseHtml, item, lastScheduledMinutes) {
+    const warningHtml = buildLateArrivalWarningHtml(item, lastScheduledMinutes);
+    return `${baseHtml || '&nbsp;'}${warningHtml}`;
+}
+
 /**
  * Sort the arrivals list by ETA
  */
@@ -652,6 +703,7 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
 
         let firstTimeStr = null;
         let lastTimeStr = null;
+        let lastScheduledMinutes = null;
         let nextTimes = [];
 
         // 1. Collect all departures for the day
@@ -761,6 +813,7 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
 
             firstTimeStr = formatTime(first);
             lastTimeStr = formatTime(last);
+            lastScheduledMinutes = last.minutes;
 
             // 3. Find Next Arrival
             // Get current time in Tbilisi
@@ -787,7 +840,8 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
         const result = {
             nextArrivals: nextTimes || [],
             firstTime: firstTimeStr,
-            lastTime: lastTimeStr
+            lastTime: lastTimeStr,
+            lastScheduledMinutes: lastScheduledMinutes
         };
         return result;
 
@@ -1671,7 +1725,9 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         // Preserve bottom content if already exists
         const existingBottom = div.querySelector('.arrival-card-bottom');
         if (existingBottom && existingBottom.innerHTML.trim() !== '&nbsp;') {
-            bottomContent = existingBottom.innerHTML;
+            const baseHtml = existingBottom.dataset.baseHtml || existingBottom.innerHTML;
+            const lastScheduledMinutes = existingBottom.dataset.lastScheduledMinutes;
+            bottomContent = buildArrivalBottomHtml(baseHtml, item, lastScheduledMinutes);
         }
 
         const innerContent = `
@@ -1741,7 +1797,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             if (!hasInfo || item.needsFetch) {
                 getV3Schedule(item.data.shortName, stopId, item.data.id).then(res => {
                     if (!res) return;
-                    const { nextArrivals, firstTime, lastTime, serviceWindows } = res;
+                    const { nextArrivals, firstTime, lastTime, serviceWindows, lastScheduledMinutes } = res;
 
                     // 1. Update Bottom Bar (First/Last + Interval Description)
                     const currentBottomEl = document.getElementById(bottomBarId);
@@ -1772,7 +1828,15 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                                 bottomHTML += `,<span class="interval-desc">&nbsp;${intervalDesc}</span>`;
                             }
                         }
-                        currentBottomEl.innerHTML = bottomHTML;
+
+                        currentBottomEl.dataset.baseHtml = bottomHTML;
+                        if (lastScheduledMinutes !== undefined && lastScheduledMinutes !== null) {
+                            currentBottomEl.dataset.lastScheduledMinutes = String(lastScheduledMinutes);
+                        } else {
+                            delete currentBottomEl.dataset.lastScheduledMinutes;
+                        }
+
+                        currentBottomEl.innerHTML = buildArrivalBottomHtml(bottomHTML, item, lastScheduledMinutes);
                     }
 
                     // 2. Update Primary Time (ONLY if item needed fetch i.e. was partial scheduled)
@@ -1924,53 +1988,53 @@ export function startArrivalsCountdown() {
     window.arrivalsCountdownTimer = setInterval(() => {
         if (document.hidden) return;
 
-    const fetchTime = window.arrivalsDataTimestamp || Date.now();
-    const elapsedMinutes = (Date.now() - fetchTime) / 60000;
+        const fetchTime = window.arrivalsDataTimestamp || Date.now();
+        const elapsedMinutes = (Date.now() - fetchTime) / 60000;
 
-    const arrivalItems = document.querySelectorAll('.arrival-item');
-    let needsResort = false;
+        const arrivalItems = document.querySelectorAll('.arrival-item');
+        let needsResort = false;
 
-    arrivalItems.forEach(item => {
-        const originalMinutes = parseInt(item.getAttribute('data-minutes-original') || item.getAttribute('data-minutes') || '9999');
+        arrivalItems.forEach(item => {
+            const originalMinutes = parseInt(item.getAttribute('data-minutes-original') || item.getAttribute('data-minutes') || '9999');
 
-        // Store original if not already stored
-        if (!item.hasAttribute('data-minutes-original')) {
-            item.setAttribute('data-minutes-original', originalMinutes);
-        }
-
-        // Calculate adjusted minutes (rounded down at X:30)
-        const adjustedRaw = originalMinutes - elapsedMinutes;
-        const adjustedMinutes = Math.max(0, Math.round(adjustedRaw));
-
-        // Only update if changed
-        const currentMinutes = parseInt(item.getAttribute('data-minutes') || '9999');
-        if (adjustedMinutes !== currentMinutes && adjustedMinutes >= 0) {
-            item.setAttribute('data-minutes', adjustedMinutes);
-
-            // Update primary time display
-            const timeEl = item.querySelector('.led-text');
-            if (timeEl) {
-                const isScheduledItem = timeEl.classList.contains('scheduled-time');
-                // Only update to minutes format for live (non-scheduled) arrivals
-                if (adjustedMinutes < 30 && !isScheduledItem) {
-                    timeEl.textContent = `${adjustedMinutes}'`;
-                }
-
-                // Add urgent fading animation for ≤2 min live arrivals (not scheduled)
-                if (adjustedMinutes <= 2 && !isScheduledItem) {
-                    timeEl.classList.add('urgent-arrival');
-                } else {
-                    timeEl.classList.remove('urgent-arrival');
-                }
+            // Store original if not already stored
+            if (!item.hasAttribute('data-minutes-original')) {
+                item.setAttribute('data-minutes-original', originalMinutes);
             }
 
-            needsResort = true;
-        }
-    });
+            // Calculate adjusted minutes (rounded down at X:30)
+            const adjustedRaw = originalMinutes - elapsedMinutes;
+            const adjustedMinutes = Math.max(0, Math.round(adjustedRaw));
 
-    if (needsResort) {
-        sortArrivalsList();
-    }
+            // Only update if changed
+            const currentMinutes = parseInt(item.getAttribute('data-minutes') || '9999');
+            if (adjustedMinutes !== currentMinutes && adjustedMinutes >= 0) {
+                item.setAttribute('data-minutes', adjustedMinutes);
+
+                // Update primary time display
+                const timeEl = item.querySelector('.led-text');
+                if (timeEl) {
+                    const isScheduledItem = timeEl.classList.contains('scheduled-time');
+                    // Only update to minutes format for live (non-scheduled) arrivals
+                    if (adjustedMinutes < 30 && !isScheduledItem) {
+                        timeEl.textContent = `${adjustedMinutes}'`;
+                    }
+
+                    // Add urgent fading animation for ≤2 min live arrivals (not scheduled)
+                    if (adjustedMinutes <= 2 && !isScheduledItem) {
+                        timeEl.classList.add('urgent-arrival');
+                    } else {
+                        timeEl.classList.remove('urgent-arrival');
+                    }
+                }
+
+                needsResort = true;
+            }
+        });
+
+        if (needsResort) {
+            sortArrivalsList();
+        }
     }, 10000); // Update every 10 seconds
 }
 

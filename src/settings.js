@@ -125,7 +125,7 @@ function applyNativeSetting(key, value) {
             const scaleVal = parseFloat(value);
             if (!isNaN(scaleVal) && scaleVal >= 0.8 && scaleVal <= 1.5) {
                 settings.pageScale = scaleVal;
-                localStorage.setItem('pageScale', scaleVal);
+                localStorage.setItem('pageScale', String(scaleVal));
                 // On iOS, the native side handles zoom via WKWebView.pageZoom
                 // Only dispatch for non-native (web) scaling
                 if (!isNativeSettingsAvailable()) {

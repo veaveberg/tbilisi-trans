@@ -1,4 +1,4 @@
-# Tbilisi Transit
+# Tbilisi Trans
 
 See live buses and schedules for all bus routes
 

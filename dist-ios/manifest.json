@@ -1,6 +1,6 @@
 {
-    "name": "Tbilisi Transit",
-    "short_name": "Tbilisi Transit",
+    "name": "Tbilisi Trans",
+    "short_name": "Tbilisi Trans",
     "start_url": "./",
     "display": "standalone",
     "background_color": "#000000",

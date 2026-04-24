@@ -81,14 +81,7 @@ public class NativeSettingsPlugin: CAPPlugin, CAPBridgedPlugin {
                 self?.emitSettingsChanged(key: key, value: value)
                 }
                 controller.onDone = { [weak self] settings in
-                // Apply final zoom on close
-                if let scale = settings["pageScale"] as? Double {
-                    self?.applyPageZoom(CGFloat(scale))
-                }
-                if let theme = settings["theme"] as? String {
-                    self?.applyNativeTheme(theme)
-                }
-                self?.emitSettingsClosed(settings: settings)
+                    self?.emitSettingsClosed(settings: settings)
                 }
                 controller.onOpenPrivacyPolicy = { [weak self] in
                     self?.presentPrivacyPolicySheet()
@@ -143,12 +136,6 @@ public class NativeSettingsPlugin: CAPPlugin, CAPBridgedPlugin {
                     self?.emitSettingsChanged(key: key, value: value)
                 }
                 controller.onDone = { [weak self] settings in
-                    if let scale = settings["pageScale"] as? Double {
-                        self?.applyPageZoom(CGFloat(scale))
-                    }
-                    if let theme = settings["theme"] as? String {
-                        self?.applyNativeTheme(theme)
-                    }
                     self?.emitSettingsClosed(settings: settings)
                 }
                 controller.onOpenPrivacyPolicy = { [weak self] in
