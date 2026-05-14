@@ -11,11 +11,23 @@ struct FavoriteListItem {
 }
 
 final class SettingsViewController: UITableViewController {
+    private struct Localizer {
+        let language: String
+
+        func text(_ en: String, _ ka: String, _ ru: String) -> String {
+            switch language {
+            case "ka": return ka
+            case "ru": return ru
+            default: return en
+            }
+        }
+    }
     
     // MARK: - Item Types
     
     enum ItemType {
         case toggle
+        case languageSegment
         case themeSegment // Auto / Light / Dark
         case scaleSlider  // 0.8 - 1.5
         case submenu
@@ -45,10 +57,14 @@ final class SettingsViewController: UITableViewController {
             Item(key: "favoritesMenu", title: "Favorites", type: .submenu, icon: "star"),
             Item(key: "icloudSyncEnabled", title: "iCloud Sync (History + Favorites)", icon: "icloud")
         ]),
+        Section(title: "Language", items: [
+            Item(key: "uiLanguage", title: "Interface", type: .languageSegment),
+            Item(key: "stopNamesLanguage", title: "Stop names", type: .languageSegment),
+            Item(key: "mapLanguage", title: "Map", type: .languageSegment)
+        ]),
         Section(title: "Routes", items: [
             Item(key: "simplifyNumbers", title: "Simplify Route Numbers", icon: "numbers.rectangle"),
             Item(key: "showMinibuses", title: "Show Minibuses"),
-            Item(key: "showMinibusSegments", title: "Show \"stop-anywhere\" Sections"),
             Item(key: "showRustaviBuses", title: "Show Rustavi Buses")
         ]),
         Section(title: "Map", items: [
@@ -57,7 +73,7 @@ final class SettingsViewController: UITableViewController {
             Item(key: "exaggerateTerrain", title: "Exaggerate Terrain", icon: "rectangle.expand.vertical"),
             Item(key: "showPoiLabels", title: "Points of Interest", icon: "mappin.and.ellipse")
         ]),
-        Section(title: "Interface", items: [
+        Section(title: "Appearance", items: [
             Item(key: "theme", title: "Theme", type: .themeSegment),
             Item(key: "pageScale", title: "Interface Scale", type: .scaleSlider)
         ]),
@@ -68,6 +84,9 @@ final class SettingsViewController: UITableViewController {
     ]
 
     private var boolValues: [String: Bool] = [:]
+    private var uiLanguageValue: String = "en"
+    private var stopNamesLanguageValue: String = "en"
+    private var mapLanguageValue: String = "en"
     private var themeValue: String = "system"
     private var scaleValue: Float = 1.0
     private var favoritesList: [FavoriteListItem] = []
@@ -75,6 +94,15 @@ final class SettingsViewController: UITableViewController {
     private let scaleMin: Float = 0.8
     private let scaleMax: Float = 1.5
     private let scaleStep: Float = 0.05
+
+    private var l10n: Localizer {
+        Localizer(language: uiLanguageValue)
+    }
+
+    private func refreshLocalizedChrome() {
+        title = l10n.text("Settings", "პარამეტრები", "Настройки")
+        tableView.reloadData()
+    }
 
     var onToggle: ((String, Any) -> Void)?
     var onDone: (([String: Any]) -> Void)?
@@ -84,9 +112,12 @@ final class SettingsViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = "Settings"
+        title = l10n.text("Settings", "პარამეტრები", "Настройки")
         tableView = UITableView(frame: .zero, style: .insetGrouped)
+        tableView.estimatedRowHeight = 52
+        tableView.rowHeight = UITableView.automaticDimension
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "ToggleCell")
+        tableView.register(LanguageSegmentCell.self, forCellReuseIdentifier: "LanguageSegmentCell")
         tableView.register(ThemeSegmentCell.self, forCellReuseIdentifier: "ThemeSegmentCell")
         tableView.register(ScaleSliderCell.self, forCellReuseIdentifier: "ScaleSliderCell")
 
@@ -180,6 +211,24 @@ final class SettingsViewController: UITableViewController {
             }
         }
         boolValues = next
+
+        if let uiLanguage = settings["uiLanguage"] as? String {
+            uiLanguageValue = uiLanguage
+        } else if let legacyLanguage = settings["language"] as? String {
+            uiLanguageValue = (legacyLanguage == "ka" || legacyLanguage == "ru") ? legacyLanguage : "en"
+        }
+
+        if let stopNamesLanguage = settings["stopNamesLanguage"] as? String {
+            stopNamesLanguageValue = stopNamesLanguage
+        } else if let legacyLanguage = settings["language"] as? String {
+            stopNamesLanguageValue = legacyLanguage == "ka" ? "ka" : "en"
+        }
+
+        if let mapLanguage = settings["mapLanguage"] as? String {
+            mapLanguageValue = mapLanguage
+        } else if let legacyLanguage = settings["language"] as? String {
+            mapLanguageValue = legacyLanguage
+        }
         
         // Theme: "system", "light", or "dark"
         if let theme = settings["theme"] as? String {
@@ -216,6 +265,8 @@ final class SettingsViewController: UITableViewController {
         } else {
             favoritesList = []
         }
+
+        refreshLocalizedChrome()
     }
     
     private func getAllSettings() -> [String: Any] {
@@ -223,18 +274,109 @@ final class SettingsViewController: UITableViewController {
         for (key, value) in boolValues {
             result[key] = value
         }
+        result["uiLanguage"] = uiLanguageValue
+        result["stopNamesLanguage"] = stopNamesLanguageValue
+        result["mapLanguage"] = mapLanguageValue
         result["theme"] = themeValue
         result["pageScale"] = Double(scaleValue)
         return result
     }
 
     private func displayedItems(in section: Int) -> [Item] {
-        var items = sections[section].items
-        let sectionTitle = sections[section].title
-        if sectionTitle == "Routes", boolValues["showMinibuses"] == false {
-            items.removeAll { $0.key == "showMinibusSegments" }
+        sections[section].items
+    }
+
+    private func languageOptions(for key: String) -> [(title: String, value: String)] {
+        switch key {
+        case "uiLanguage":
+            return [("ქა (ბეტა)", "ka"), ("en", "en"), ("ру (бета)", "ru")]
+        case "stopNamesLanguage":
+            return [("ქა", "ka"), ("en", "en")]
+        case "mapLanguage":
+            return [("ქა", "ka"), ("en", "en"), ("ру", "ru")]
+        default:
+            return [("en", "en")]
         }
-        return items
+    }
+
+    private func localizedSectionTitle(_ rawTitle: String) -> String {
+        switch rawTitle {
+        case "Language":
+            return l10n.text("Language", "ენა", "Язык")
+        case "Routes":
+            return l10n.text("Routes", "მარშრუტები", "Маршруты")
+        case "Map":
+            return l10n.text("Map", "რუკა", "Карта")
+        case "Appearance":
+            return l10n.text("Appearance", "იერსახე", "Оформление")
+        default:
+            return rawTitle
+        }
+    }
+
+    private func localizedItemTitle(_ item: Item) -> String {
+        switch item.key {
+        case "favoritesMenu":
+            return l10n.text("Favorites", "რჩეულები", "Избранное")
+        case "icloudSyncEnabled":
+            return "iCloud Sync"
+        case "uiLanguage":
+            return l10n.text("Interface", "ინტერფეისი", "Интерфейс")
+        case "stopNamesLanguage":
+            return l10n.text("Stop names", "გაჩერებების სახელები", "Названия остановок")
+        case "mapLanguage":
+            return l10n.text("Map", "რუკა", "Карта")
+        case "simplifyNumbers":
+            return l10n.text("Simplify Route Numbers", "მარშრუტების ნომრების გამარტივება", "Упростить номера маршрутов")
+        case "showMinibuses":
+            return l10n.text("Show Minibuses", "მარშრუტკების ჩვენება", "Показывать маршрутки")
+        case "showRustaviBuses":
+            return l10n.text("Show Rustavi Buses", "რუსთავის ავტობუსების ჩვენება", "Показывать автобусы Рустави")
+        case "show3DBuildings":
+            return l10n.text("3D Buildings", "3D შენობები", "3D здания")
+        case "show3DTerrain":
+            return l10n.text("3D Terrain", "3D რელიეფი", "3D рельеф")
+        case "exaggerateTerrain":
+            return l10n.text("Exaggerate Terrain", "რელიეფის გამოკვეთა", "Усилить рельеф")
+        case "showPoiLabels":
+            return l10n.text("Points of Interest", "საინტერესო ადგილები", "Точки интереса")
+        case "theme":
+            return l10n.text("Theme", "თემა", "Тема")
+        case "pageScale":
+            return l10n.text("Interface Scale", "ინტერფეისის მასშტაბი", "Масштаб интерфейса")
+        case "support":
+            return l10n.text("Support", "მხარდაჭერა", "Поддержка")
+        case "privacyPolicy":
+            return l10n.text("Privacy Policy", "კონფიდენციალურობის პოლიტიკა", "Политика конфиденциальности")
+        default:
+            return item.title
+        }
+    }
+
+    private func selectedLanguageValue(for key: String) -> String {
+        switch key {
+        case "uiLanguage":
+            return uiLanguageValue
+        case "stopNamesLanguage":
+            return stopNamesLanguageValue
+        case "mapLanguage":
+            return mapLanguageValue
+        default:
+            return "en"
+        }
+    }
+
+    private func setLanguageValue(_ value: String, for key: String) {
+        switch key {
+        case "uiLanguage":
+            uiLanguageValue = value
+        case "stopNamesLanguage":
+            stopNamesLanguageValue = value
+        case "mapLanguage":
+            mapLanguageValue = value
+        default:
+            break
+        }
     }
 
     private func routesSectionIndex() -> Int? {
@@ -255,13 +397,15 @@ final class SettingsViewController: UITableViewController {
     }
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        let title = sections[section].title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = localizedSectionTitle(sections[section].title).trimmingCharacters(in: .whitespacesAndNewlines)
         return title.isEmpty ? nil : title
     }
     
     override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         let item = displayedItems(in: indexPath.section)[indexPath.row]
         switch item.type {
+        case .languageSegment:
+            return UITableView.automaticDimension
         case .themeSegment:
             return 44
         case .scaleSlider:
@@ -287,12 +431,16 @@ final class SettingsViewController: UITableViewController {
                 cell = tableView.dequeueReusableCell(withIdentifier: "ToggleCell", for: indexPath)
             }
             cell.selectionStyle = .none
+            cell.textLabel?.numberOfLines = 0
+            cell.textLabel?.lineBreakMode = .byWordWrapping
+            cell.detailTextLabel?.numberOfLines = 0
+            cell.detailTextLabel?.lineBreakMode = .byWordWrapping
             if item.key == "icloudSyncEnabled" {
                 cell.textLabel?.text = "iCloud Sync"
-                cell.detailTextLabel?.text = "Also syncs search history"
+                cell.detailTextLabel?.text = l10n.text("Also syncs search history", "ასევე ასინქრონებს ძიების ისტორიას", "Также синхронизирует историю поиска")
                 cell.detailTextLabel?.textColor = .secondaryLabel
             } else {
-                cell.textLabel?.text = item.title
+                cell.textLabel?.text = localizedItemTitle(item)
                 cell.detailTextLabel?.text = nil
             }
             
@@ -314,7 +462,9 @@ final class SettingsViewController: UITableViewController {
         case .submenu:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ToggleCell", for: indexPath)
             cell.selectionStyle = .default
-            cell.textLabel?.text = item.title
+            cell.textLabel?.numberOfLines = 0
+            cell.textLabel?.lineBreakMode = .byWordWrapping
+            cell.textLabel?.text = localizedItemTitle(item)
             if let iconName = item.icon {
                 cell.imageView?.image = UIImage(systemName: iconName)
                 cell.imageView?.tintColor = .label
@@ -324,10 +474,31 @@ final class SettingsViewController: UITableViewController {
             cell.accessoryView = nil
             cell.accessoryType = .disclosureIndicator
             return cell
+
+        case .languageSegment:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "LanguageSegmentCell", for: indexPath) as! LanguageSegmentCell
+            let options = languageOptions(for: item.key)
+            let selectedValue = selectedLanguageValue(for: item.key)
+            cell.configure(title: localizedItemTitle(item), options: options, selectedValue: selectedValue) { [weak self] newLanguage in
+                self?.setLanguageValue(newLanguage, for: item.key)
+                if item.key == "uiLanguage" {
+                    self?.title = self?.l10n.text("Settings", "პარამეტრები", "Настройки")
+                    self?.tableView.reloadData()
+                }
+                self?.onToggle?(item.key, newLanguage)
+            }
+            return cell
             
         case .themeSegment:
             let cell = tableView.dequeueReusableCell(withIdentifier: "ThemeSegmentCell", for: indexPath) as! ThemeSegmentCell
-            cell.configure(selectedTheme: themeValue) { [weak self] newTheme in
+            cell.configure(
+                titles: (
+                    l10n.text("Auto", "ავტო", "Авто"),
+                    l10n.text("Light", "ნათელი", "Светлая"),
+                    l10n.text("Dark", "მუქი", "Тёмная")
+                ),
+                selectedTheme: themeValue
+            ) { [weak self] newTheme in
                 self?.themeValue = newTheme
                 self?.onToggle?("theme", newTheme)
             }
@@ -1090,11 +1261,98 @@ final class FavoriteItemCell: UITableViewCell {
     }
 }
 
+// MARK: - Language Segment Cell
+
+final class LanguageSegmentCell: UITableViewCell {
+
+    private let titleLabel = UILabel()
+    private let segmentedControl = UISegmentedControl(items: [])
+    private var onChange: ((String) -> Void)?
+    private var languageOptions: [String] = []
+    private var titleTrailingConstraint: NSLayoutConstraint?
+    private var segmentedHeightConstraint: NSLayoutConstraint?
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        setupViews()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setupViews() {
+        selectionStyle = .none
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = .preferredFont(forTextStyle: .body)
+        titleLabel.textColor = .label
+        titleLabel.numberOfLines = 0
+        titleLabel.lineBreakMode = .byWordWrapping
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+        contentView.addSubview(titleLabel)
+
+        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
+        segmentedControl.addTarget(self, action: #selector(segmentChanged), for: .valueChanged)
+        segmentedControl.setContentHuggingPriority(.required, for: .horizontal)
+        segmentedControl.setContentCompressionResistancePriority(.required, for: .horizontal)
+        if #available(iOS 13.0, *) {
+            segmentedControl.selectedSegmentTintColor = .systemGray5
+        }
+        contentView.addSubview(segmentedControl)
+        let heightConstraint = segmentedControl.heightAnchor.constraint(equalToConstant: 32)
+        segmentedHeightConstraint = heightConstraint
+
+        let trailing = titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: segmentedControl.leadingAnchor, constant: -12)
+        titleTrailingConstraint = trailing
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 8),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -8),
+            titleLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            trailing,
+            segmentedControl.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            segmentedControl.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
+            segmentedControl.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
+            segmentedControl.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 12),
+            segmentedControl.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            heightConstraint
+        ])
+    }
+
+    func configure(title: String, options: [(title: String, value: String)], selectedValue: String, onChange: @escaping (String) -> Void) {
+        self.onChange = onChange
+        titleLabel.text = title
+        languageOptions = options.map { $0.value }
+
+        segmentedControl.removeAllSegments()
+        for (index, option) in options.enumerated() {
+            segmentedControl.insertSegment(withTitle: option.title, at: index, animated: false)
+        }
+        segmentedControl.apportionsSegmentWidthsByContent = true
+
+        if let index = languageOptions.firstIndex(of: selectedValue) {
+            segmentedControl.selectedSegmentIndex = index
+        } else {
+            segmentedControl.selectedSegmentIndex = 0
+        }
+    }
+
+    @objc private func segmentChanged() {
+        let index = segmentedControl.selectedSegmentIndex
+        guard index >= 0, index < languageOptions.count else { return }
+        onChange?(languageOptions[index])
+    }
+}
+
 // MARK: - Theme Segment Cell
 
 final class ThemeSegmentCell: UITableViewCell {
     
-    private let segmentedControl = UISegmentedControl(items: ["Auto", "Light", "Dark"])
+    private let segmentedControl = UISegmentedControl(items: [])
     private var onChange: ((String) -> Void)?
     
     private let themeOptions = ["system", "light", "dark"]
@@ -1122,8 +1380,12 @@ final class ThemeSegmentCell: UITableViewCell {
         ])
     }
     
-    func configure(selectedTheme: String, onChange: @escaping (String) -> Void) {
+    func configure(titles: (String, String, String), selectedTheme: String, onChange: @escaping (String) -> Void) {
         self.onChange = onChange
+        segmentedControl.removeAllSegments()
+        [titles.0, titles.1, titles.2].enumerated().forEach { index, title in
+            segmentedControl.insertSegment(withTitle: title, at: index, animated: false)
+        }
         
         if let index = themeOptions.firstIndex(of: selectedTheme) {
             segmentedControl.selectedSegmentIndex = index

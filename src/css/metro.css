@@ -93,6 +93,15 @@ body.dark-mode .panel.metro-mode .led-text.scheduled-time {
     letter-spacing: 2px;
 }
 
+body .panel.metro-mode .led-text.led-text-secondary,
+body .panel.metro-mode .led-text.led-text-secondary.scheduled-time,
+body.dark-mode .panel.metro-mode .led-text.led-text-secondary,
+body.dark-mode .panel.metro-mode .led-text.led-text-secondary.scheduled-time {
+    font-size: 13.6pt !important;
+    line-height: 0.92 !important;
+    letter-spacing: 0.5px !important;
+}
+
 .panel.metro-mode .arrival-card-top {
     padding-top: 8px;
     padding-bottom: 2px;
@@ -124,6 +133,17 @@ body.dark-mode .panel.metro-mode .metro-inline-warning {
     padding-right: 12px;
     padding-left: 0;
 }
+
+.panel.metro-mode .time-container {
+    gap: 10px;
+    justify-content: flex-end;
+    transform: none;
+}
+
+.panel.metro-mode .arrival-item {
+    --arrival-primary-time-height: 1.85rem;
+}
+
 
 .panel.metro-mode .route-number {
     width: auto;
@@ -173,7 +193,10 @@ body.dark-mode .panel.metro-mode .metro-inline-warning {
     text-shadow: 0 0 5px rgba(3, 255, 120, 0.5) !important;
     font-style: normal;
     font-weight: 600;
-    margin-right: 2px;
+    margin-right: 0;
+    font-size: 0.62rem;
+    line-height: 1;
+    text-align: right;
 }
 
 body:not(.dark-mode) .panel.metro-mode .time-container {

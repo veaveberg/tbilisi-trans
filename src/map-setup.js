@@ -1,5 +1,19 @@
 import mapboxgl from 'mapbox-gl';
+import { Capacitor } from '@capacitor/core';
 import * as api from './api.js';
+import { getCurrentMapLanguage, onLanguageChange } from './i18n.ts';
+
+function getMapboxLanguageValue(language = getCurrentMapLanguage()) {
+    switch (language) {
+        case 'ka':
+            return ['ka', 'en'];
+        case 'ru':
+            return ['ru', 'en'];
+        case 'en':
+        default:
+            return 'en';
+    }
+}
 
 // Initialize Map
 if (!api.MAPBOX_TOKEN) {
@@ -23,12 +37,17 @@ const storedTheme = localStorage.getItem('theme') || 'system';
 const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 const isDark = storedTheme === 'dark' || (storedTheme === 'system' && sysDark);
 const initialLightPreset = isDark ? 'night' : 'day';
+const BASEMAP_FONT = 'Open Sans';
+const LOCAL_FONT_FAMILY = 'Roboto, Inter, Arial, "Helvetica Neue", Helvetica, sans-serif';
 
 export const map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/standard', // Standard style
+    language: getMapboxLanguageValue(),
+    localFontFamily: LOCAL_FONT_FAMILY,
     config: {
         basemap: {
+            font: BASEMAP_FONT,
             lightPreset: initialLightPreset,
             show3dObjects: false, // Back to false by default (will toggle on tilt)
             showPointOfInterestLabels: localStorage.getItem('showPoiLabels') === 'true',
@@ -39,6 +58,89 @@ export const map = new mapboxgl.Map({
     zoom: 12,
     trackResize: false
 });
+
+export function updateMapLanguage(language = getCurrentMapLanguage()) {
+    if (!map || typeof map.setLanguage !== 'function') return;
+    try {
+        map.setLanguage(getMapboxLanguageValue(language));
+    } catch (error) {
+        console.warn('[Map] Failed to update label language:', error);
+    }
+}
+
+onLanguageChange((change) => {
+    if (change.target !== 'map') return;
+    updateMapLanguage(change.value);
+});
+
+const isNativeIOS = typeof Capacitor?.getPlatform === 'function' &&
+    Capacitor.getPlatform() === 'ios' &&
+    (typeof Capacitor.isNativePlatform !== 'function' || Capacitor.isNativePlatform());
+
+function readSafeAreaInset(edge) {
+    const probe = document.createElement('div');
+    probe.style.position = 'fixed';
+    probe.style.pointerEvents = 'none';
+    probe.style.opacity = '0';
+    if (edge === 'top') {
+        probe.style.top = '0';
+        probe.style.paddingTop = 'env(safe-area-inset-top)';
+    } else {
+        probe.style.bottom = '0';
+        probe.style.paddingBottom = 'env(safe-area-inset-bottom)';
+    }
+    document.body.appendChild(probe);
+    const styles = window.getComputedStyle(probe);
+    const value = parseFloat(edge === 'top' ? styles.paddingTop : styles.paddingBottom);
+    probe.remove();
+    return Number.isFinite(value) ? value : 0;
+}
+
+function installIOSMapEdgePanGuard() {
+    if (!isNativeIOS) return;
+
+    const canvas = map.getCanvas();
+    let dragPanTemporarilyDisabled = false;
+    let topGuard = 44;
+    let bottomGuard = 28;
+
+    const updateGuardBounds = () => {
+        topGuard = Math.max(44, readSafeAreaInset('top') + 12);
+        bottomGuard = Math.max(28, readSafeAreaInset('bottom') + 12);
+    };
+
+    const releaseDragPan = () => {
+        if (!dragPanTemporarilyDisabled) return;
+        dragPanTemporarilyDisabled = false;
+        if (!map.dragPan.isEnabled()) {
+            map.dragPan.enable();
+        }
+    };
+
+    updateGuardBounds();
+    window.addEventListener('resize', updateGuardBounds);
+    window.addEventListener('orientationchange', updateGuardBounds);
+
+    canvas.addEventListener('touchstart', (event) => {
+        if (event.touches.length !== 1) {
+            releaseDragPan();
+            return;
+        }
+        if (!map.dragPan.isEnabled()) return;
+
+        const touch = event.touches[0];
+        const isInTopGuard = touch.clientY <= topGuard;
+        const isInBottomGuard = touch.clientY >= (window.innerHeight - bottomGuard);
+
+        if (!isInTopGuard && !isInBottomGuard) return;
+
+        dragPanTemporarilyDisabled = true;
+        map.dragPan.disable();
+    }, { passive: true });
+
+    canvas.addEventListener('touchend', releaseDragPan, { passive: true });
+    canvas.addEventListener('touchcancel', releaseDragPan, { passive: true });
+}
 
 // Check for deep link hash (Standard Mapbox format: #zoom/lat/lng)
 const initialHash = window.location.hash;
@@ -79,6 +181,7 @@ window.addEventListener('orientationchange', resizeMap);
 window.addEventListener('resize', resizeMap);
 
 map.on('load', () => {
+    installIOSMapEdgePanGuard();
     resizeMap();
     setTimeout(resizeMap, 100);
     setTimeout(resizeMap, 500);

@@ -4,6 +4,39 @@ import { updateStopHoverEffects } from './map-visuals.js';
 
 let lastHoveredStopId = null;
 let hoverTimeout = null;
+let pendingTouchMapActionTimeout = null;
+let lastMapTouchTs = 0;
+
+function cancelPendingTouchMapAction() {
+    if (pendingTouchMapActionTimeout !== null) {
+        clearTimeout(pendingTouchMapActionTimeout);
+        pendingTouchMapActionTimeout = null;
+    }
+}
+
+function isTouchTriggeredMapClick(event) {
+    if (Date.now() - lastMapTouchTs < 700) return true;
+
+    const original = event?.originalEvent;
+    if (!original) return false;
+    if (original.pointerType === 'touch') return true;
+    if (typeof original.type === 'string' && original.type.startsWith('touch')) return true;
+    if (original.sourceCapabilities?.firesTouchEvents) return true;
+    return false;
+}
+
+function runMapAction(event, action) {
+    if (!isTouchTriggeredMapClick(event)) {
+        action();
+        return;
+    }
+
+    cancelPendingTouchMapAction();
+    pendingTouchMapActionTimeout = window.setTimeout(() => {
+        pendingTouchMapActionTimeout = null;
+        action();
+    }, 280);
+}
 
 export function setMapFocus(active) {
     if (active && window.isFilterModeActive === true) {
@@ -441,6 +474,20 @@ export function clearStopHoverState() {
 export function setupClickHandlers(context) {
     const { ALL_STOP_LAYERS, filterManager, showStopInfo, applyFilter, getStopById } = context;
 
+    map.on('movestart', cancelPendingTouchMapAction);
+    map.on('zoomstart', cancelPendingTouchMapAction);
+    map.on('rotatestart', cancelPendingTouchMapAction);
+    map.on('pitchstart', cancelPendingTouchMapAction);
+    map.getCanvas().addEventListener('touchstart', () => {
+        lastMapTouchTs = Date.now();
+        if (pendingTouchMapActionTimeout !== null) {
+            cancelPendingTouchMapAction();
+        }
+    }, { passive: true });
+    map.getCanvas().addEventListener('touchend', () => {
+        lastMapTouchTs = Date.now();
+    }, { passive: true });
+
     map.on('click', ALL_STOP_LAYERS, (e) => {
         if (window.ignoreMapClicks) return;
 
@@ -468,7 +515,7 @@ export function setupClickHandlers(context) {
                 const station = getStopById(stationId);
                 if (station) {
                     console.log('[Map] Clicked exit for station:', stationId, station.name);
-                    showStopInfo(station, true, true);
+                    runMapAction(e, () => showStopInfo(station, true, true));
                     return;
                 }
             }
@@ -482,7 +529,7 @@ export function setupClickHandlers(context) {
                 vehicleMode: 'SUBWAY'
             };
             console.log('[Map] Clicked exit (fallback):', stop.id, stop.name);
-            showStopInfo(stop, true, true);
+            runMapAction(e, () => showStopInfo(stop, true, true));
             return;
         }
 
@@ -496,7 +543,7 @@ export function setupClickHandlers(context) {
                     const station = getStopById(stationId);
                     if (station) {
                         console.log('[Map] Clicked segment/label for station:', stationId, station.name);
-                        showStopInfo(station, true, true);
+                        runMapAction(e, () => showStopInfo(station, true, true));
                         return;
                     }
                 }
@@ -510,7 +557,7 @@ export function setupClickHandlers(context) {
                     vehicleMode: 'SUBWAY'
                 };
                 console.log('[Map] Clicked segment (fallback):', stop.id, stop.name);
-                showStopInfo(stop, true, true);
+                runMapAction(e, () => showStopInfo(stop, true, true));
                 return;
             }
         }
@@ -526,11 +573,11 @@ export function setupClickHandlers(context) {
 
         if (filterManager && filterManager.state.picking) {
             // In pick mode, toggle as destination
-            applyFilter(stop.id);
+            runMapAction(e, () => applyFilter(stop.id));
         } else {
             // Normal selection
             clearStopHoverState();
-            showStopInfo(stop, true, true);
+            runMapAction(e, () => showStopInfo(stop, true, true));
         }
     });
 

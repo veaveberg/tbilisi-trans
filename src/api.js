@@ -1,6 +1,7 @@
 import { db } from './db.js';
 import { sources } from './data/sources.js';
 import { RouteGeometry } from './route-geometry.js';
+import { getTransitDataLocale } from './i18n.ts';
 
 // Export sources for external usage (e.g. main.js normalization)
 export { sources };
@@ -54,6 +55,10 @@ const V3_SCHEDULE_REFRESH_INTERVAL = 3 * 24 * 60 * 60 * 1000; // 3 days
 const V3_SCHEDULE_CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
 const V3_SCHEDULE_REFRESH_MAX = 50;
 
+function getActiveLocale() {
+    return getTransitDataLocale();
+}
+
 function isLocalProxyEnvironment() {
     if (typeof window === 'undefined') return false;
     if (!import.meta.env.DEV) return false;
@@ -87,7 +92,7 @@ function parseScheduleKey(key) {
 
 async function refreshScheduleCacheEntry(routeId, suffix) {
     const cacheKey = `${routeId}:${suffix}`;
-    const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${id}/schedule?patternSuffix=${suffix}&locale=en`;
+    const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${id}/schedule?patternSuffix=${suffix}&locale=${getActiveLocale()}`;
     const schedule = await fetchFromSmartSource(urlGen, routeId);
     if (schedule) {
         v3Cache.schedules.set(cacheKey, schedule);
@@ -273,13 +278,19 @@ export async function clearAllCaches() {
 // Expose to window for manual debugging
 window.clearAppCaches = clearAllCaches;
 let preloadPromise = null;
+let preloadLocale = null;
 
 export function preloadStaticRoutesDetails() {
-    if (preloadPromise) return preloadPromise;
+    const locale = getActiveLocale();
+    if (preloadPromise && preloadLocale === locale) return preloadPromise;
+    if (preloadLocale !== locale) {
+        preloadLocale = locale;
+        staticRouteDetails.clear();
+        staticStopToRoutes.clear();
+    }
 
     preloadPromise = (async () => {
         const sourcesToLoad = sources.filter(s => s.id === 'tbilisi' || s.id === 'rustavi');
-        const locale = 'en';
 
         console.log('[API] Preloading static route details for filtering...');
 
@@ -507,7 +518,7 @@ async function fetchStaticFallback(endpoint) {
         const urlObj = new URL(endpoint, 'http://dummy.com');
         const pathname = urlObj.pathname;
         const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-        const locale = urlObj.searchParams.get('locale') || 'en'; // Detect Source
+        const locale = urlObj.searchParams.get('locale') || getActiveLocale(); // Detect Source
         // Explicitly check for Rustavi in URL or ID prefix
         let isRustavi = pathname.includes('rustavi') || endpoint.includes('rustavi');
 
@@ -1038,8 +1049,9 @@ export const convex = new ConvexClient(import.meta.env.VITE_CONVEX_URL);
  */
 export async function fetchStops(options = {}) {
     // console.debug('[API DEBUG] fetchStops called with options:', options);
+    const locale = getActiveLocale();
     const promises = sources.map(async (source) => {
-        const cacheKey = `convex_stops_${source.id}`;
+        const cacheKey = `convex_stops_${source.id}_${locale}`;
         let data = null;
 
         // 1. Try Cache
@@ -1063,7 +1075,7 @@ export async function fetchStops(options = {}) {
         if (!data && options.strategy !== 'cache-only') {
             try {
                 // console.debug(`[API DEBUG] fetchStops: Calling Convex for ${source.id}...`);
-                data = await convex.query("transit:getStops", { sourceId: source.id, locale: 'en' });
+                data = await convex.query("transit:getStops", { sourceId: source.id, locale });
                 // console.debug(`[API DEBUG] fetchStops: Got ${data?.length || 0} stops from Convex for ${source.id}`);
                 // Save to Cache
                 await db.set(cacheKey, { timestamp: Date.now(), data });
@@ -1132,8 +1144,9 @@ export async function fetchStops(options = {}) {
  */
 export async function fetchRoutes(options = {}) {
     // console.debug('[API DEBUG] fetchRoutes called with options:', options);
+    const locale = getActiveLocale();
     const promises = sources.map(async (source) => {
-        const cacheKey = `convex_routes_${source.id}`;
+        const cacheKey = `convex_routes_${source.id}_${locale}`;
         let data = null;
 
         // 1. Try Cache
@@ -1163,7 +1176,7 @@ export async function fetchRoutes(options = {}) {
                 // Static Data usually preload EN.
                 // Let's stick to 'en' for structural data as per previous static files.
                 // console.debug(`[API DEBUG] fetchRoutes: Calling Convex for ${source.id}...`);
-                const response = await convex.query("transit:getRoutes", { sourceId: source.id, locale: 'en' });
+                const response = await convex.query("transit:getRoutes", { sourceId: source.id, locale });
 
                 if (response && response._convex_meta) {
                     // console.debug(`[API DEBUG] fetchRoutes: Got response from Convex at ${new Date(response._convex_meta.timestamp).toLocaleTimeString()}. Overrides in DB: ${response._convex_meta.totalOverrides}`);
@@ -1329,7 +1342,7 @@ async function fetchWithSourceHint(configFn, id, knownSourceId, options = {}) {
 export async function fetchStopRoutes(stopId, sourceId = null, options = {}) {
     // Note: Routes from Convex getRoutes don't include stops arrays.
     // We must use the V2 API endpoint which returns routes for a specific stop.
-    const urlGen = (s, id) => `${getApiBaseUrl(s)}/stops/${encodeURIComponent(id)}/routes?locale=en`;
+    const urlGen = (s, id) => `${getApiBaseUrl(s)}/stops/${encodeURIComponent(id)}/routes?locale=${getActiveLocale()}`;
     try {
         const raw = await fetchWithSourceHint(urlGen, stopId, sourceId, options);
         if (Array.isArray(raw)) {
@@ -1345,12 +1358,12 @@ export async function fetchStopRoutes(stopId, sourceId = null, options = {}) {
 
 // Metro (PisGateway V3)
 export async function fetchMetroSchedule(routeId) {
-    const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${encodeURIComponent(id)}/schedule?patternSuffix=0:01&locale=en`;
+    const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${encodeURIComponent(id)}/schedule?patternSuffix=0:01&locale=${getActiveLocale()}`;
     return fetchFromSmartSource(urlGen, routeId);
 }
 
 export async function fetchMetroSchedulePattern(routeId, patternSuffix) {
-    const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${id}/schedule?patternSuffix=${patternSuffix}&locale=en`;
+    const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${id}/schedule?patternSuffix=${patternSuffix}&locale=${getActiveLocale()}`;
     return fetchFromSmartSource(urlGen, routeId);
 }
 
@@ -1447,7 +1460,7 @@ export async function fetchRouteDetailsV3(routeId, options = {}) {
             if (overrides.invertDirection !== undefined) route.invertDirection = overrides.invertDirection;
 
             // Locale specific names
-            const locale = options.locale || 'en';
+            const locale = options.locale || getActiveLocale();
             if (locale === 'en' && overrides.longName_en_override) route.longName = overrides.longName_en_override;
             else if (locale === 'ka' && overrides.longName_ka_override) route.longName = overrides.longName_ka_override;
             else if (locale === 'ru' && overrides.longName_ru_override) route.longName = overrides.longName_ru_override;
@@ -1832,17 +1845,74 @@ export function decodePolyline(encoded) {
 // Cache for stop arrivals (30 second TTL)
 const arrivalsCache = new Map();
 const ARRIVALS_CACHE_TTL = 30000; // 30 seconds
+const ARRIVALS_REQUEST_HEADERS = {
+    'accept': 'application/json, text/plain, */*',
+    'accept-language': 'en-US,en;q=0.9',
+    'x-api-key': API_KEY
+};
 
-function getCachedArrivals(stopId) {
-    const cached = arrivalsCache.get(stopId);
+function getCachedArrivals(cacheKey) {
+    const cached = arrivalsCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < ARRIVALS_CACHE_TTL) {
         return cached.data;
     }
     return null;
 }
 
-function setCachedArrivals(stopId, data) {
-    arrivalsCache.set(stopId, { data, timestamp: Date.now() });
+function setCachedArrivals(cacheKey, data) {
+    arrivalsCache.set(cacheKey, { data, timestamp: Date.now() });
+}
+
+function buildArrivalsFetchOptions() {
+    return {
+        headers: ARRIVALS_REQUEST_HEADERS,
+        credentials: 'include',
+        mode: 'cors'
+    };
+}
+
+async function fetchArrivalTimesJson(url) {
+    const res = await fetch(url, buildArrivalsFetchOptions());
+    return res;
+}
+
+export async function fetchRouteArrivalsForStop(stopId, routeId) {
+    if (!stopId || !routeId) return [];
+
+    const cacheKey = `${stopId}|${routeId}`;
+    const cached = getCachedArrivals(cacheKey);
+    if (cached) return cached;
+
+    async function tryFetch(source) {
+        const apiStopId = restoreApiId(stopId, source);
+        const url = `${getApiBaseUrl(source)}/stops/${encodeURIComponent(apiStopId)}/arrival-times?routeId=${encodeURIComponent(routeId)}&maxNumberOfArrivalTimes=5&locale=${getActiveLocale()}&ignoreScheduledArrivalTimes=false`;
+        const res = await fetchArrivalTimesJson(url);
+        if (!res.ok) throw new Error(`Fail: ${res.status}`);
+        const arrivals = await res.json();
+        const taggedArrivals = Array.isArray(arrivals) ? arrivals.map(a => ({ ...a, _sourceStopId: stopId })) : [];
+        setCachedArrivals(cacheKey, taggedArrivals);
+        return taggedArrivals;
+    }
+
+    let bestSource = defaultSource;
+    for (const s of sources) {
+        if (s.prefix && (stopId === s.prefix || String(stopId).startsWith(s.prefix))) {
+            bestSource = s;
+            break;
+        }
+    }
+
+    try {
+        return await tryFetch(bestSource);
+    } catch (e) {
+        for (const source of sources) {
+            if (source.id === bestSource.id) continue;
+            try {
+                return await tryFetch(source);
+            } catch (_) { }
+        }
+        throw e;
+    }
 }
 
 /**
@@ -1851,11 +1921,16 @@ function setCachedArrivals(stopId, data) {
  * @param {string[]} ids
  * @returns {Promise<Array>} Combined flat list of arrivals
  */
-export async function fetchArrivalsForStopIds(ids) {
+export async function fetchArrivalsForStopIds(ids, options = {}) {
     console.log(`[fetchArrivalsForStopIds] Input IDs:`, ids);
+    const requestedMaxArrivalTimes = Number(options.maxNumberOfArrivalTimes);
+    const maxNumberOfArrivalTimes = Number.isFinite(requestedMaxArrivalTimes) && requestedMaxArrivalTimes > 0
+        ? Math.round(requestedMaxArrivalTimes)
+        : 30;
     const promises = ids.map(async (id) => {
         // Check cache first
-        const cached = getCachedArrivals(id);
+        const stopCacheKey = `${id}|stop|${maxNumberOfArrivalTimes}`;
+        const cached = getCachedArrivals(stopCacheKey);
         if (cached) {
             console.log(`[fetchArrivalsForStopIds] Cache HIT for ${id}`);
             return cached;
@@ -1863,21 +1938,21 @@ export async function fetchArrivalsForStopIds(ids) {
 
         // Use smart source fetch logic
         // We need a custom url generator for arrivals
-        const urlGen = (s, i) => `${getApiBaseUrl(s)}/stops/${encodeURIComponent(i)}/arrival-times?locale=en&ignoreScheduledArrivalTimes=false`;
+        const urlGen = (s, i) => `${getApiBaseUrl(s)}/stops/${encodeURIComponent(i)}/arrival-times?locale=${getActiveLocale()}&ignoreScheduledArrivalTimes=false&maxNumberOfArrivalTimes=${maxNumberOfArrivalTimes}`;
         try {
             // Custom Smart Fetch for Live Data
             async function tryFetch(source) {
                 const apiId = restoreApiId(id, source);
                 const url = urlGen(source, apiId);
                 console.log(`[fetchArrivalsForStopIds] Trying ${source.id}: id=${id} -> apiId=${apiId}, URL=${url}`);
-                const res = await fetch(url, { headers: { 'x-api-key': API_KEY } });
+                const res = await fetchArrivalTimesJson(url);
                 console.log(`[fetchArrivalsForStopIds] Response for ${apiId}: status=${res.status}`);
                 if (!res.ok) throw new Error(`Fail: ${res.status}`);
                 const arrivals = await res.json();
                 // Tag each arrival with the source stop ID so we know which stop it came from
                 const taggedArrivals = Array.isArray(arrivals) ? arrivals.map(a => ({ ...a, _sourceStopId: id })) : [];
                 // Cache the result
-                setCachedArrivals(id, taggedArrivals);
+                setCachedArrivals(stopCacheKey, taggedArrivals);
                 return taggedArrivals;
             }
 
@@ -1956,7 +2031,7 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
 
                     if (routeData.patterns) {
                         const suffixes = routeData.patterns.map(p => p.patternSuffix).join(',');
-                        const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${id}/stops-of-patterns?patternSuffixes=${suffixes}&locale=en`;
+                        const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${id}/stops-of-patterns?patternSuffixes=${suffixes}&locale=${getActiveLocale()}`;
                         const res = await fetchFromSmartSource(urlGen, routeId);
 
                         // console.log(`[Debug] StopsOfPatterns for ${routeId}:`, res ? (Array.isArray(res) ? `Array(${res.length})` : typeof res) : 'Null');
@@ -2098,7 +2173,7 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
             schedule = await v3InFlight.schedules.get(cacheKey);
         } else {
             const promise = (async () => {
-                const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${id}/schedule?patternSuffix=${suffix}&locale=en`;
+                const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${id}/schedule?patternSuffix=${suffix}&locale=${getActiveLocale()}`;
                 try {
                     const schRes = await fetchFromSmartSource(urlGen, routeId);
                     if (!schRes) throw new Error(`Schedule fetch failed`);

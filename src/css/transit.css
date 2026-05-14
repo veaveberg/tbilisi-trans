@@ -7,9 +7,12 @@
 }
 
 .arrival-item {
-    display: flex;
-    flex-direction: row;
-    justify-content: space-between;
+    --arrival-primary-time-height: 1.75rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+        "top time"
+        "bottom bottom";
     align-items: stretch;
     padding: 0;
     background: var(--bg-panel);
@@ -21,31 +24,48 @@
     flex-shrink: 0;
     position: relative;
     will-change: transform, opacity;
+    overflow: hidden;
+}
+
+.arrival-item.route-filter-faded {
+    filter: opacity(0.38);
+}
+
+.arrival-item.route-filter-extra-faded {
+    filter: opacity(0.2);
 }
 
 @media (hover: hover) {
     .arrival-item:hover {
         background: var(--bg-secondary);
     }
+
+    .arrival-item.route-filter-faded:hover {
+        filter: opacity(0.6);
+    }
+
+    .arrival-item.route-filter-extra-faded:hover {
+        filter: opacity(0.35);
+    }
 }
 
 /* Two-column layout */
 .arrival-card-left {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
+    display: contents;
     min-width: 0;
 }
 
 .arrival-card-right {
+    grid-area: time;
     display: flex;
     align-items: flex-start;
-    justify-content: center;
+    justify-content: flex-end;
     padding: 10px 14px 10px 8px;
     flex-shrink: 0;
 }
 
 .arrival-card-top {
+    grid-area: top;
     display: flex;
     align-items: flex-start;
     padding-top: 10px;
@@ -55,9 +75,10 @@
 }
 
 .arrival-card-bottom {
+    grid-area: bottom;
     padding-bottom: 10px;
     padding-left: 10px;
-    padding-right: 8px;
+    padding-right: 14px;
     font-size: 0.85rem;
     color: var(--text-secondary);
     min-height: 10px;
@@ -79,6 +100,18 @@
     color: var(--warning-yellow, #b45309);
     font-weight: 500;
     line-height: 1.3;
+}
+
+.panel.metro-mode .arrival-item {
+    display: flex;
+    overflow: hidden;
+}
+
+.panel.metro-mode .arrival-card-left {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
 }
 
 /* Larger arrival time in right column */
@@ -122,9 +155,55 @@ body.dark-mode .arrival-item .led-text {
 
 .time-container {
     display: flex;
-    flex-direction: column;
-    align-items: center;
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: 8px;
+    width: 100%;
+    transform: translateY(-2px);
+}
+
+.time-container-single {
+    min-width: 64px;
+}
+
+.time-primary-wrap {
+    display: flex;
+    align-items: flex-start;
     justify-content: center;
+    height: var(--arrival-primary-time-height);
+}
+
+.metro-scheduled-time-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 2px;
+}
+
+.time-secondary-stack {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: flex-end;
+    height: var(--arrival-primary-time-height);
+    gap: 0.16rem;
+    padding-top: 2px;
+}
+
+.led-text.arrival-time-primary {
+    white-space: nowrap;
+}
+
+.arrival-item .led-text.led-text-secondary,
+body.dark-mode .arrival-item .led-text.led-text-secondary {
+    font-size: 13.6pt;
+    line-height: 0.92;
+    letter-spacing: 0;
+    font-weight: 600;
+    text-align: right;
+    white-space: nowrap;
 }
 
 /* Target led-text specifically since that's what we use now */
@@ -142,6 +221,18 @@ body.dark-mode .led-text.scheduled-time,
 body.dark-mode .arrival-item .led-text.scheduled-time {
     color: #9ca3af !important;
     text-shadow: none !important;
+}
+
+.arrival-item .led-text.late-depot-time,
+body.dark-mode .arrival-item .led-text.late-depot-time {
+    color: #fbbf24 !important;
+    text-shadow: 0 0 5px rgba(251, 191, 36, 0.28) !important;
+}
+
+.arrival-item .arrival-time-primary.late-depot-time,
+body.dark-mode .arrival-item .arrival-time-primary.late-depot-time {
+    color: #fbbf24 !important;
+    text-shadow: 0 0 5px rgba(251, 191, 36, 0.28) !important;
 }
 
 
@@ -163,22 +254,23 @@ body.dark-mode .arrival-item .led-text.scheduled-time {
     background: var(--bg-secondary);
     border: none;
     border-radius: 6px;
-    padding: 4px 0;
+    padding: 5px 0;
     font-weight: 600;
-    font-size: 0.95rem;
+    font-size: 1.1rem;
     color: var(--text-main);
     cursor: pointer;
     text-align: center;
-    min-width: 42px;
-    max-width: 60px;
-    flex: 1 1 42px;
+    min-width: 48px;
+    max-width: 69px;
+    flex: 1 1 48px;
+    transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
 }
 
 /* Invisible spacer to fill last row with same-width items */
 .route-tile-spacer {
-    min-width: 42px;
-    max-width: 60px;
-    flex: 1 1 42px;
+    min-width: 48px;
+    max-width: 69px;
+    flex: 1 1 48px;
     height: 0;
     padding: 0;
     margin: 0;
@@ -207,9 +299,63 @@ body.dark-mode .arrival-item .led-text.scheduled-time {
     transform: scale(0.95);
 }
 
+.route-tile.selected {
+    box-shadow: inset 0 0 0 2px currentColor;
+    background: color-mix(in srgb, currentColor 18%, var(--bg-panel));
+    opacity: 1;
+}
+
 .route-tile.dimmed {
     opacity: 0.2;
     pointer-events: none;
+}
+
+.route-tile.route-filter-dimmed {
+    opacity: 0.5;
+}
+
+.route-tile.route-filter-extra-dimmed {
+    opacity: 0.2;
+    pointer-events: none;
+}
+
+.route-filter-reset-slot {
+    min-width: 48px;
+    max-width: 69px;
+    flex: 1 1 48px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+.route-filter-reset-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 23px;
+    height: 23px;
+    padding: 0;
+    opacity: 0.4;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.2s;
+}
+
+.route-filter-reset-btn:hover {
+    opacity: 1;
+    transform: rotate(-30deg);
+}
+
+.route-filter-reset-btn img {
+    width: 18px;
+    height: 18px;
+    display: block;
+    filter: var(--icon-filter, none);
+}
+
+body.dark-mode .route-filter-reset-btn img {
+    filter: invert(1);
 }
 
 
@@ -359,7 +505,7 @@ body.dark-mode .route-info-number {
 .filter-toggle-row .filter-text {
     font-size: 1rem;
     font-weight: 500;
-    color: #6b7280;
+    color: var(--text-secondary);
 }
 
 body.dark-mode .filter-toggle-row .filter-icon {
@@ -368,7 +514,7 @@ body.dark-mode .filter-toggle-row .filter-icon {
 }
 
 body.dark-mode .filter-toggle-row .filter-text {
-    color: #9ca3af;
+    color: var(--text-secondary);
 }
 
 body.dark-mode .filter-toggle-row.active .filter-icon {

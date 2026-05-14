@@ -1,6 +1,16 @@
 import { onApiStatusChange, getApiStatusColor } from './api.js';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { favoritesManager } from './favorites.js';
+import {
+    applyStaticText,
+    getCurrentMapLanguage,
+    getCurrentStopNamesLanguage,
+    getCurrentUiLanguage,
+    setMapLanguage,
+    setStopNamesLanguage,
+    setUiLanguage,
+    t
+} from './i18n.ts';
 
 export const settings = {
     simplifyNumbers: false,
@@ -119,6 +129,28 @@ function applyNativeSetting(key, value) {
             if (typeof value === 'string' && ['system', 'light', 'dark'].includes(value)) {
                 localStorage.setItem('theme', value);
                 window.dispatchEvent(new CustomEvent('manualThemeChange', { detail: value }));
+            }
+            break;
+        case 'uiLanguage':
+            if (typeof value === 'string' && ['en', 'ka', 'ru'].includes(value)) {
+                setUiLanguage(value);
+            }
+            break;
+        case 'stopNamesLanguage':
+            if (typeof value === 'string' && ['en', 'ka'].includes(value)) {
+                setStopNamesLanguage(value);
+            }
+            break;
+        case 'mapLanguage':
+            if (typeof value === 'string' && ['en', 'ka', 'ru'].includes(value)) {
+                setMapLanguage(value);
+            }
+            break;
+        case 'language':
+            if (typeof value === 'string' && ['en', 'ka', 'ru'].includes(value)) {
+                setUiLanguage(value);
+                setStopNamesLanguage(value);
+                setMapLanguage(value);
             }
             break;
         case 'pageScale':
@@ -431,7 +463,7 @@ function initSupportSheetControls() {
     closeBtn?.addEventListener('click', closeSupportSheet);
 }
 
-function openSheetForCurrentPath() {
+export function openSheetForCurrentPath() {
     const subpath = getCurrentAppSubpath();
     if (subpath === 'privacy-policy') {
         openPrivacyPolicySheet();
@@ -451,7 +483,7 @@ function addSupportMenuItem(menuPopup) {
     button.id = 'menu-support-row';
     button.type = 'button';
     button.className = 'menu-item menu-item-button menu-footer-link';
-    button.textContent = 'Support';
+    button.textContent = t('support');
     menuPopup.appendChild(button);
 }
 
@@ -463,9 +495,9 @@ function addContactSection() {
     section.id = 'menu-contact-section';
     section.className = 'menu-contact-section';
     section.innerHTML = `
-        <p class="menu-contact-copy">
-            Made by Sasha Berg<br>
-            for Tbilisi commuters ♥
+        <p class="menu-contact-copy" id="menu-contact-copy">
+            ${t('supportMadeBy')}<br>
+            ${t('supportForCommuters')}
         </p>
         <div class="menu-contact-links">
             <a class="menu-contact-link" href="https://www.instagram.com/samshabrg" target="_blank" rel="noopener noreferrer">Insta</a>
@@ -490,8 +522,33 @@ function addPrivacyPolicyMenuItem(menuPopup) {
     button.id = 'menu-privacy-policy-row';
     button.type = 'button';
     button.className = 'menu-item menu-item-button menu-footer-link';
-    button.textContent = 'Privacy Policy';
+    button.textContent = t('privacyPolicy');
     menuPopup.appendChild(button);
+}
+
+function initLanguageMenu() {
+    document.querySelectorAll('[data-language-setting][data-language-option]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const nextLanguage = button.dataset.languageOption;
+            const target = button.dataset.languageSetting;
+            if (!nextLanguage || !target) return;
+
+            if (target === 'ui') {
+                if (nextLanguage === getCurrentUiLanguage()) return;
+                setUiLanguage(nextLanguage);
+                return;
+            }
+            if (target === 'stops') {
+                if (nextLanguage === getCurrentStopNamesLanguage()) return;
+                setStopNamesLanguage(nextLanguage);
+                return;
+            }
+            if (target === 'map') {
+                if (nextLanguage === getCurrentMapLanguage()) return;
+                setMapLanguage(nextLanguage);
+            }
+        });
+    });
 }
 
 async function openNativeSettings(options = {}) {
@@ -516,6 +573,9 @@ async function openNativeSettings(options = {}) {
     }));
 
     const payload = {
+        uiLanguage: getCurrentUiLanguage(),
+        stopNamesLanguage: getCurrentStopNamesLanguage(),
+        mapLanguage: getCurrentMapLanguage(),
         simplifyNumbers: getStoredBoolean('simplifyNumbers', false),
         showMinibuses: getStoredBoolean('showMinibuses', true),
         showMinibusSegments: getStoredBoolean('showMinibusSegments', false),
@@ -604,6 +664,8 @@ export function initSettings({ onUpdate }) {
     const simplifySwitch = document.getElementById('simplify-switch');
     initPrivacyPolicySheetControls(menuPopup);
     initSupportSheetControls();
+    initLanguageMenu();
+    applyStaticText();
     openSheetForCurrentPath();
 
     // Toggle Menu
@@ -756,6 +818,7 @@ export function initSettings({ onUpdate }) {
 
     addSupportMenuItem(menuPopup);
     addPrivacyPolicyMenuItem(menuPopup);
+    applyStaticText();
 }
 
 function addInterfaceSection() {
@@ -779,14 +842,15 @@ function addInterfaceSection() {
     const currentTheme = localStorage.getItem('theme') || 'system';
 
     section.innerHTML = `
-        <div style="font-weight:600; font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">Interface</div>
+        <div id="interface-section-title" style="font-weight:600; font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">${t('interface')}</div>
         
         <div class="theme-segmented-control" style="margin-bottom: 12px;">
-            <div class="theme-option" data-value="system">Auto</div>
-            <div class="theme-option" data-value="light">Light</div>
-            <div class="theme-option" data-value="dark">Dark</div>
+            <div class="theme-option" id="theme-option-system" data-value="system">${t('auto')}</div>
+            <div class="theme-option" id="theme-option-light" data-value="light">${t('light')}</div>
+            <div class="theme-option" id="theme-option-dark" data-value="dark">${t('dark')}</div>
         </div>
         
+        <div id="page-scale-label" class="custom-slider-label" style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">${t('interfaceScale')}</div>
         <div class="custom-slider-container">
             <div class="custom-slider-track"></div>
             <div class="custom-slider-thumb" id="page-scale-thumb"></div>
@@ -940,7 +1004,7 @@ function initOnlineStatus() {
         const isOnline = navigator.onLine;
         // Saturated Colors (Green-600 / Red-600)
         appDot.style.backgroundColor = isOnline ? '#16a34a' : '#dc2626';
-        appDot.title = isOnline ? 'App Online' : 'App Offline';
+        appDot.title = isOnline ? t('appOnline') : t('appOffline');
     }
 
     function updateApiStatus(status) {
@@ -981,7 +1045,7 @@ function addMapSection() {
     section.style.cssText = 'padding: 10px 0 0 0; border-top: 1px solid var(--border-light);';
 
     section.innerHTML = `
-        <div style="font-weight:600; font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; padding: 0 12px;">Map</div>
+        <div id="map-section-title" style="font-weight:600; font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; padding: 0 12px;">${t('map')}</div>
         
         <div class="menu-item" id="menu-3d-buildings-row">
             <div class="menu-icon">
@@ -999,7 +1063,7 @@ function addMapSection() {
                     <path d="M8 14h.01"></path>
                 </svg>
             </div>
-            <span class="menu-label">3D Buildings</span>
+            <span class="menu-label" id="menu-3d-buildings-label">${t('map3DBuildings')}</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="buildings-3d-switch" ${show3DBuildings ? 'checked' : ''}>
                 <span class="slider round"></span>
@@ -1012,7 +1076,7 @@ function addMapSection() {
                     <path d="M8 3l4 8 5-5 5 15H2L8 3z"></path>
                 </svg>
             </div>
-            <span class="menu-label">3D Terrain</span>
+            <span class="menu-label" id="menu-3d-terrain-label">${t('map3DTerrain')}</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="terrain-3d-switch" ${show3DTerrain ? 'checked' : ''}>
                 <span class="slider round"></span>
@@ -1020,7 +1084,7 @@ function addMapSection() {
         </div>
         
         <div class="menu-item" id="menu-exaggerate-row" style="display: ${show3DTerrain ? 'flex' : 'none'}; padding-left: 48px;">
-            <span class="menu-label">Exaggerate elevation</span>
+            <span class="menu-label" id="menu-exaggerate-label">${t('exaggerateTerrain')}</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="exaggerate-switch" ${localStorage.getItem('exaggerateTerrain') === 'true' ? 'checked' : ''}>
                 <span class="slider round"></span>
@@ -1028,9 +1092,9 @@ function addMapSection() {
         </div>
 
         <div id="terrain-safari-warning" style="display: none; padding: 6px 12px 6px 48px; font-size: 11px; color: var(--warning-yellow, #b45309); line-height: 1.4;">
-            To see 3D terrain in Safari please ${/iPhone|iPad|iPod/.test(navigator.userAgent)
-            ? 'tap icon in the left part of address bar and select <b>Reduce Privacy Protections</b>'
-            : 'select <b>View → Reload Reducing Privacy Protections</b>'}
+            ${/iPhone|iPad|iPod/.test(navigator.userAgent)
+            ? t('terrainSafariWarningIOS')
+            : t('terrainSafariWarningDesktop')}
         </div>
 
         <div class="menu-item" id="menu-poi-row">
@@ -1041,7 +1105,7 @@ function addMapSection() {
                     <line x1="12" y1="8" x2="12.01" y2="8"></line>
                 </svg>
             </div>
-            <span class="menu-label">Points of Interest</span>
+            <span class="menu-label" id="menu-poi-label">${t('pointsOfInterest')}</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="poi-switch" ${showPoiLabels ? 'checked' : ''}>
                 <span class="slider round"></span>

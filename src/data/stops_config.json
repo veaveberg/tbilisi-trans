@@ -986,6 +986,30 @@
       "name": {
         "en": "Railway Passage Bridge"
       }
+    },
+    "1:GONDOLA_MANUAL_1": {
+      "name": {
+        "en": "Funicular Lower Station",
+        "ka": "ფუნიკულიორის ქვედა სადგური"
+      }
+    },
+    "1:GONDOLA_MANUAL_2": {
+      "name": {
+        "en": "Mtatsminda Park Funicular Upper Station",
+        "ka": "მთაწმინდის პარკის ფუნიკულიორის ზედა სადგური"
+      }
+    },
+    "1:GONDOLA_MANUAL_3": {
+      "name": {
+        "en": "Mtatsminda Park Cable Car",
+        "ka": "მთაწმინდის პარკის საბაგირო"
+      }
+    },
+    "1:GONDOLA_MANUAL_4": {
+      "name": {
+        "en": "Rustaveli Cable Car",
+        "ka": "რუსთაველის საბაგირო"
+      }
     }
   },
   "merges": {

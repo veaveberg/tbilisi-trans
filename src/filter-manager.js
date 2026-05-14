@@ -126,7 +126,7 @@ export class FilterManager {
         if (btn) {
             btn.classList.add('active');
             btn.querySelector('.filter-icon').src = iconFilterFill;
-            btn.querySelector('.filter-text').textContent = 'Select destination stops...';
+            btn.querySelector('.filter-text').textContent = t('selectDestinationStops');
         }
 
         // Camera
@@ -472,20 +472,27 @@ export class FilterManager {
             }
 
             if (updateRouter && this.state.context === 'stop') {
-                this.router.updateStop(this.state.originId, true, Array.from(this.state.targetIds));
+                const routeFilterShortNames = typeof window.getSelectedStopRouteFilterShortNames === 'function'
+                    ? window.getSelectedStopRouteFilterShortNames(this.state.originId)
+                    : [];
+                this.router.updateStop(this.state.originId, true, Array.from(this.state.targetIds), '', routeFilterShortNames);
             }
 
             if (currentStopId === this.state.originId && this.state.context === 'stop') {
                 const allStops = this.dataProvider.getAllStops();
                 const stop = allStops.find(s => String(s.id) === String(this.state.originId));
                 if (stop) {
+                    const routeChipFilterIds = typeof window.getSelectedStopRouteFilterIds === 'function'
+                        ? Array.from(window.getSelectedStopRouteFilterIds(this.state.originId) || [])
+                        : [];
                     addToHistory('stop', {
                         ...stop,
                         _filterState: {
                             active: true,
                             originId: this.state.originId,
                             targetIds: Array.from(this.state.targetIds || [])
-                        }
+                        },
+                        _routeChipFilterIds: routeChipFilterIds
                     });
                 }
             }
@@ -729,6 +736,9 @@ export class FilterManager {
 
     clearFilter(currentStopId, options = {}) {
         const { restoreStop = false } = options;
+        if (currentStopId && typeof window.resetStopRouteFilter === 'function') {
+            window.resetStopRouteFilter(currentStopId);
+        }
         this.state.active = false;
         this.state.picking = false;
         this.state.originId = null;
@@ -825,11 +835,26 @@ export class FilterManager {
             this.map.setPaintProperty('metro-transfer-layer', 'text-opacity', 1);
         }
 
+        const shouldRefreshCurrentStopCard = currentStopId && String(window.currentStopId) === String(currentStopId);
+        if (shouldRefreshCurrentStopCard) {
+            if (window.lastArrivals) {
+                this.uiCallbacks.renderArrivals(window.lastArrivals, currentStopId);
+            }
+            if (window.lastRoutes) {
+                this.uiCallbacks.renderAllRoutes(window.lastRoutes, window.lastArrivals || []);
+            }
+            if (typeof window.updateCurrentStopDeepLink === 'function') {
+                window.updateCurrentStopDeepLink();
+            }
+        }
+
         // Refresh View
         if (restoreStop && currentStopId) {
             const allStops = this.dataProvider.getAllStops();
             const stop = allStops.find(s => s.id === currentStopId);
-            if (stop) this.uiCallbacks.showStopInfo(stop, false, true); // Restore zoom
+            if (stop) {
+                this.uiCallbacks.showStopInfo(stop, false, true, true, { forceRoutesRefresh: true });
+            }
         }
     }
 
@@ -1276,3 +1301,4 @@ class DestinationMarkerRenderer {
         return iconId;
     }
 }
+import { t } from './i18n.ts';

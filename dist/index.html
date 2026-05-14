@@ -5,7 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport"
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Tbilisi Transit</title>
+  <title>Tbilisi Trans</title>
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -63,13 +63,13 @@
     }(window.location))
   </script>
   <script>
-    // Enable native-only splash overlay (Capacitor iOS/Android)
-    (function () {
-      try {
-        var shouldShow = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
-        if (shouldShow) document.documentElement.classList.add('native-splash');
-      } catch (e) { }
-    })();
+      // Enable native-only splash overlay (Capacitor iOS/Android)
+      (function () {
+        try {
+          var shouldShow = window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+          if (shouldShow) document.documentElement.classList.add('native-splash');
+        } catch (e) { }
+      })();
   </script>
   <style>
     /* Critical CSS to prevent FOUC */
@@ -88,12 +88,12 @@
       display: none !important;
     }
   </style>
-  <script type="module" crossorigin src="/tbilisi-trans/assets/index-C65-140N.js"></script>
-  <link rel="stylesheet" crossorigin href="/tbilisi-trans/assets/index--F1siwTq.css">
+  <script type="module" crossorigin src="/tbilisi-trans/assets/index-DKRdq5Ou.js"></script>
+  <link rel="stylesheet" crossorigin href="/tbilisi-trans/assets/index-CzRvM4j2.css">
 <link rel="manifest" href="/tbilisi-trans/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/tbilisi-trans/registerSW.js"></script></head>
 
 <body class="loading">
-    <div id="app">
+  <div id="app">
     <div id="splash-overlay" aria-hidden="true">
       <div id="splash-backdrop"></div>
       <img id="splash-opaque" src="/tbilisi-trans/splash-opaque.png" alt="">
@@ -112,7 +112,8 @@
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
           </div>
-          <input type="text" id="search-input" placeholder="Search stops or routes..." />
+          <input type="text" id="search-input" placeholder="Search stops or routes..." autocomplete="off"
+            autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" inputmode="search" />
           <button id="search-clear" class="clear-input-btn hidden" title="Clear">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -143,7 +144,8 @@
                   <img src="/tbilisi-trans/ellipsis.circle.fill.svg" alt="More" width="28" height="28">
                 </button>
                 <div id="stop-more-menu" class="more-menu-dropdown hidden">
-                  <button id="btn-edit-stop" class="more-menu-item hidden" title="Edit Stop" style="display: none;">Edit</button>
+                  <button id="btn-edit-stop" class="more-menu-item hidden" title="Edit Stop"
+                    style="display: none;">Edit</button>
                   <button id="favorite-stop-btn" class="more-menu-item" title="Favorite">Favorite</button>
                   <button id="copy-link-btn" class="more-menu-item" title="Copy Link">Copy link</button>
                 </div>
@@ -181,7 +183,8 @@
               </button>
             </div>
             <div class="edit-row full-width">
-              <textarea id="edit-gondola-info" class="route-edit-input compact gondola-info-input" placeholder="Gondola card info (hours, tickets, links, phone)"></textarea>
+              <textarea id="edit-gondola-info" class="route-edit-input compact gondola-info-input"
+                placeholder="Gondola card info (hours, tickets, links, phone)"></textarea>
             </div>
           </div>
 
@@ -219,7 +222,8 @@
                   <img src="/tbilisi-trans/ellipsis.circle.fill.svg" alt="More" width="28" height="28">
                 </button>
                 <div id="route-more-menu" class="more-menu-dropdown hidden">
-                  <button id="btn-edit-route" class="more-menu-item hidden" title="Edit Route" style="display: none;">Edit</button>
+                  <button id="btn-edit-route" class="more-menu-item hidden" title="Edit Route"
+                    style="display: none;">Edit</button>
                   <button id="favorite-route-btn" class="more-menu-item" title="Favorite">Favorite</button>
                   <button id="copy-route-link-btn" class="more-menu-item" title="Copy Link">Copy link</button>
                 </div>
@@ -446,6 +450,37 @@
         </button>
 
         <div id="map-menu-popup" class="map-menu-popup hidden">
+          <div class="menu-item menu-language-row" id="menu-ui-language-row">
+            <span class="menu-label" id="menu-ui-language-label">Interface</span>
+            <div class="menu-language-control" role="group" aria-label="Interface language">
+              <button type="button" class="menu-language-option" data-language-setting="ui" data-language-option="ka">ქა
+                (ბეტა)</button>
+              <button type="button" class="menu-language-option active" data-language-setting="ui"
+                data-language-option="en">en</button>
+              <button type="button" class="menu-language-option" data-language-setting="ui" data-language-option="ru">ру
+                (бета)</button>
+            </div>
+          </div>
+          <div class="menu-item menu-language-row" id="menu-stop-names-row">
+            <span class="menu-label" id="menu-stop-names-label">Stop names</span>
+            <div class="menu-language-control" role="group" aria-label="Stop names language">
+              <button type="button" class="menu-language-option" data-language-setting="stops"
+                data-language-option="ka">ქა</button>
+              <button type="button" class="menu-language-option active" data-language-setting="stops"
+                data-language-option="en">en</button>
+            </div>
+          </div>
+          <div class="menu-item menu-language-row" id="menu-map-language-row">
+            <span class="menu-label" id="menu-map-language-label">Map</span>
+            <div class="menu-language-control" role="group" aria-label="Map language">
+              <button type="button" class="menu-language-option" data-language-setting="map"
+                data-language-option="ka">ქა</button>
+              <button type="button" class="menu-language-option active" data-language-setting="map"
+                data-language-option="en">en</button>
+              <button type="button" class="menu-language-option" data-language-setting="map"
+                data-language-option="ru">ру</button>
+            </div>
+          </div>
           <div class="menu-item" id="menu-simplify-toggle-row">
             <div class="menu-icon">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
@@ -455,7 +490,7 @@
                 <line x1="18" y1="6" x2="6" y2="18"></line>
               </svg>
             </div>
-            <span class="menu-label">Simple numbers</span>
+            <span class="menu-label" id="menu-simple-numbers-label">Simple numbers</span>
             <label class="toggle-switch">
               <input type="checkbox" id="simplify-switch">
               <span class="slider round"></span>
@@ -486,7 +521,7 @@
                   fill="currentColor" />
               </svg>
             </div>
-            <span class="menu-label">Show minibuses</span>
+            <span class="menu-label" id="menu-show-minibuses-label">Show minibuses</span>
             <label class="toggle-switch">
               <input type="checkbox" id="minibus-switch">
               <span class="slider round"></span>
@@ -500,7 +535,7 @@
                 <path d="M23 50L17 56" />
               </svg>
             </span>
-            <span class="menu-label">Show "stop-anywhere" sections</span>
+            <span class="menu-label" id="menu-stop-anywhere-label">Show "stop-anywhere" sections</span>
             <label class="toggle-switch">
               <input type="checkbox" id="minibus-segments-switch">
               <span class="slider round"></span>
@@ -514,7 +549,7 @@
                   fill="currentColor" />
               </svg>
             </div>
-            <span class="menu-label">Rustavi buses</span>
+            <span class="menu-label" id="menu-rustavi-buses-label">Rustavi buses</span>
             <label class="toggle-switch">
               <input type="checkbox" id="rustavi-switch">
               <span class="slider round"></span>

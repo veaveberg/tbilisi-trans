@@ -20,7 +20,9 @@ export const Router = {
 
     /**
      * Parse current URL into state object
-     * URL Format: /base/stopID/filtered/destID-destID-destID
+     * URL Format:
+     * /base/stopID/filtered/destinationsID-ID/routesSHORT-SHORT
+     * /base/stopID/filtered/routesSHORT-SHORT
      */
     parse() {
         // Strip base path
@@ -41,6 +43,16 @@ export const Router = {
         if (path.endsWith('/')) path = path.slice(0, -1);
 
         const parts = path.split('/');
+
+        if (parts[0] === 'privacy-policy' || parts[0] === 'support') {
+            const state = {
+                type: 'special',
+                page: parts[0]
+            };
+            this._lastParsedPath = location.pathname;
+            this._lastParsedState = state;
+            return state;
+        }
 
         // Segment Deep Link: /segment/ID-ID
         if (parts[0] === 'segment' || parts[0].startsWith('segment')) {
@@ -127,7 +139,8 @@ export const Router = {
             type: 'stop',
             stopId: null,
             filterActive: false,
-            targetIds: []
+            targetIds: [],
+            routeFilterShortNames: []
         };
 
         if (parts.length > 0) {
@@ -147,15 +160,29 @@ export const Router = {
             state.stopId = rawId;
         }
 
-        if (parts.length > 2 && parts[1] === 'filtered') {
-            state.filterActive = true;
-            // Part 2: Destinations (e.g. "destinations405-1324" or just "405-1324")
-            let p2 = parts[2];
-            if (p2.startsWith('destinations')) {
-                p2 = p2.substring(12);
+        if (parts.length > 1 && parts[1] === 'filtered') {
+            for (let i = 2; i < parts.length; i++) {
+                const segment = parts[i];
+                if (!segment) continue;
+
+                if (segment.startsWith('destinations')) {
+                    let rawTargets = segment.substring(12);
+                    state.targetIds = rawTargets.split('-').filter(id => id.length > 0);
+                    continue;
+                }
+
+                if (segment.startsWith('routes')) {
+                    let rawRoutes = segment.substring(6);
+                    state.routeFilterShortNames = rawRoutes.split('-').filter(id => id.length > 0);
+                    continue;
+                }
+
+                // Backward compatibility for older /filtered/405-1324 style links.
+                if (i === 2) {
+                    state.targetIds = segment.split('-').filter(id => id.length > 0);
+                }
             }
-            // Normalize Targets
-            state.targetIds = p2.split('-').filter(id => id.length > 0);
+            state.filterActive = state.targetIds.length > 0;
         }
 
         this._lastParsedPath = location.pathname;
@@ -166,14 +193,14 @@ export const Router = {
     /**
      * Update URL based on state
      */
-    update(stopId, filterActive, targetIds, mapHash = '') {
+    update(stopId, filterActive, targetIds, mapHash = '', routeFilterShortNames = []) {
         // Legacy Support for update(stopId...) calls
         // We really should use dedicated methods, but keeping this for backward compat if needed.
         // Or better: Redirect to updateStop logic.
-        this.updateStop(stopId, filterActive, targetIds, mapHash);
+        this.updateStop(stopId, filterActive, targetIds, mapHash, routeFilterShortNames);
     },
 
-    updateStop(stopId, filterActive, targetIds, mapHash = '') {
+    updateStop(stopId, filterActive, targetIds, mapHash = '', routeFilterShortNames = []) {
         if (!stopId) {
             // Reset to Home (with optional hash)
             const url = this.base + mapHash;
@@ -187,14 +214,25 @@ export const Router = {
         // Don't include mapHash for stop URLs - the stop ID leads to the correct location
         let url = `${this.base}stop${cleanId(stopId)}`;
 
-        if (filterActive && targetIds && targetIds.length > 0) {
-            // Sort for consistency
-            const sortedIds = [...targetIds].map(cleanId).sort();
-            url += `/filtered/destinations${sortedIds.join('-')}`;
+        const sortedTargetIds = filterActive && targetIds && targetIds.length > 0
+            ? [...targetIds].map(cleanId).sort()
+            : [];
+        const sortedRouteShortNames = Array.isArray(routeFilterShortNames) && routeFilterShortNames.length > 0
+            ? [...routeFilterShortNames].map(v => String(v).trim()).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+            : [];
+
+        if (sortedTargetIds.length > 0 || sortedRouteShortNames.length > 0) {
+            url += `/filtered`;
+            if (sortedTargetIds.length > 0) {
+                url += `/destinations${sortedTargetIds.join('-')}`;
+            }
+            if (sortedRouteShortNames.length > 0) {
+                url += `/routes${sortedRouteShortNames.join('-')}`;
+            }
         }
 
         console.log('[Router] Push State (Stop):', url);
-        history.pushState({ type: 'stop', stopId, filterActive, targetIds }, '', url);
+        history.pushState({ type: 'stop', stopId, filterActive, targetIds, routeFilterShortNames: sortedRouteShortNames }, '', url);
     },
 
     updateRoute(shortName, direction = 0) {

@@ -1,4 +1,5 @@
 // Route interval pattern descriptions
+import { t } from './i18n.ts';
 
 let intervalData = null;
 
@@ -65,7 +66,7 @@ export function getIntervalDescription(routeId) {
     // Special case for route 174 (Varketili shuttle) - just return interval
     // The service windows come from parseSchedule's serviceWindows field
     if (data.shortName === '174') {
-        return 'every 6\'';
+        return t('everyMinutes', 6);
     }
 
     const pattern = data.pattern;
@@ -116,13 +117,13 @@ export function getIntervalDescription(routeId) {
     );
 
     // Build description
-    let description = `every ${dominantInterval}'`;
+    let description = t('everyMinutes', dominantInterval);
 
     // Case 1: Overwhelming gap - describe when service runs
     if (gapIsOverwhelming && gapSegments.length > 0) {
         // Merge adjacent service segments for cleaner output
         const mergedRanges = mergeServiceRanges(serviceSegments);
-        description += `, only ${mergedRanges.join(' & ')}`;
+        description += `, ${t('onlyServiceRanges', mergedRanges.join(' & '))}`;
         return description;
     }
 
@@ -130,9 +131,9 @@ export function getIntervalDescription(routeId) {
     if (gapSegments.length > 0) {
         const gapRanges = gapSegments.map(s => `${formatHour(s.start)} – ${formatHour(s.end)}`);
         if (gapRanges.length === 1) {
-            description += `, no service ${gapRanges[0]}`;
+            description += `, ${t('noServiceRanges', gapRanges[0])}`;
         } else {
-            description += `, no service ${gapRanges.join(' & ')}`;
+            description += `, ${t('noServiceRanges', gapRanges.join(' & '))}`;
         }
         return description;
     }
@@ -145,24 +146,24 @@ export function getIntervalDescription(routeId) {
 
         // Check if it's at end of day (after 20:00)
         if (eveningChange.start >= 20 || (eveningChange.start < 4)) {
-            description += `, after ${formatHour(eveningChange.start)} — every ${eveningChange.interval}'`;
+            description += `, ${t('afterTimeEveryMinutes', formatHour(eveningChange.start), eveningChange.interval)}`;
         } else if (differentSegments.length <= 2) {
             // Midday variation
             const midday = differentSegments.find(s => s.start >= 12 && s.start < 16);
             if (midday) {
-                description += `, less frequent ${formatHour(midday.start)} – ${formatHour(midday.end)}`;
+                description += `, ${t('lessFrequentBetween', formatHour(midday.start), formatHour(midday.end))}`;
                 // Also check for evening
                 const evening = differentSegments.find(s => s.start >= 20);
                 if (evening) {
-                    description += ` & after ${formatHour(evening.start)}`;
+                    description += ` ${t('andAfterTime', formatHour(evening.start))}`;
                 }
             } else {
                 // Just mention "less frequent" for complex patterns
-                description += `, varies during day`;
+                description += `, ${t('variesDuringDay')}`;
             }
         } else {
             // Too many variations - simplified message
-            description += `, varies during day`;
+            description += `, ${t('variesDuringDay')}`;
         }
     }
 

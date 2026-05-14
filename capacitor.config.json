@@ -1,7 +1,7 @@
 {
   "appId": "tbilisi.trans",
   "appName": "Tbilisi Trans",
-  "webDir": "dist",
+  "webDir": "dist-ios",
   "plugins": {
     "CapacitorHttp": {
       "enabled": true

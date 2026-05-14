@@ -722,7 +722,15 @@ export function addStopsToMap(stops, options = {}) {
     // Let's keep it as is.
     const { redirectMap, filterManager, updateConnectionLine } = options;
 
-    const sourcesToClean = ['metro-stops', 'metro-lines-manual', 'stops', 'selected-stop', 'filter-connection'];
+    const sourcesToClean = [
+        'metro-stops',
+        'metro-schematic-source',
+        'metro-exits',
+        'metro-lines-manual',
+        'stops',
+        'selected-stop',
+        'filter-connection'
+    ];
 
     // Exhaustive cleanup: Remove ALL layers using our sources, then remove sources.
     const currentStyle = map.getStyle();
@@ -1180,7 +1188,7 @@ let liveBusLastFeatures = new Map(); // vehicleId -> feature
 let liveBusCurrentFeatures = new Map(); // vehicleId -> feature (current animated frame)
 const liveBusLineCache = new Map(); // lineKey -> { coords, cumDist, total }
 const LIVE_BUS_UPDATE_INTERVAL_MS = 5000;
-const LIVE_BUS_FORWARD_OFFSET_M = 50;
+const LIVE_BUS_ANIMATION_MS = 1200;
 let liveBusFollowId = null;
 
 function easeInOutCubic(t) {
@@ -1285,12 +1293,14 @@ export function renderLiveBuses(features = []) {
         if (!Array.isArray(features) || features.length === 0) {
             if (liveBusAnimationId) cancelAnimationFrame(liveBusAnimationId);
             liveBusAnimationId = null;
+            liveBusLastFeatures.clear();
             liveBusCurrentFeatures.clear();
+            setLiveBusData([]);
             return;
         }
 
         const nextById = new Map();
-        features.forEach(f => {
+        features.forEach((f) => {
             const id = f?.properties?.id;
             if (!id) return;
             nextById.set(String(id), f);
@@ -1300,147 +1310,73 @@ export function renderLiveBuses(features = []) {
         nextById.forEach((next, id) => {
             const current = liveBusCurrentFeatures.get(id);
             const prev = liveBusLastFeatures.get(id);
-            if (current && current.geometry && next.geometry) {
+            if (current?.geometry && next?.geometry) {
                 startById.set(id, current);
-            } else if (prev && prev.geometry && next.geometry) {
+            } else if (prev?.geometry && next?.geometry) {
                 startById.set(id, prev);
             } else {
                 startById.set(id, next);
             }
         });
 
-        const startTime = performance.now();
-        const defaultMoveMs = 900;
-        const totalMs = LIVE_BUS_UPDATE_INTERVAL_MS;
-
         if (liveBusAnimationId) cancelAnimationFrame(liveBusAnimationId);
+        const startTime = performance.now();
+        const totalMs = Math.min(LIVE_BUS_ANIMATION_MS, LIVE_BUS_UPDATE_INTERVAL_MS);
 
         const animate = (now) => {
             const elapsed = now - startTime;
+            const t = Math.max(0, Math.min(1, elapsed / totalMs));
+            const k = easeInOutCubic(t);
             const blended = [];
 
             nextById.forEach((next, id) => {
                 const start = startById.get(id) || next;
                 const startProps = start.properties || {};
                 const endProps = next.properties || {};
-                const staleTicks = Number.isFinite(startProps._stale) ? startProps._stale : 0;
-                const dtRaw = (Number.isFinite(startProps._ts) && Number.isFinite(endProps._ts))
-                    ? (endProps._ts - startProps._ts)
-                    : defaultMoveMs;
-                const dtAdjusted = (dtRaw > 0 ? dtRaw : defaultMoveMs) * Math.max(1, staleTicks + 1);
-                const moveMs = Math.max(300, Math.min(totalMs, dtAdjusted));
-                const tMove = Math.min(1, elapsed / moveMs);
-                const kMove = easeOutCubic(tMove);
                 const lineKey = endProps._lineKey || startProps._lineKey || null;
                 const hasLine = lineKey && liveBusLineCache.has(lineKey) &&
                     Number.isFinite(startProps._lineFrac) && Number.isFinite(endProps._lineFrac);
 
                 if (hasLine) {
-                    const meta = liveBusLineCache.get(lineKey);
                     const rawDelta = endProps._lineFrac - startProps._lineFrac;
-                    if (Math.abs(rawDelta) < 0.001) {
-                        const hold = start.geometry?.coordinates || next.geometry?.coordinates;
-                        const frozenHeading = normalizeHeading(startProps.heading);
-                        blended.push(buildLiveBusFeature(
-                            id,
-                            hold[0],
-                            hold[1],
-                            frozenHeading,
-                            next.properties?.color,
-                            {
-                                _lineKey: lineKey,
-                                _lineFrac: startProps._lineFrac,
-                                _stale: Math.min(4, staleTicks + 1)
-                            }
-                        ));
+                    if (Math.abs(rawDelta) > 0.35) {
+                        blended.push(next);
                         return;
                     }
-                    const interpHeading = interpolateHeading(startProps.heading, endProps.heading, kMove);
-                    // If the fraction jumps too far, snap to end to avoid flashes.
-                    if (Math.abs(rawDelta) > 0.25) {
-                        const endCoords = next.geometry?.coordinates || start.geometry?.coordinates;
-                        blended.push(buildLiveBusFeature(
-                            id,
-                            endCoords[0],
-                            endCoords[1],
-                            interpHeading,
-                            next.properties?.color,
-                            {
-                                _lineKey: lineKey,
-                                _lineFrac: endProps._lineFrac
-                            }
-                        ));
-                        return;
-                    }
-                    let frac = startProps._lineFrac + rawDelta * kMove;
-                    // Forward-only clamp (no backtracking)
-                    if (rawDelta >= 0) {
-                        frac = Math.max(startProps._lineFrac, Math.min(endProps._lineFrac, frac));
-                    } else {
-                        frac = Math.min(startProps._lineFrac, Math.max(endProps._lineFrac, frac));
-                    }
-                    frac = Math.max(0, Math.min(1, frac));
-                    const forwardFrac = meta.total > 0 ? (LIVE_BUS_FORWARD_OFFSET_M / meta.total) : 0;
-                    if (rawDelta >= 0) frac = Math.min(1, frac + forwardFrac);
-                    else frac = Math.max(0, frac - forwardFrac);
-                    const p = pointAlongLine(meta, frac) || (next.geometry?.coordinates || start.geometry?.coordinates);
+                    const meta = liveBusLineCache.get(lineKey);
+                    const frac = Math.max(0, Math.min(1, startProps._lineFrac + (rawDelta * k)));
+                    const point = pointAlongLine(meta, frac) || next.geometry?.coordinates || start.geometry?.coordinates;
                     blended.push(buildLiveBusFeature(
                         id,
-                        p[0],
-                        p[1],
-                        interpHeading,
-                        next.properties?.color,
+                        point[0],
+                        point[1],
+                        interpolateHeading(startProps.heading, endProps.heading, k),
+                        endProps.color,
                         {
+                            _ts: endProps._ts,
                             _lineKey: lineKey,
-                            _lineFrac: frac,
-                            _stale: 0
+                            _lineFrac: frac
                         }
                     ));
-                } else {
-                    const a = start.geometry?.coordinates || next.geometry.coordinates;
-                    const b = next.geometry.coordinates;
-                    const dx = b[0] - a[0];
-                    const dy = b[1] - a[1];
-                    const distSq = dx * dx + dy * dy;
-                    if (distSq < 1e-10) {
-                        const frozenHeading = normalizeHeading(startProps.heading);
-                        blended.push(buildLiveBusFeature(
-                            id,
-                            a[0],
-                            a[1],
-                            frozenHeading,
-                            next.properties?.color,
-                            {
-                                _stale: Math.min(4, staleTicks + 1)
-                            }
-                        ));
-                        return;
-                    }
-                    const interpHeading = interpolateHeading(startProps.heading, endProps.heading, kMove);
-                    if (distSq > 0.0004) {
-                        blended.push(buildLiveBusFeature(
-                            id,
-                            b[0],
-                            b[1],
-                            interpHeading,
-                            next.properties?.color
-                        ));
-                        return;
-                    }
-                    const lon = a[0] + (b[0] - a[0]) * kMove;
-                    const lat = a[1] + (b[1] - a[1]) * kMove;
-                    const offset = offsetPointByHeading(lon, lat, interpHeading, LIVE_BUS_FORWARD_OFFSET_M);
-                    blended.push(buildLiveBusFeature(
-                        id,
-                        offset[0],
-                        offset[1],
-                        interpHeading,
-                        next.properties?.color,
-                        {
-                            _stale: 0
-                        }
-                    ));
+                    return;
                 }
+
+                const a = start.geometry?.coordinates || next.geometry?.coordinates;
+                const b = next.geometry?.coordinates || a;
+                const lon = a[0] + (b[0] - a[0]) * k;
+                const lat = a[1] + (b[1] - a[1]) * k;
+                blended.push(buildLiveBusFeature(
+                    id,
+                    lon,
+                    lat,
+                    interpolateHeading(startProps.heading, endProps.heading, k),
+                    endProps.color,
+                    {
+                        _ts: endProps._ts,
+                        _lineKey: endProps._lineKey ?? startProps._lineKey ?? null,
+                        _lineFrac: Number.isFinite(endProps._lineFrac) ? endProps._lineFrac : null
+                    }
+                ));
             });
 
             setLiveBusData(blended);
@@ -1449,6 +1385,7 @@ export function renderLiveBuses(features = []) {
                 const fid = f?.properties?.id;
                 if (fid) liveBusCurrentFeatures.set(String(fid), f);
             });
+
             if (liveBusFollowId) {
                 const follow = liveBusCurrentFeatures.get(String(liveBusFollowId));
                 const coords = follow?.geometry?.coordinates;
@@ -1457,16 +1394,26 @@ export function renderLiveBuses(features = []) {
                 }
             }
 
-            if (elapsed < totalMs) {
+            if (t < 1) {
                 liveBusAnimationId = requestAnimationFrame(animate);
-            } else {
-                liveBusAnimationId = null;
-                liveBusLastFeatures = new Map(liveBusCurrentFeatures);
-                liveBusCurrentFeatures = new Map(liveBusCurrentFeatures);
+                return;
             }
+
+            liveBusAnimationId = null;
+            setLiveBusData(features);
+            liveBusCurrentFeatures = new Map(nextById);
+            liveBusLastFeatures = new Map(nextById);
         };
 
         liveBusAnimationId = requestAnimationFrame(animate);
+
+        if (liveBusFollowId) {
+            const follow = nextById.get(String(liveBusFollowId));
+            const coords = follow?.geometry?.coordinates;
+            if (coords && Number.isFinite(coords[0]) && Number.isFinite(coords[1])) {
+                map.easeTo({ center: coords, duration: 300, easing: (x) => x * (2 - x) });
+            }
+        }
     } catch (error) {
         console.error('Failed to render live buses:', error);
     }
@@ -1513,9 +1460,15 @@ export function toggleLiveBusFollow(busId) {
     applyLiveBusOpacity();
 }
 
-export async function updateLiveBuses(routeId, patternSuffix, color) {
+export async function updateLiveBuses(routeId, patternSuffix, color, options = {}) {
     try {
+        if (typeof options.shouldRender === 'function' && !options.shouldRender()) {
+            return;
+        }
         const positionsData = await api.fetchBusPositionsV3(routeId, patternSuffix);
+        if (typeof options.shouldRender === 'function' && !options.shouldRender()) {
+            return;
+        }
         const buses = positionsData[patternSuffix] || [];
         const nowTs = Date.now();
         const features = buses.map(bus => ({

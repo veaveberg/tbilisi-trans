@@ -14,7 +14,7 @@ import { RouteGeometry } from './route-geometry.js';
 import { setSheetState, setPanelState, closeAllPanels, setupPanelDrag } from './panel-manager.js';
 import * as metro from './metro.js';
 const { handleMetroStop } = metro;
-import { setupGeolocation, isTrackingActive, stopTracking, isUserInteractingWithMap, LOCATION_STATES } from './geolocation.js';
+import { setupGeolocation, isTrackingActive, stopTracking, isUserInteractingWithMap, LOCATION_STATES, refreshLocationMarker } from './geolocation.js';
 import { map, getMapHash } from './map-setup.js';
 import { setupVisuals, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, renderLiveBuses, registerLiveBusLine, clearLiveBuses, holdLiveBuses, setMapLightPreset } from './map-visuals.js';
 import { setMapFocus, setupHoverHandlers, setupClickHandlers, addMetroHoverLogic, clearStopHoverState } from './map-interactions.js';
@@ -32,9 +32,18 @@ import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
 
 
-import { initSettings, settings, simplifyNumber, shouldShowRoute, openNativeFavoritesMenu } from './settings.js';
+import { initSettings, settings, simplifyNumber, shouldShowRoute, openNativeFavoritesMenu, openSheetForCurrentPath } from './settings.js';
 import { initICloudHistorySync } from './icloud-sync.js';
 import { favoritesManager } from './favorites.js';
+import {
+    applyStaticText,
+    formatFilteredStopCount,
+    formatFilteredSubtitle as formatFavoriteFilterSubtitle,
+    getCurrentStopNamesLanguage,
+    initI18n,
+    onLanguageChange,
+    t
+} from './i18n.ts';
 
 // --- Global State Declarations (Hoisted) ---
 // These must be declared before api.fetchRoutes calls onRoutesLoaded
@@ -47,6 +56,7 @@ let lastRouteUpdateId = 0;
 const redirectMap = new Map();
 
 // --- Mobile Detection & Zoom Adjust ---
+initI18n();
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 window.addEventListener('pageScaleChange', (e) => {
     const scale = e.detail;
@@ -59,13 +69,92 @@ const mergeSourcesMap = new Map();
 let busUpdateInterval = null;
 let filterBusUpdateInterval = null;
 let filterBusUpdateToken = 0;
+let activeLiveBusSession = 0;
+let hasSkippedInitialPageShow = false;
+let wasTrackingBeforePause = false;
+let trackingZoomBeforePause = null;
+let filterBusUpdateInFlight = false;
+let filterBusUpdateQueued = false;
 const filterBusThrottle = new Map(); // routeId -> { lastTs, failCount, cooldownUntil }
 let liveBusRequestGateTs = 0;
 const LIVE_BUS_REQUEST_INTERVAL_MS = 1000;
+const IOS_NATIVE_CACHE_VERSION_KEY = 'iosNativeCacheVersion';
 // State declarations
+
+async function maybeRunNativeUpgradeCleanup() {
+    try {
+        const cap = window.Capacitor;
+        const isNativeIOS = cap?.isNativePlatform?.() && cap?.getPlatform?.() === 'ios';
+        if (!isNativeIOS || typeof localStorage === 'undefined') return;
+
+        const appInfo = await cap?.Plugins?.App?.getInfo?.();
+        if (!appInfo) return;
+
+        const currentVersion = `${appInfo.version || '0'}:${appInfo.build || '0'}`;
+        const previousVersion = localStorage.getItem(IOS_NATIVE_CACHE_VERSION_KEY);
+        if (previousVersion === currentVersion) return;
+
+        console.log('[Native iOS] App version changed. Clearing volatile web caches.', {
+            previousVersion,
+            currentVersion
+        });
+
+        try {
+            await api.clearAllCaches();
+        } catch (err) {
+            console.warn('[Native iOS] Failed to clear IndexedDB caches on upgrade', err);
+        }
+
+        try {
+            sessionStorage.clear();
+        } catch (err) {
+            console.warn('[Native iOS] Failed to clear sessionStorage on upgrade', err);
+        }
+
+        try {
+            if ('serviceWorker' in navigator) {
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                await Promise.allSettled(registrations.map((r) => r.unregister()));
+            }
+        } catch (err) {
+            console.warn('[Native iOS] Failed to unregister service workers on upgrade', err);
+        }
+
+        try {
+            if (window.caches?.keys) {
+                const keys = await window.caches.keys();
+                await Promise.allSettled(keys.map((key) => window.caches.delete(key)));
+            }
+        } catch (err) {
+            console.warn('[Native iOS] Failed to clear CacheStorage on upgrade', err);
+        }
+
+        localStorage.setItem(IOS_NATIVE_CACHE_VERSION_KEY, currentVersion);
+
+        if (typeof window !== 'undefined' && !window.__didReloadAfterNativeCacheCleanup) {
+            window.__didReloadAfterNativeCacheCleanup = true;
+            window.location.reload();
+        }
+    } catch (err) {
+        console.warn('[Native iOS] Upgrade cleanup check failed', err);
+    }
+}
 
 function shouldShowMinibusSegmentsLayer() {
     return settings.showMinibuses && settings.showMinibusSegments;
+}
+
+function resetLiveBusSession({ clear = true } = {}) {
+    activeLiveBusSession += 1;
+    filterBusUpdateToken += 1;
+    if (busUpdateInterval) {
+        clearInterval(busUpdateInterval);
+        busUpdateInterval = null;
+    }
+    if (clear) {
+        clearLiveBuses();
+    }
+    return activeLiveBusSession;
 }
 
 // Initialize Settings
@@ -84,7 +173,28 @@ initSettings({
     }
 });
 
+onLanguageChange((change) => {
+    if (change.target === 'stops') {
+        refreshLanguageData();
+        return;
+    }
+
+    if (change.target !== 'ui') return;
+
+    applyStaticText();
+    syncFavoriteButtonState();
+
+    if (window.currentStopId && window.lastArrivals) {
+        arrivals.renderArrivals(window.lastArrivals, window.currentStopId);
+    }
+
+    if (filterManager) {
+        filterManager.recalculateFilter(window.currentStopId, window.lastArrivals, window.lastRoutes);
+    }
+});
+
 initICloudHistorySync();
+maybeRunNativeUpgradeCleanup();
 
 try {
     const cap = window.Capacitor;
@@ -254,6 +364,43 @@ function getEquivalentStops(id, includeHubs = true) {
     return Array.from(set);
 }
 
+function getSelectedRouteFilterShortNamesForStop(stopId = window.currentStopId) {
+    const selectedRouteIds = Array.from(arrivals.getSelectedStopRouteFilterIds(stopId) || []);
+    if (!selectedRouteIds.length) return [];
+
+    const shortNames = selectedRouteIds
+        .map((routeId) => {
+            const route = allRoutes.find(r => String(r.id) === String(routeId));
+            return route?.shortName ? String(route.shortName).trim() : null;
+        })
+        .filter(Boolean);
+
+    return Array.from(new Set(shortNames)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+function resolveRouteFilterIdsForStop(routeShortNames = [], stopId = window.currentStopId) {
+    if (!Array.isArray(routeShortNames) || routeShortNames.length === 0) return [];
+    const resolvedIds = routeShortNames
+        .map((shortName) => resolveRouteByShortName(shortName, {
+            preferredStopId: stopId,
+            preferBus: true
+        })?.id)
+        .filter(Boolean)
+        .map(id => String(id));
+    return Array.from(new Set(resolvedIds));
+}
+
+function updateCurrentStopDeepLink() {
+    if (!window.currentStopId) return;
+    Router.updateStop(
+        window.currentStopId,
+        !!filterManager?.state?.active,
+        Array.from(filterManager?.state?.targetIds || []),
+        '',
+        getSelectedRouteFilterShortNamesForStop(window.currentStopId)
+    );
+}
+
 // --- Navigation History ---
 // Moved to history.js
 let isInFavoritesBackContext = false;
@@ -287,6 +434,9 @@ async function handleBack() {
     if (previous) {
         if (previous.type === 'stop') {
             const filterState = previous.data?._filterState;
+            const routeChipFilterIds = Array.isArray(previous.data?._routeChipFilterIds)
+                ? previous.data._routeChipFilterIds
+                : [];
             // Restore map view to stop
             // Restore persistence zoom if available
             if (previous.data.savedZoom) {
@@ -295,12 +445,17 @@ async function handleBack() {
             }
             if (filterState?.active && filterState.targetIds && filterState.targetIds.length > 0) {
                 await showStopInfo(previous.data, false, false, false); // no history, no flyTo, no URL yet
+                arrivals.setStopRouteFilterIds(routeChipFilterIds, previous.data.id);
                 await filterManager.toggleFilterMode(previous.data.id, null, null, { forceEnable: true, skipFlyTo: true });
                 filterManager.state.targetIds = new Set(filterState.targetIds);
                 await filterManager.refreshRouteFilter(previous.data.id, window.lastArrivals, window.lastRoutes);
                 fitFilterBounds(previous.data, filterState.targetIds);
             } else {
                 await showStopInfo(previous.data, false, true, true, { forceRoutesRefresh: true }); // ensure route chips render
+                arrivals.setStopRouteFilterIds(routeChipFilterIds, previous.data.id);
+                if (window.lastArrivals) {
+                    arrivals.renderArrivals(window.lastArrivals, previous.data.id);
+                }
             }
         } else if (previous.type === 'route') {
             showRouteOnMap(previous.data, false, { preserveBounds: true });
@@ -474,6 +629,10 @@ window.toggleFilterMode = () => {
 };
 window.applyFilter = (targetId) => filterManager.applyFilter(targetId, getActiveStopId(), window.lastArrivals, window.lastRoutes);
 window.clearFilter = (stopId = getActiveStopId(), options = {}) => filterManager.clearFilter(stopId, options);
+window.getSelectedStopRouteFilterIds = (stopId = getActiveStopId()) => arrivals.getSelectedStopRouteFilterIds(stopId);
+window.getSelectedStopRouteFilterShortNames = (stopId = getActiveStopId()) => getSelectedRouteFilterShortNamesForStop(stopId);
+window.resetStopRouteFilter = (stopId = getActiveStopId()) => arrivals.resetStopRouteFilter(stopId);
+window.updateCurrentStopDeepLink = () => updateCurrentStopDeepLink();
 
 import { RouteFilterColorManager } from './color-manager.js';
 
@@ -526,7 +685,8 @@ document.getElementById('back-route-info')?.addEventListener('click', handleBack
 
 // App Lifecycle: Pause all activity when backgrounded
 function pauseAppActivity() {
-    try { stopTracking(); } catch (e) { }
+    wasTrackingBeforePause = isTrackingActive();
+    trackingZoomBeforePause = wasTrackingBeforePause ? map.getZoom() : null;
     try { arrivalsController.pause(); } catch (e) { }
     try { arrivals.stopArrivalsCountdown(); } catch (e) { }
     try { metro.stopMetroTicker(); } catch (e) { }
@@ -540,6 +700,22 @@ function resumeAppActivity() {
     if (document.hidden) return;
     try { arrivals.startArrivalsCountdown(); } catch (e) { }
     try { arrivalsController.resume(); } catch (e) { }
+    if (wasTrackingBeforePause) {
+        try { refreshLocationMarker(map, { preserveCurrentZoom: true, suppressCameraUpdate: true }); } catch (e) { }
+        if (typeof trackingZoomBeforePause === 'number') {
+            setTimeout(() => {
+                if (!isTrackingActive()) return;
+                const currentZoom = map.getZoom();
+                if (Math.abs(currentZoom - trackingZoomBeforePause) > 0.05) {
+                    map.easeTo({
+                        zoom: trackingZoomBeforePause,
+                        duration: 250,
+                        easing: (t) => t
+                    });
+                }
+            }, 0);
+        }
+    }
     try {
         if (document.querySelector('.metro-countdown')) {
             metro.startMetroTicker();
@@ -558,7 +734,13 @@ document.addEventListener('visibilitychange', () => {
     else resumeAppActivity();
 });
 window.addEventListener('pagehide', pauseAppActivity);
-window.addEventListener('pageshow', resumeAppActivity);
+window.addEventListener('pageshow', (event) => {
+    if (!hasSkippedInitialPageShow && !event.persisted) {
+        hasSkippedInitialPageShow = true;
+        return;
+    }
+    resumeAppActivity();
+});
 
 // --- Search History ---
 
@@ -568,6 +750,7 @@ window.addEventListener('pageshow', resumeAppActivity);
 let isSearchInitialized = false;
 let areImagesLoaded = false;
 let isDeepLinkHandled = false;
+let isLanguageRefreshInFlight = false;
 
 async function initializeMapData(stopsData, routesData) {
     if (!stopsData || !routesData) return;
@@ -669,6 +852,49 @@ async function initializeMapData(stopsData, routesData) {
 
     // console.log('[Main] Initialization Complete');
 } // End of initializeMapData
+
+async function refreshLanguageData() {
+    if (isLanguageRefreshInFlight) return;
+    isLanguageRefreshInFlight = true;
+
+    try {
+        applyStaticText();
+        syncFavoriteButtonState();
+
+        const stopPanelVisible = !document.getElementById('info-panel')?.classList.contains('hidden');
+        const routePanelVisible = !document.getElementById('route-info')?.classList.contains('hidden');
+        const activeStopId = window.currentStopId ? String(window.currentStopId) : null;
+        const activeRouteId = window.currentRoute?.id ? String(window.currentRoute.id) : null;
+        const activeRouteShortName = window.currentRoute?.shortName ? String(window.currentRoute.shortName) : null;
+
+        const [stops, routes] = await Promise.all([
+            api.fetchStops({ strategy: 'network-only' }),
+            api.fetchRoutes({ strategy: 'network-only' })
+        ]);
+
+        await initializeMapData(stops, routes);
+        onRoutesLoaded(routes);
+
+        if (routePanelVisible && (activeRouteId || activeRouteShortName)) {
+            const nextRoute = routes.find((route) =>
+                (activeRouteId && String(route.id) === activeRouteId) ||
+                (activeRouteShortName && String(route.shortName) === activeRouteShortName)
+            );
+            if (nextRoute) {
+                await showRouteOnMap(nextRoute, false, { preserveBounds: true, suppressPanel: false, fitToRoute: false });
+            }
+        } else if (stopPanelVisible && activeStopId) {
+            const nextStop = stops.find((stop) => String(stop.id) === activeStopId);
+            if (nextStop) {
+                await showStopInfo(nextStop, false, false, false, { forceRoutesRefresh: true });
+            }
+        }
+    } catch (error) {
+        console.error('[Language] Failed to refresh localized data', error);
+    } finally {
+        isLanguageRefreshInFlight = false;
+    }
+}
 
 
 
@@ -1172,7 +1398,7 @@ async function loadMinibusSegments() {
                         const iconEl = filterBtn.querySelector('.filter-icon');
                         const textEl = filterBtn.querySelector('.filter-text');
                         if (iconEl) iconEl.src = iconFilterOutline;
-                        if (textEl) textEl.textContent = 'Filter routes';
+                        if (textEl) textEl.textContent = t('filterRoutes');
                     } else {
                         filterBtn.classList.add('hidden');
                     }
@@ -1236,7 +1462,7 @@ async function loadMinibusSegments() {
                     if (entries.length === 0) {
                         const empty = document.createElement('div');
                         empty.className = 'empty';
-                        empty.textContent = 'No routes for selected destination';
+                        empty.textContent = t('noRoutesForSelectedDestination');
                         listEl.appendChild(empty);
                         return;
                     }
@@ -1251,7 +1477,7 @@ async function loadMinibusSegments() {
 
                     const realRoute = resolveRealRouteFromEntry(r);
                     let color = 'var(--primary)';
-                    let headingText = r.to || 'Destination';
+                    let headingText = r.to || t('destination');
                     let targetHeadsign = r.to || '';
                     if (realRoute) {
                         color = getRouteDisplayColor(realRoute);
@@ -1264,8 +1490,8 @@ async function loadMinibusSegments() {
                                  <div class="destination" title="${headingText}">${headingText}</div>
                              </div>
                              <div class="arrival-card-bottom">
-                                 <div class="schedule-times">From: ${r.from || 'Previous stop'} • <span class="segment-time-from">—</span></div>
-                                 <div class="schedule-times">To: ${r.to || 'Next stop'} • <span class="segment-time-to">—</span></div>
+                                 <div class="schedule-times">${t('fromStopTime', r.from || t('previousStop'), '—')}</div>
+                                 <div class="schedule-times">${t('toStopTime', r.to || t('nextStop'), '—')}</div>
                              </div>
                          </div>
                          <div class="arrival-card-right">
@@ -1600,6 +1826,9 @@ function fitFilterBounds(originStop, targetIds) {
 
 async function handleDeepLinks() {
     const state = Router.parse();
+    if (state.type === 'special') {
+        return openSheetForCurrentPath();
+    }
     if (state.type === 'segment' && Array.isArray(state.segmentIds) && state.segmentIds.length > 0) {
         const tryOpen = () => {
             if (typeof window.openSegmentCardForIds === 'function') {
@@ -1618,14 +1847,20 @@ async function handleDeepLinks() {
         const rawStopId = state.stopId;
         // Router might force '1:' prefix for nested routes, but internal IDs might be '3955'
         const cleanId = String(rawStopId).replace(/^1:/, '');
+        const prefixedStopId = rawStopId.includes(':') ? rawStopId : `1:${cleanId}`;
 
         // Check Redirects for both forms
-        const normStopId = redirectMap.get(rawStopId) || redirectMap.get(cleanId) || rawStopId;
+        const normStopId =
+            redirectMap.get(rawStopId) ||
+            redirectMap.get(cleanId) ||
+            redirectMap.get(prefixedStopId) ||
+            rawStopId;
 
-        // Try finding stop with normalized ID, raw ID, or clean ID
-        // This ensures we catch '1:3955' -> '3955' mismatches
+        // Try stripped and prefixed candidates so manual/virtual stops like
+        // GONDOLA_MANUAL_4 still resolve from public URLs such as /stopGONDOLA_MANUAL_4.
         const stop = allStops.find(s =>
             String(s.id) === String(normStopId) ||
+            String(s.id) === String(prefixedStopId) ||
             String(s.id) === String(cleanId) ||
             String(s.id) === String(rawStopId)
         );
@@ -1636,12 +1871,15 @@ async function handleDeepLinks() {
             if (filterManager && filterManager.state.active && String(filterManager.state.originId) !== String(normStopId)) {
                 filterManager.clearFilter(filterManager.state.originId, { restoreStop: false });
             }
+            const routeChipFilterIds = resolveRouteFilterIdsForStop(state.routeFilterShortNames || [], stop.id);
+
             // Check for Filtered State
             if (state.filterActive && state.targetIds && state.targetIds.length > 0) {
                 // console.log('[DeepLink] Applying Filter:', state.targetIds);
 
                 // 2. Show Stop (Suppress URL update, NO FlyTo to avoid conflict with Filter flyTo)
                 await showStopInfo(stop, false, false, false);
+                arrivals.setStopRouteFilterIds(routeChipFilterIds, stop.id);
 
                 // 3. Apply Filter Logic
                 // We need to trigger the filter mode fully
@@ -1679,6 +1917,12 @@ async function handleDeepLinks() {
 
                 // 5. Fit map to show origin and all destination stops
                 fitFilterBounds(stop, filterManager.state.targetIds);
+            } else if (routeChipFilterIds.length > 0) {
+                await showStopInfo(stop, true, !state.shortName, false, { suppressPanel: !!state.shortName });
+                arrivals.setStopRouteFilterIds(routeChipFilterIds, stop.id);
+                if (window.lastArrivals) {
+                    arrivals.renderArrivals(window.lastArrivals, stop.id);
+                }
             } else {
                 // Standard Stop View (or nested route - suppress panel if route follows)
                 // addToStack=true: Ensure Stop is in internal history so "Back" works
@@ -1856,18 +2100,30 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                 active: true,
                 originId: filterManager.state.originId,
                 targetIds: Array.from(filterManager.state.targetIds || [])
-            }
-        } : stop;
+            },
+            _routeChipFilterIds: Array.from(arrivals.getSelectedStopRouteFilterIds(stop.id))
+        } : {
+            ...stop,
+            _routeChipFilterIds: Array.from(arrivals.getSelectedStopRouteFilterIds(stop.id))
+        };
         addToHistory('stop', historyStop);
     }
 
     // Sync URL (Router)
     if (updateURL) {
-        Router.updateStop(stop.id, filterManager.state.active, Array.from(filterManager.state.targetIds));
+        Router.updateStop(
+            stop.id,
+            filterManager.state.active,
+            Array.from(filterManager.state.targetIds),
+            '',
+            getSelectedRouteFilterShortNamesForStop(stop.id)
+        );
     }
 
     // Explicitly clean up any route layers when showing a stop
-    if (busUpdateInterval) clearInterval(busUpdateInterval);
+    resetLiveBusSession();
+    currentRoute = null;
+    window.currentRoute = null;
 
     // Robust Layer Cleanup
     const style = map.getStyle();
@@ -2015,6 +2271,13 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     const panel = document.getElementById('info-panel');
     const nameEl = document.getElementById('stop-name');
     const listEl = document.getElementById('arrivals-list');
+    const isDifferentStop = String(prevStopId) !== String(stop.id);
+
+    if (isDifferentStop && listEl) {
+        listEl.innerHTML = '';
+        listEl.scrollTop = 0;
+        window._lastRenderedStopId = null;
+    }
 
     setSheetState(document.getElementById('route-info'), 'hidden');
     nameEl.textContent = stop.name || 'Unknown Stop';
@@ -2067,6 +2330,8 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         }
         if (filterBtn) {
             filterBtn.classList.remove('hidden');
+            const textEl = filterBtn.querySelector('.filter-text');
+            if (textEl) textEl.textContent = t('filterByDestination');
         }
     }
 
@@ -2093,7 +2358,11 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
 
     // --- UNIFIED ARRIVALS LOADING ---
     // Route chips (static, instant)
-    const isDifferentStop = String(prevStopId) !== String(stop.id);
+    if (isDifferentStop) {
+        arrivals.resetStopRouteFilter(stop.id);
+        window.lastRoutes = [];
+        window.lastArrivals = [];
+    }
     if (isDifferentStop || forceRoutesRefresh) {
         const equivalentIds = getEquivalentStops(stop.id, false);
         const staticIdsSet = new Set();
@@ -2110,12 +2379,14 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
             });
         });
         const staticIds = Array.from(staticIdsSet);
-        if (staticIds.length > 0) {
-            const optRoutes = staticIds
-                .map(rid => allRoutes.find(route => route.id === rid))
-                .filter(Boolean);
-            window.lastRoutes = optRoutes;
-        }
+        const optRoutes = staticIds
+            .map(rid => allRoutes.find(route => route.id === rid))
+            .filter(Boolean);
+        window.lastRoutes = optRoutes;
+    }
+
+    if (isDifferentStop) {
+        arrivals.renderArrivals([], stop.id);
     }
 
     // Arrivals loading via controller (handles scheduled → live with loading bar)
@@ -2305,6 +2576,8 @@ function isRoutePanelVisible() {
 }
 
 function clearFilterLiveBuses() {
+    filterBusUpdateToken += 1;
+    filterBusUpdateQueued = false;
     if (filterBusUpdateInterval) {
         clearInterval(filterBusUpdateInterval);
         filterBusUpdateInterval = null;
@@ -2323,114 +2596,129 @@ function getFilterRouteColor(routeId) {
 }
 
 async function updateFilteredLiveBuses(routeIds, patternMap) {
-    if (!filterManager?.state?.active || !filterManager.state.targetIds || filterManager.state.targetIds.size === 0) {
-        clearFilterLiveBuses();
+    if (filterBusUpdateInFlight) {
+        filterBusUpdateQueued = true;
         return;
     }
-    if (window.currentRoute && isRoutePanelVisible()) return;
+    filterBusUpdateInFlight = true;
+    try {
+        if (!filterManager?.state?.active || !filterManager.state.targetIds || filterManager.state.targetIds.size === 0) {
+            clearFilterLiveBuses();
+            return;
+        }
+        if (window.currentRoute && isRoutePanelVisible()) return;
 
-    if (!Array.isArray(routeIds) || routeIds.length === 0) {
-        clearLiveBuses();
-        return;
-    }
-    if (!(patternMap instanceof Map)) {
-        clearLiveBuses();
-        return;
-    }
+        if (!Array.isArray(routeIds) || routeIds.length === 0) {
+            clearLiveBuses();
+            return;
+        }
+        if (!(patternMap instanceof Map)) {
+            clearLiveBuses();
+            return;
+        }
 
-    const requestToken = ++filterBusUpdateToken;
-    const features = [];
-    const tasks = [];
-    const uniqueByVehicle = new Map();
-    let hadError = false;
+        const requestToken = ++filterBusUpdateToken;
+        const features = [];
+        const tasks = [];
+        const uniqueByVehicle = new Map();
+        let hadError = false;
 
-    const nowTs = Date.now();
-    const MAX_ROUTES = 8;
-    let scheduled = 0;
-    routeIds.forEach(routeId => {
-        if (scheduled >= MAX_ROUTES) return;
-        const rid = String(routeId);
-        const throttle = filterBusThrottle.get(rid) || { lastTs: 0, failCount: 0, cooldownUntil: 0 };
-        if (throttle.cooldownUntil && nowTs < throttle.cooldownUntil) return;
-        if (nowTs - throttle.lastTs < 2000) return;
-        throttle.lastTs = nowTs;
-        filterBusThrottle.set(rid, throttle);
-        const suffixesSet = patternMap.get(rid);
-        if (!suffixesSet || suffixesSet.size === 0) return;
-        const suffixes = Array.from(suffixesSet);
-        const color = getFilterRouteColor(rid);
+        const nowTs = Date.now();
+        const MAX_ROUTES = 8;
+        let scheduled = 0;
+        routeIds.forEach(routeId => {
+            if (scheduled >= MAX_ROUTES) return;
+            const rid = String(routeId);
+            const throttle = filterBusThrottle.get(rid) || { lastTs: 0, failCount: 0, cooldownUntil: 0 };
+            if (throttle.cooldownUntil && nowTs < throttle.cooldownUntil) return;
+            if (nowTs - throttle.lastTs < 2000) return;
+            throttle.lastTs = nowTs;
+            filterBusThrottle.set(rid, throttle);
+            const suffixesSet = patternMap.get(rid);
+            if (!suffixesSet || suffixesSet.size === 0) return;
+            const suffixes = Array.from(suffixesSet);
+            const color = getFilterRouteColor(rid);
 
-        tasks.push(async () => {
-            try {
-                const data = await api.fetchBusPositionsV3Multi(rid, suffixes);
-                const throttleState = filterBusThrottle.get(rid) || { lastTs: nowTs, failCount: 0, cooldownUntil: 0 };
-                throttleState.failCount = 0;
-                throttleState.cooldownUntil = 0;
-                filterBusThrottle.set(rid, throttleState);
-                suffixes.forEach((suffix) => {
-                    const buses = data && data[suffix] ? data[suffix] : [];
-                    const lineInfo = getPatternPolyline(rid, suffix);
-                    const lineKey = lineInfo ? `${rid}:${suffix}` : null;
-                    if (lineInfo && lineKey) {
-                        registerLiveBusLine(lineKey, lineInfo.coords);
-                    } else if (lineInfo && lineInfo.pattern && !lineInfo.pattern._fetchingPolyline) {
-                        // Attempt to fill cache-only geometry for smoother motion next tick
-                        RouteGeometry.fetchAndCacheGeometry(lineInfo.route, lineInfo.pattern, { strategy: 'cache-only' });
-                    }
-                    buses.forEach(bus => {
-                        if (!bus || !Number.isFinite(bus.lon) || !Number.isFinite(bus.lat)) return;
-                        const key = bus.vehicleId ? String(bus.vehicleId) : `${rid}:${suffix}:${bus.lon}:${bus.lat}`;
-                        if (uniqueByVehicle.has(key)) return;
-                        uniqueByVehicle.set(key, true);
-                        const fraction = (lineInfo && lineInfo.coords)
-                            ? nearestFractionOnLine(lineInfo.coords, { lng: bus.lon, lat: bus.lat })
-                            : null;
-                        features.push({
-                            type: 'Feature',
-                            geometry: { type: 'Point', coordinates: [bus.lon, bus.lat] },
-                            properties: {
-                                heading: bus.heading,
-                                id: bus.vehicleId || key,
-                                color,
-                                _ts: nowTs,
-                                _lineKey: lineKey,
-                                _lineFrac: Number.isFinite(fraction) ? fraction : null
-                            }
+            tasks.push(async () => {
+                try {
+                    const data = await api.fetchBusPositionsV3Multi(rid, suffixes);
+                    const throttleState = filterBusThrottle.get(rid) || { lastTs: nowTs, failCount: 0, cooldownUntil: 0 };
+                    throttleState.failCount = 0;
+                    throttleState.cooldownUntil = 0;
+                    filterBusThrottle.set(rid, throttleState);
+                    suffixes.forEach((suffix) => {
+                        const buses = data && data[suffix] ? data[suffix] : [];
+                        const lineInfo = getPatternPolyline(rid, suffix);
+                        const lineKey = lineInfo ? `${rid}:${suffix}` : null;
+                        if (lineInfo && lineKey) {
+                            registerLiveBusLine(lineKey, lineInfo.coords);
+                        } else if (lineInfo && lineInfo.pattern && !lineInfo.pattern._fetchingPolyline) {
+                            RouteGeometry.fetchAndCacheGeometry(lineInfo.route, lineInfo.pattern, { strategy: 'cache-only' });
+                        }
+                        buses.forEach(bus => {
+                            if (!bus || !Number.isFinite(bus.lon) || !Number.isFinite(bus.lat)) return;
+                            const key = bus.vehicleId ? String(bus.vehicleId) : `${rid}:${suffix}:${bus.lon}:${bus.lat}`;
+                            if (uniqueByVehicle.has(key)) return;
+                            uniqueByVehicle.set(key, true);
+                            const fraction = (lineInfo && lineInfo.coords)
+                                ? nearestFractionOnLine(lineInfo.coords, { lng: bus.lon, lat: bus.lat })
+                                : null;
+                            features.push({
+                                type: 'Feature',
+                                geometry: { type: 'Point', coordinates: [bus.lon, bus.lat] },
+                                properties: {
+                                    heading: bus.heading,
+                                    id: bus.vehicleId || key,
+                                    color,
+                                    _ts: nowTs,
+                                    _lineKey: lineKey,
+                                    _lineFrac: Number.isFinite(fraction) ? fraction : null
+                                }
+                            });
                         });
                     });
-                });
-            } catch {
-                hadError = true;
-                const throttleState = filterBusThrottle.get(rid) || { lastTs: nowTs, failCount: 0, cooldownUntil: 0 };
-                throttleState.failCount += 1;
-                if (throttleState.failCount >= 2) {
-                    throttleState.cooldownUntil = nowTs + Math.min(60000, 5000 * throttleState.failCount);
+                } catch {
+                    hadError = true;
+                    const throttleState = filterBusThrottle.get(rid) || { lastTs: nowTs, failCount: 0, cooldownUntil: 0 };
+                    throttleState.failCount += 1;
+                    if (throttleState.failCount >= 2) {
+                        throttleState.cooldownUntil = nowTs + Math.min(60000, 5000 * throttleState.failCount);
+                    }
+                    filterBusThrottle.set(rid, throttleState);
                 }
-                filterBusThrottle.set(rid, throttleState);
-            }
+            });
+            scheduled += 1;
         });
-        scheduled += 1;
-    });
 
-    if (tasks.length === 0) {
-        clearLiveBuses();
-        return;
-    }
+        if (tasks.length === 0) {
+            clearLiveBuses();
+            return;
+        }
 
-    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-    for (let i = 0; i < tasks.length; i += 1) {
-        const now = Date.now();
-        const wait = Math.max(0, liveBusRequestGateTs - now);
-        if (wait > 0) await sleep(wait);
-        liveBusRequestGateTs = Date.now() + LIVE_BUS_REQUEST_INTERVAL_MS;
-        await tasks[i]();
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        for (let i = 0; i < tasks.length; i += 1) {
+            const now = Date.now();
+            const wait = Math.max(0, liveBusRequestGateTs - now);
+            if (wait > 0) await sleep(wait);
+            liveBusRequestGateTs = Date.now() + LIVE_BUS_REQUEST_INTERVAL_MS;
+            await tasks[i]();
+        }
+        if (requestToken !== filterBusUpdateToken) return;
+        if (features.length === 0 && hadError) {
+            holdLiveBuses();
+            return;
+        }
+        renderLiveBuses(features);
+    } finally {
+        filterBusUpdateInFlight = false;
+        if (filterBusUpdateQueued) {
+            filterBusUpdateQueued = false;
+            updateFilteredLiveBuses(
+                filterManager?.state?.filteredRoutes,
+                filterManager?.state?.filteredRoutePatterns
+            );
+        }
     }
-    if (requestToken !== filterBusUpdateToken) return;
-    if (features.length === 0 && hadError) {
-        holdLiveBuses();
-        return;
-    }
-    renderLiveBuses(features);
 }
 
 function startFilterLiveBuses(routeIds, patternMap) {
@@ -2483,7 +2771,7 @@ function getPatternHeadsign(route, directionIndex, defaultHeadsign) {
     if (overrides && overrides.destinations) {
         const destObj = overrides.destinations[directionIndex];
         if (destObj && destObj.headsign) {
-            const locale = new URLSearchParams(window.location.search).get('locale') || 'en';
+            const locale = getCurrentStopNamesLanguage();
             const res = destObj.headsign[locale] || destObj.headsign.en || destObj.headsign.ka || defaultHeadsign;
             if (res && res !== defaultHeadsign) {
                 // console.log(`[HeadsignDebug] Applied override: "${defaultHeadsign}" -> "${res}"`);
@@ -2568,6 +2856,18 @@ function renderAllRoutes(routesInput, arrivalsInput) {
     let routesForStop = Array.from(uniqueRoutesMap.values());
 
     if (routesForStop.length > 0) {
+        const validRouteIdsForStop = routesForStop
+            .map(route => route.id || (resolveRouteByShortName(route.shortName, {
+                preferredSource: route._source,
+                preferredId: route.id,
+                preferredStopId: window.currentStopId,
+                preferBus: true
+            }) || {}).id)
+            .filter(Boolean)
+            .map(id => String(id));
+        const selectedRouteIds = arrivals.pruneStopRouteFilterIds(validRouteIdsForStop, window.currentStopId);
+        const isStopRouteFilterActive = selectedRouteIds.size > 0;
+        const resetIconSrc = document.querySelector('#edit-restore-en img')?.getAttribute('src') || '/arrow.counterclockwise.circle.fill.svg';
         // Advanced Sorting:
         // 1. If Filter Active: Matches First
         // 2. Numeric ShortName
@@ -2622,17 +2922,27 @@ function renderAllRoutes(routesInput, arrivalsInput) {
             tile.style.backgroundColor = `color-mix(in srgb, ${displayColor}, transparent 88%)`;
             tile.style.color = displayColor;
             tile.style.fontWeight = '700';
+            const realId = route.id || (resolveRouteByShortName(route.shortName, {
+                preferredSource: route._source,
+                preferredId: route.id,
+                preferredStopId: window.currentStopId,
+                preferBus: true
+            }) || {}).id;
+            const isSelectedByRouteFilter = !!(realId && selectedRouteIds.has(String(realId)));
+            if (isSelectedByRouteFilter) {
+                tile.classList.add('selected');
+            } else if (isStopRouteFilterActive) {
+                tile.classList.add('route-filter-dimmed');
+            }
 
             // Apply Dimming (don't hide)
             if (filterManager.state.active) {
-                const realId = route.id || (resolveRouteByShortName(route.shortName, {
-                    preferredSource: route._source,
-                    preferredId: route.id,
-                    preferredStopId: window.currentStopId,
-                    preferBus: true
-                }) || {}).id;
                 if (!realId || !filterManager.state.filteredRoutes.includes(realId)) {
-                    tile.classList.add('dimmed');
+                    if (isStopRouteFilterActive) {
+                        tile.classList.add('route-filter-extra-dimmed');
+                    } else {
+                        tile.classList.add('dimmed');
+                    }
                 } else {
                     // Apply Filter Color
                     const filterColor = RouteFilterColorManager.getColorForRoute(realId);
@@ -2640,24 +2950,40 @@ function renderAllRoutes(routesInput, arrivalsInput) {
                         tile.style.backgroundColor = `${filterColor} 20`; // Hex + opacity
                         tile.style.color = filterColor;
                     }
+                    if (isStopRouteFilterActive && !isSelectedByRouteFilter) {
+                        tile.classList.add('route-filter-dimmed');
+                    }
                 }
             }
 
             tile.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (route.id) {
-                    showRouteOnMap(route, true, { fromStopId: window.currentStopId });
-                } else {
-                    const real = resolveRouteByShortName(route.shortName, {
-                        preferredSource: route._source,
-                        preferredStopId: window.currentStopId,
-                        preferBus: true
-                    });
-                    if (real) showRouteOnMap(real);
-                }
+                if (!realId) return;
+                arrivals.toggleStopRouteFilter(realId, window.currentStopId);
+                updateCurrentStopDeepLink();
+                arrivals.renderArrivals(window.lastArrivals || [], window.currentStopId);
             });
             tilesContainer.appendChild(tile);
         });
+
+        if (selectedRouteIds.size > 0) {
+            const resetSlot = document.createElement('div');
+            resetSlot.className = 'route-filter-reset-slot';
+
+            const resetTile = document.createElement('button');
+            resetTile.className = 'route-filter-reset-btn';
+            resetTile.setAttribute('type', 'button');
+            resetTile.setAttribute('aria-label', 'Reset route filter');
+            resetTile.innerHTML = `<img src="${resetIconSrc}" alt="Reset route filter">`;
+            resetTile.addEventListener('click', (e) => {
+                e.stopPropagation();
+                arrivals.resetStopRouteFilter(window.currentStopId);
+                updateCurrentStopDeepLink();
+                arrivals.renderArrivals(window.lastArrivals || [], window.currentStopId);
+            });
+            resetSlot.appendChild(resetTile);
+            tilesContainer.appendChild(resetSlot);
+        }
 
         // Add invisible spacers to fill the last row (prevents last row chips from stretching)
         // We add enough spacers to fill a full row (max ~10 items at 42px min-width in 450px container)
@@ -2729,9 +3055,10 @@ function resolveRouteByShortName(shortName, options = {}) {
     const preferredId = options.preferredId ? String(options.preferredId) : null;
     const preferBus = options.preferBus !== false;
     const preferredStopId = options.preferredStopId ? String(options.preferredStopId) : null;
-    const preferredStopNorm = preferredStopId
-        ? preferredStopId.replace(/^rustavi:/i, '').replace(/^[rR]/, '').replace(/^\d+:/, '')
-        : '';
+    const preferredStopIds = preferredStopId ? getEquivalentStops(preferredStopId, false).map(id => String(id)) : [];
+    const preferredStopNorms = new Set(
+        preferredStopIds.map(id => id.replace(/^rustavi:/i, '').replace(/^[rR]/, '').replace(/^\d+:/, ''))
+    );
 
     let best = null;
     let bestScore = -Infinity;
@@ -2748,11 +3075,11 @@ function resolveRouteByShortName(shortName, options = {}) {
         if (preferBus && isRailLikeMode(mode)) score -= 35;
         if (!preferBus && isRailLikeMode(mode)) score += 15;
 
-        if (preferredStopNorm && Array.isArray(c.stops) && c.stops.length > 0) {
+        if (preferredStopNorms.size > 0 && Array.isArray(c.stops) && c.stops.length > 0) {
             const hasStop = c.stops.some(sid => {
                 const sidStr = String(sid || '');
                 const sidNorm = sidStr.replace(/^rustavi:/i, '').replace(/^[rR]/, '').replace(/^\d+:/, '');
-                return sidNorm === preferredStopNorm;
+                return preferredStopNorms.has(sidNorm);
             });
             if (hasStop) score += 55;
         }
@@ -3088,9 +3415,7 @@ async function refreshStopsLayer(useLocalConfig = false) {
 
             // Special handling for 'name' override (which is {en, ka})
             if (override.name) {
-                // Get active locale
-                const urlParams = new URLSearchParams(window.location.search);
-                const locale = urlParams.get('locale') || 'en';
+                const locale = getCurrentStopNamesLanguage();
 
                 // If we have an override for this locale, use it.
                 // Otherwise, leave the original name (which is presumably correct for the *other* locale, or fallback).
@@ -3184,9 +3509,7 @@ async function updateRouteView(route, options = {}) {
     syncFavoriteButtonState();
     try {
         const requestId = ++lastRouteUpdateId; // Start new request
-
-        // Clear previous interval
-        if (busUpdateInterval) clearInterval(busUpdateInterval);
+        const liveBusSessionId = resetLiveBusSession();
 
         // Close route edit panel if open (to prevent showing stale data)
         const routeEditBtn = document.getElementById('btn-edit-route');
@@ -3457,8 +3780,8 @@ async function updateRouteView(route, options = {}) {
                     routeBodyEl.innerHTML = `
                         <div class="empty warning">
                             <div class="icon">⚠️</div>
-                            <div>The selected stop is in the other direction.</div>
-                            <div class="sub">Switch direction to view schedule.</div>
+                            <div>${t('stopInOtherDirection')}</div>
+                            <div class="sub">${t('switchDirectionForSchedule')}</div>
                         </div>`;
                 } else {
 
@@ -3467,7 +3790,7 @@ async function updateRouteView(route, options = {}) {
                         arrivals.getFullScheduleGrouped(route.shortName, options.fromStopId, route.id, currentPattern.patternSuffix, { strategy, scheduleIndex }).then(result => {
                             if (requestId !== lastRouteUpdateId) return;
                             if (!result || !result.grouped || Object.keys(result.grouped).length === 0) {
-                                routeBodyEl.innerHTML = '<div class="empty">No schedule data available</div>';
+                                routeBodyEl.innerHTML = `<div class="empty">${t('noScheduleData')}</div>`;
                                 return;
                             }
 
@@ -3518,7 +3841,7 @@ async function updateRouteView(route, options = {}) {
                                 const stop = allStops.find(s => String(s.id) === String(options.fromStopId));
                                 if (stop) {
                                     const cleanName = stop.name.replace(/[12]$/, '').trim();
-                                    fromLabelHtml = `<div class="schedule-from-label">From ${cleanName}:</div>`;
+                                    fromLabelHtml = `<div class="schedule-from-label">${t('fromLabel', cleanName)}</div>`;
                                 }
                             }
 
@@ -3536,7 +3859,7 @@ async function updateRouteView(route, options = {}) {
                         }).catch(err => {
                             if (!isOptimistic) {
                                 console.warn('[Schedule] Failed to load full schedule', err);
-                                routeBodyEl.innerHTML = '<div class="empty">Failed to load schedule</div>';
+                                routeBodyEl.innerHTML = `<div class="empty">${t('failedToLoadSchedule')}</div>`;
                             }
                         });
                     };
@@ -3672,10 +3995,15 @@ async function updateRouteView(route, options = {}) {
             // 4. Start Live Bus Tracking (Only in Phase 2)
             if (!isOptimistic && route.id) {
                 const liveColor = getRouteDisplayColor(route);
-                updateLiveBuses(route.id, patternSuffix, liveColor);
+                const canRenderLiveBuses = () =>
+                    liveBusSessionId === activeLiveBusSession &&
+                    !!window.currentRoute &&
+                    String(window.currentRoute.id) === String(route.id) &&
+                    isRoutePanelVisible();
+                updateLiveBuses(route.id, patternSuffix, liveColor, { shouldRender: canRenderLiveBuses });
                 busUpdateInterval = setInterval(() => {
                     if (document.hidden) return;
-                    updateLiveBuses(route.id, patternSuffix, liveColor);
+                    updateLiveBuses(route.id, patternSuffix, liveColor, { shouldRender: canRenderLiveBuses });
                 }, 5000);
             }
 
@@ -3802,8 +4130,9 @@ if (filterBtn) {
     }, 1000);
 }
 
-// Prevent Drag/Map click propagation on Close Buttons
-['mousedown', 'touchstart', 'click'].forEach(evt => {
+// Prevent map/panel clicks from leaking through button activation.
+// Avoid intercepting touchstart so iOS can keep its native double-tap-and-drag zoom gesture.
+['mousedown', 'click'].forEach(evt => {
     document.getElementById('close-panel').addEventListener(evt, e => e.stopPropagation(), { passive: false });
     document.getElementById('close-route-info').addEventListener(evt, e => e.stopPropagation(), { passive: false });
     ['stop-more-btn', 'route-more-btn', 'copy-link-btn', 'copy-route-link-btn', 'btn-edit-stop', 'btn-edit-route', 'favorite-stop-btn', 'favorite-route-btn'].forEach((id) => {
@@ -3834,7 +4163,7 @@ const initMoreMenu = (triggerId, menuId) => {
                 let text = (btn.textContent || '').trim();
                 let symbol = null;
                 if (btn.id === 'copy-link-btn' || btn.id === 'copy-route-link-btn') {
-                    text = 'Copy link';
+                    text = t('copyLink');
                     symbol = 'link';
                 }
                 if (btn.id === 'favorite-stop-btn' || btn.id === 'favorite-route-btn') {
@@ -3866,7 +4195,7 @@ const initMoreMenu = (triggerId, menuId) => {
 
         const actions = [
             ...getVisibleActions(),
-            { id: 'native-share-current-url', title: 'Share', style: 'default', symbol: 'square.and.arrow.up' }
+            { id: 'native-share-current-url', title: t('share'), style: 'default', symbol: 'square.and.arrow.up' }
         ];
         if (!actions.length) return true;
 
@@ -3991,9 +4320,7 @@ function resolveStopNameById(stopId) {
 function formatFilteredSubtitle(targetIds) {
     if (!Array.isArray(targetIds) || targetIds.length === 0) return '';
     const names = targetIds.slice(0, 3).map(resolveStopNameById);
-    if (names.length === 1) return `Filtered by ${names[0]}`;
-    if (names.length === 2) return `Filtered by ${names[0]} and ${names[1]}`;
-    return `Filtered by ${names[0]}, ${names[1]}, and ${names[2]}`;
+    return formatFavoriteFilterSubtitle(names);
 }
 
 function getCurrentStopFavoriteKey() {
@@ -4041,12 +4368,12 @@ function syncFavoriteButtonState() {
     const routeFav = !!(routeKey && favoritesManager.has(routeKey));
 
     if (stopBtn) {
-        stopBtn.textContent = stopFav ? 'Unfavorite' : 'Favorite';
+        stopBtn.textContent = stopFav ? t('unfavorite') : t('favorite');
         stopBtn.title = stopBtn.textContent;
         stopBtn.classList.toggle('is-unfavorite', stopFav);
     }
     if (routeBtn) {
-        routeBtn.textContent = routeFav ? 'Unfavorite' : 'Favorite';
+        routeBtn.textContent = routeFav ? t('unfavorite') : t('favorite');
         routeBtn.title = routeBtn.textContent;
         routeBtn.classList.toggle('is-unfavorite', routeFav);
     }
@@ -4058,11 +4385,11 @@ function toggleCurrentFavorite(kind, nextValue = null) {
         if (!key) return false;
         const stop = allStops.find(s => String(s.id) === String(window.currentStopId));
         const stopNameFromUI = (document.getElementById('stop-name')?.textContent || '').trim();
-        const title = stop?.name || stopNameFromUI || `Stop ${String(window.currentStopId)}`;
+        const title = stop?.name || stopNameFromUI || t('stopFallback', String(window.currentStopId));
         const { targetIds } = parseStopFavoriteKey(key);
         const subtitle = targetIds.length > 0
             ? formatFilteredSubtitle(targetIds)
-            : (stop?.code ? `Code: ${stop.code}` : '');
+            : (stop?.code ? t('codeLabel', stop.code) : '');
         const desiredValue = nextValue === null ? !favoritesManager.has(key) : !!nextValue;
         if (shouldSkipDuplicateFavoriteMutation(key, desiredValue)) return true;
         favoritesManager.set(key, desiredValue, { title, subtitle });
@@ -4327,7 +4654,7 @@ function clearRoute() {
     // Reset Focus (Make everything opaque again)
     setMapFocus(false);
 
-    if (busUpdateInterval) clearInterval(busUpdateInterval);
+    resetLiveBusSession();
 
     // Clear all route layers
     ['route', 'route-stops', 'live-buses-bg', 'live-buses-circle', 'live-buses-arrow'].forEach(id => {
@@ -4939,14 +5266,17 @@ function updateConnectionLine(originId, targetIdsInput, isHover = false, hoverId
                 const min = travelMinutes.min;
                 const max = travelMinutes.max;
                 if (min !== null && max !== null) {
-                    travelLabel = (min === max) ? `${min} min` : `${min}\u2013${max} min`;
+                    travelLabel = (min === max)
+                        ? t('filteredPlaqueMinutes', String(min))
+                        : t('filteredPlaqueMinutesRange', String(min), String(max));
                 }
             }
+            const stopCountLabel = formatFilteredStopCount(stopCount);
             const label = (isSelected && travelLabel !== null && stopCount !== null)
-                ? `${stopCount} ${stopCount === 1 ? 'stop' : 'stops'}\n${travelLabel}`
+                ? `${stopCountLabel}\n${travelLabel}`
                 : null;
             const subLabel = (isSelected && travelLabel !== null && stopCount !== null)
-                ? `Without traffic`
+                ? t('filteredPlaqueWithoutTraffic')
                 : null;
 
             // Quality Indicator
@@ -5130,9 +5460,7 @@ function applyRouteOverrides() {
     // Let's assume we patch `longName` if a matching locale override exists.
     // AND we attach `_overrides` object for components that support dual-lang or dynamic reuse.
 
-    // Simple approach: Check URL locale or default 'en'
-    const urlParams = new URLSearchParams(window.location.search);
-    const locale = urlParams.get('locale') || 'en';
+    const locale = getCurrentStopNamesLanguage();
 
     let updateCount = 0;
 

@@ -3,55 +3,183 @@ import * as turf from '@turf/turf';
 import { getSegmentForStop, generateSegmentGeometry, generateConnectionGeometry, getConnectionKey, LINE_1_IDS, LINE_2_IDS } from './metro-utils.js';
 import { getIntervalDescription } from './intervals.js';
 import { simplifyNumber } from './settings.js';
+import { getCurrentStopNamesLanguage } from './i18n.ts';
 
 let metroTicker = null;
 let _cachedSegments = null;
+let _cachedMidpoints = null;
 let _cachedExits = null;
 let _isFetchingSchematic = false;
 let _lastMetroFeatures = null; // Store reference for exit annotation refreshes
 let _lastAllStops = null;
 let _lastExitsSignature = null;
 
-// Explicit mapping from station display names to segment IDs for exit/snapping lookup
-const STATION_TO_SEGMENT_ID = {
-    // Line 1 (Red) - Varketili to Akhmeteli Theatre (16 to 1)
-    'Varketili': 'metro_1_16',
-    'Samgori': 'metro_1_15',
-    'Isani': 'metro_1_14',
-    '300 Aragveli': 'metro_1_13',
-    'Avlabari': 'metro_1_12',
-    'Liberty Square': 'metro_1_11',
-    'Rustaveli': 'metro_1_10',
-    'Marjanishvili': 'metro_1_9',
-    'Station Square': 'metro_1_8', // Red line version
-    'Nadzaladevi': 'metro_1_7',
-    'Gotsiridze': 'metro_1_6',
-    'Didube': 'metro_1_5',
-    'Ghrmaghele': 'metro_1_4',
-    'Guramishvili': 'metro_1_3',
-    'Sarajishvili': 'metro_1_2',
-    'Akhmeteli Theatre': 'metro_1_1',
-    // Line 2 (Green) - Station Square 2 to State University (1 to 7)
-    'Station Square 2': 'metro_2_1', // Green line version (will be mapped by color)
-    'Tsereteli': 'metro_2_2',
-    'Technical University': 'metro_2_3',
-    'Medical University': 'metro_2_4',
-    'Delisi': 'metro_2_5',
-    'Vazha-Pshavela': 'metro_2_6',
-    'Vazha Pshavela': 'metro_2_6', // Alternative spelling
-    'State University': 'metro_2_7'
-};
+const RED_LINE_COLOR = '#ef4444';
+const GREEN_LINE_COLOR = '#22c55e';
 
-// Reverse mapping: segment ID -> station name (with cleaned names)
+const STATION_DEFINITIONS = [
+    { segmentId: 'metro_1_16', displayNameEn: 'Varketili', displayNameKa: 'ვარკეთილი', aliases: ['Varketili', 'მ/ს ვარკეთილი'] },
+    { segmentId: 'metro_1_15', displayNameEn: 'Samgori', displayNameKa: 'სამგორი', aliases: ['Samgori', 'მ/ს სამგორი'] },
+    { segmentId: 'metro_1_14', displayNameEn: 'Isani', displayNameKa: 'ისანი', aliases: ['Isani', 'მ/ს ისანი'] },
+    { segmentId: 'metro_1_13', displayNameEn: '300 Aragveli', displayNameKa: '300 არაგველი', aliases: ['300 Aragveli', 'მ/ს 300 არაგველი'] },
+    { segmentId: 'metro_1_12', displayNameEn: 'Avlabari', displayNameKa: 'ავლაბარი', aliases: ['Avlabari', 'მ/ს ავლაბარი'] },
+    { segmentId: 'metro_1_11', displayNameEn: 'Liberty Square', displayNameKa: 'თავისუფლების მოედანი', aliases: ['Liberty Square', 'მ/ს თავისუფლების მ-ნი', 'მ/ს თავისუფლების მოედანი'] },
+    { segmentId: 'metro_1_10', displayNameEn: 'Rustaveli', displayNameKa: 'რუსთაველი', aliases: ['Rustaveli', 'მ/ს რუსთაველი'] },
+    { segmentId: 'metro_1_9', displayNameEn: 'Marjanishvili', displayNameKa: 'მარჯანიშვილი', aliases: ['Marjanishvili', 'მ/ს მარჯანიშვილი'] },
+    { segmentId: 'metro_1_8', displayNameEn: 'Station Square', displayNameKa: 'სადგურის მოედანი', aliases: ['Station Square 1', 'მ/ს სადგურის მოედანი 1'] },
+    { segmentId: 'metro_1_7', displayNameEn: 'Nadzaladevi', displayNameKa: 'ნაძალადევი', aliases: ['Nadzaladevi', 'მ/ს ნაძალადევი'] },
+    { segmentId: 'metro_1_6', displayNameEn: 'Gotsiridze', displayNameKa: 'გოცირიძე', aliases: ['Gotsiridze', 'მ/ს გოცირიძე'] },
+    { segmentId: 'metro_1_5', displayNameEn: 'Didube', displayNameKa: 'დიდუბე', aliases: ['Didube', 'მ/ს დიდუბე'] },
+    { segmentId: 'metro_1_4', displayNameEn: 'Ghrmaghele', displayNameKa: 'ღრმაღელე', aliases: ['Ghrmaghele', 'Grmaghele', 'მ/ს ღრმაღელე'] },
+    { segmentId: 'metro_1_3', displayNameEn: 'Guramishvili', displayNameKa: 'გურამიშვილი', aliases: ['Guramishvili', 'მ/ს გურამიშვილი'] },
+    { segmentId: 'metro_1_2', displayNameEn: 'Sarajishvili', displayNameKa: 'სარაჯიშვილი', aliases: ['Sarajishvili', 'Sarajisvhili', 'Saradjishvili', 'მ/ს სარაჯიშვილი'] },
+    { segmentId: 'metro_1_1', displayNameEn: 'Akhmeteli Theatre', displayNameKa: 'ახმეტელის თეატრი', aliases: ['Akhmeteli Theatre', 'მ/ს ახმეტელის თეატრი'] },
+    { segmentId: 'metro_2_1', displayNameEn: 'Station Square', displayNameKa: 'სადგურის მოედანი', aliases: ['Station Square 2', 'მ/ს სადგურის მოედანი 2'] },
+    { segmentId: 'metro_2_2', displayNameEn: 'Tsereteli', displayNameKa: 'წერეთელი', aliases: ['Tsereteli', 'მ/ს წერეთელი'] },
+    { segmentId: 'metro_2_3', displayNameEn: 'Technical University', displayNameKa: 'ტექნიკური უნივერსიტეტი', aliases: ['Technical University', 'Technical Univercity', 'Technacal University', 'Techinacal University', 'მ/ს ტექნიკური უნივერსიტეტი'] },
+    { segmentId: 'metro_2_4', displayNameEn: 'Medical University', displayNameKa: 'სამედიცინო უნივერსიტეტი', aliases: ['Medical University', 'მ/ს სამედიცინო უნივერსიტეტი'] },
+    { segmentId: 'metro_2_5', displayNameEn: 'Delisi', displayNameKa: 'დელისი', aliases: ['Delisi', 'მ/ს დელისი'] },
+    { segmentId: 'metro_2_6', displayNameEn: 'Vazha-Pshavela', displayNameKa: 'ვაჟა-ფშაველა', aliases: ['Vazha-Pshavela', 'Vazha Pshavela', 'მ/ს ვაჟა-ფშაველა'] },
+    { segmentId: 'metro_2_7', displayNameEn: 'State University', displayNameKa: 'სახელმწიფო უნივერსიტეტი', aliases: ['State University', 'მ/ს სახელმწიფო უნივერსიტეტი'] }
+];
+
+const STATION_TO_SEGMENT_ID = {};
 const SEGMENT_ID_TO_STATION = {};
-Object.entries(STATION_TO_SEGMENT_ID).forEach(([name, id]) => {
-    // Clean the name (remove " 2" suffix from Station Square)
-    let cleanName = name.replace('Station Square 2', 'Station Square');
-    // Prefer non-alternative spellings (shorter names)
-    if (!SEGMENT_ID_TO_STATION[id] || cleanName.length < SEGMENT_ID_TO_STATION[id].length) {
-        SEGMENT_ID_TO_STATION[id] = cleanName;
-    }
+STATION_DEFINITIONS.forEach(({ segmentId, displayNameEn, displayNameKa, aliases }) => {
+    SEGMENT_ID_TO_STATION[segmentId] = { en: displayNameEn, ka: displayNameKa };
+    aliases.forEach((alias) => {
+        STATION_TO_SEGMENT_ID[normalizeMetroLookupName(alias)] = segmentId;
+    });
 });
+
+function normalizeMetroLookupName(name) {
+    return String(name || '')
+        .replace(/M\/S\s*/gi, '')
+        .replace(/Metro Station\s*/gi, '')
+        .replace(/მ\/ს\s*/g, '')
+        .replace(/["„“”]/g, '')
+        .replace(/\s+/g, ' ')
+        .replace('Univercity', 'University')
+        .replace('Technacal', 'Technical')
+        .replace('Techinacal', 'Technical')
+        .replace('Grmaghele', 'Ghrmaghele')
+        .replace('Sarajisvhili', 'Sarajishvili')
+        .replace('Saradjishvili', 'Sarajishvili')
+        .trim()
+        .toLowerCase();
+}
+
+function getMetroSegmentId(input, fallbackColor = null) {
+    const stop = typeof input === 'string' ? null : input;
+    const rawId = stop ? String(stop.id || '') : String(input || '');
+    const matchedId = rawId.match(/(metro_[12]_\d+)/);
+    if (matchedId) return matchedId[1];
+
+    const rawName = stop ? stop.name : input;
+    const normalizedName = normalizeMetroLookupName(rawName);
+    const directMatch = STATION_TO_SEGMENT_ID[normalizedName];
+    if (directMatch) return directMatch;
+
+    if (normalizedName === 'station square' || normalizedName === 'სადგურის მოედანი') {
+        return fallbackColor === GREEN_LINE_COLOR ? 'metro_2_1' : 'metro_1_8';
+    }
+
+    return null;
+}
+
+function getMetroLineColor(segmentId, fallbackColor = RED_LINE_COLOR) {
+    if (!segmentId) return fallbackColor;
+    return segmentId.startsWith('metro_2_') ? GREEN_LINE_COLOR : RED_LINE_COLOR;
+}
+
+function getMetroDisplayName(segmentId) {
+    const names = segmentId ? SEGMENT_ID_TO_STATION[segmentId] : null;
+    if (!names) return null;
+    return getCurrentStopNamesLanguage() === 'ka' ? (names.ka || names.en) : (names.en || names.ka);
+}
+
+function isStationSquareSegment(segmentId) {
+    return segmentId === 'metro_1_8' || segmentId === 'metro_2_1';
+}
+
+function relocalizeMetroStopFeatures(featuresRef = []) {
+    featuresRef.forEach((feature) => {
+        const segmentId = feature?.properties?.segmentId || getMetroSegmentId(feature?.properties?.id || feature?.properties?.name, feature?.properties?.color);
+        const displayName = getMetroDisplayName(segmentId);
+        if (displayName) {
+            feature.properties.name = displayName;
+        }
+    });
+}
+
+function buildSchematicFeatures(segments, midpoints = {}) {
+    const features = [];
+    const lines = [
+        { ids: LINE_1_IDS, color: RED_LINE_COLOR },
+        { ids: LINE_2_IDS, color: GREEN_LINE_COLOR }
+    ];
+
+    lines.forEach(({ ids, color }) => {
+        for (let i = 0; i < ids.length; i++) {
+            const id = ids[i];
+            const seg = getSegmentForStop({ id }, segments);
+            if (!seg) continue;
+
+            const geom = generateSegmentGeometry(seg);
+            const stationName = getMetroDisplayName(id) || id;
+            const colorName = color === GREEN_LINE_COLOR ? 'green' : 'red';
+
+            features.push({
+                type: 'Feature',
+                geometry: {
+                    type: 'LineString',
+                    coordinates: [geom.leftPt, geom.rightPt]
+                },
+                properties: {
+                    color,
+                    colorName,
+                    type: 'segment',
+                    stationId: id,
+                    name: stationName,
+                    centerLon: seg.center[0],
+                    centerLat: seg.center[1]
+                }
+            });
+
+            features.push({
+                type: 'Feature',
+                geometry: {
+                    type: 'Point',
+                    coordinates: seg.center
+                },
+                properties: {
+                    color,
+                    colorName,
+                    type: 'segment-center',
+                    stationId: id,
+                    name: formatStationLabelName(stationName)
+                }
+            });
+
+            if (i < ids.length - 1) {
+                const nextId = ids[i + 1];
+                const nextSeg = getSegmentForStop({ id: nextId }, segments);
+                const connKey = getConnectionKey(id, nextId);
+                const connMidpoints = midpoints[connKey] || [];
+                const connGeom = generateConnectionGeometry(seg, nextSeg, connMidpoints);
+                if (connGeom) {
+                    features.push({
+                        type: 'Feature',
+                        geometry: connGeom,
+                        properties: { color, type: 'connection' }
+                    });
+                }
+            }
+        }
+    });
+
+    return features;
+}
 
 // Format station name for 2-line display if it has 2+ long words
 function formatStationLabelName(name) {
@@ -183,10 +311,10 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
 
         if (metroRoutes.length === 0) {
             // Fallback for Station Square etc
-            const targetName = cleanMetroName(stop.name).replace(/[12]$/, '');
+            const targetSegmentId = getMetroSegmentId(stop);
             const subwayRoutes = allRoutes.filter(r => r.mode === 'SUBWAY');
 
-            if (targetName.includes('Station Square')) {
+            if (isStationSquareSegment(targetSegmentId)) {
                 metroRoutes = subwayRoutes; // Show both lines
             } else {
                 // Optimization: Pass all subway routes, logic will filter empty ones
@@ -378,20 +506,6 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
 
 // --- Metro Configuration & Helpers ---
 
-const RED_LINE_ORDER = [
-    'Varketili', 'Samgori', 'Isani', '300 Aragveli', 'Avlabari', 'Liberty Square', 'Rustaveli', 'Marjanishvili', 'Station Square', 'Nadzaladevi', 'Gotsiridze', 'Didube', 'Ghrmaghele', 'Guramishvili', 'Sarajishvili', 'Akhmeteli Theatre'
-];
-
-const GREEN_LINE_ORDER = [
-    'State University', 'Vazha-Pshavela', 'Delisi', 'Medical University', 'Technical University', 'Tsereteli', 'Station Square'
-];
-
-const GREEN_LINE_STOPS = [
-    'State University', 'Vazha-Pshavela', 'Vazha Pshavela', 'Delisi', 'Medical University', 'Technical University', 'Tsereteli', 'Station Square 2'
-];
-
-const ALL_METRO_NAMES = [...RED_LINE_ORDER, ...GREEN_LINE_ORDER, ...GREEN_LINE_STOPS];
-
 // Derived Helpers
 function getSpline(points, tension = 0.25, numOfSegments = 16) {
     if (points.length < 2) return points;
@@ -428,8 +542,8 @@ function getSpline(points, tension = 0.25, numOfSegments = 16) {
 
 function getLineCoordinates(orderList, features) {
     const coords = [];
-    orderList.forEach(name => {
-        const f = features.find(feat => feat.properties.name.includes(name) || name.includes(feat.properties.name));
+    orderList.forEach(segmentId => {
+        const f = features.find((feat) => feat.properties.segmentId === segmentId);
         if (f) coords.push(f.geometry.coordinates);
     });
     return getSpline(coords);
@@ -440,17 +554,17 @@ function getLineCoordinates(orderList, features) {
 
 export function cleanMetroName(name) {
     if (!name) return 'Metro Station';
-    return name
+    const segmentId = getMetroSegmentId(name);
+    const localizedName = getMetroDisplayName(segmentId);
+    if (localizedName) {
+        return localizedName;
+    }
+    return String(name)
         .replace('M/S', '')
         .replace('Metro Station', '')
+        .replace('მ/ს', '')
         .replace('Station Square 1', 'Station Square')
         .replace('Station Square 2', 'Station Square')
-        .replace('Univercity', 'University')
-        .replace('Technacal', 'Technical')
-        .replace('Techinacal', 'Technical') // Specific typo fix for user
-        .replace('Grmaghele', 'Ghrmaghele')
-        .replace('Sarajisvhili', 'Sarajishvili')
-        .replace('Saradjishvili', 'Sarajishvili')
         .trim() || 'Metro Station';
 }
 
@@ -458,7 +572,6 @@ export function processMetroStops(stops, stopBearings = {}) {
     const busStops = [];
     const metroFeatures = [];
     const seenMetroNames = new Set();
-    const allowDuplicateNames = ['Station Square'];
 
     stops.forEach(stop => {
         // Inject Bearing
@@ -479,11 +592,12 @@ export function processMetroStops(stops, stopBearings = {}) {
             (stop.name.includes('Metro Station') && !hasNumericCode);
 
         if (isMetro) {
+            const segmentId = getMetroSegmentId(stop);
             // Clean Name
             let displayName = cleanMetroName(stop.name);
 
             // Duplicate Check
-            if (!allowDuplicateNames.some(allowed => displayName.includes(allowed)) && seenMetroNames.has(displayName)) {
+            if (!isStationSquareSegment(segmentId) && seenMetroNames.has(displayName)) {
                 return;
             }
             if (!seenMetroNames.has(displayName)) {
@@ -493,19 +607,7 @@ export function processMetroStops(stops, stopBearings = {}) {
             // but for safety, we allow duplicates generally or rely on the input stops being unique enough.
             // Actually, we just need to bypass the check for Station Square.
 
-            // Determine Color
-            let color = '#ef4444'; // Red Line Default
-            if (GREEN_LINE_STOPS.some(n => stop.name.includes(n))) {
-                color = '#22c55e'; // Green Line
-            }
-            if (displayName.includes('Technical University') || stop.name.includes('Technical Univercity')) {
-                color = '#22c55e';
-            }
-            if (displayName.includes('Vazha-Pshavela')) color = '#22c55e';
-            if (displayName.includes('Tsereteli')) color = '#22c55e';
-
-            // Critical: Use raw name to catch Station Square 2 since displayName strips number
-            if (stop.name.includes('Station Square 2')) color = '#22c55e';
+            const color = getMetroLineColor(segmentId);
 
             metroFeatures.push({
                 type: 'Feature',
@@ -516,6 +618,7 @@ export function processMetroStops(stops, stopBearings = {}) {
                 properties: {
                     id: stop.id,
                     name: displayName,
+                    segmentId: segmentId,
                     code: stop.code,
                     mode: 'SUBWAY',
                     color: color
@@ -547,8 +650,8 @@ export function processMetroStops(stops, stopBearings = {}) {
 }
 
 export function generateMetroLines(metroFeatures) {
-    const redLineCoords = getLineCoordinates(RED_LINE_ORDER, metroFeatures);
-    const greenLineCoords = getLineCoordinates(GREEN_LINE_ORDER, metroFeatures);
+    const redLineCoords = getLineCoordinates(LINE_1_IDS, metroFeatures);
+    const greenLineCoords = getLineCoordinates(LINE_2_IDS, metroFeatures);
     return { redLineCoords, greenLineCoords };
 }
 
@@ -637,21 +740,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
         let snappedCount = 0;
 
         featuresRef.forEach(f => {
-            const name = f.properties.name;
-            const color = f.properties.color;
-            let targetId = null;
-
-            // Special handling for Station Square (exists on both lines)
-            if (name === 'Station Square' || name.includes('Station Square')) {
-                if (color === '#22c55e') { // Green line
-                    targetId = 'metro_2_1';
-                } else { // Red line
-                    targetId = 'metro_1_8';
-                }
-            } else {
-                // Use explicit mapping
-                targetId = STATION_TO_SEGMENT_ID[name];
-            }
+            const targetId = f.properties.segmentId || getMetroSegmentId(f.properties.name, f.properties.color);
 
             let matchedSeg = null;
 
@@ -704,19 +793,13 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
             .then(([segments, midpoints, exits]) => {
                 _isFetchingSchematic = false;
                 _cachedSegments = segments; // Cache it!
+                _cachedMidpoints = midpoints;
                 _cachedExits = exits; // Cache exits!
                 console.log('[Metro] Schematic segments loaded. Midpoints:', Object.keys(midpoints).length, 'Exits:', Object.keys(exits).length);
 
                 // Annotate station features with hasExits property and segment center
                 metroFeaturesRef.forEach(f => {
-                    const name = f.properties.name;
-                    const color = f.properties.color;
-                    let sid = null;
-                    if (name === 'Station Square' || name.includes('Station Square')) {
-                        sid = (color === '#22c55e') ? 'metro_2_1' : 'metro_1_8';
-                    } else {
-                        sid = STATION_TO_SEGMENT_ID[name];
-                    }
+                    const sid = f.properties.segmentId || getMetroSegmentId(f.properties.name, f.properties.color);
                     const hasExits = sid && exits[sid] && exits[sid].exits && exits[sid].exits.length > 0;
                     f.properties.hasExits = hasExits;
 
@@ -727,78 +810,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     }
                 });
 
-                const features = [];
-
-                const lines = [
-                    { ids: LINE_1_IDS, color: '#ef4444' }, // Red
-                    { ids: LINE_2_IDS, color: '#22c55e' }  // Green
-                ];
-
-                lines.forEach(({ ids, color }) => {
-                    for (let i = 0; i < ids.length; i++) {
-                        const id = ids[i];
-                        const stopObj = { id: id };
-                        let seg = getSegmentForStop(stopObj, segments);
-
-                        // 1. Add Station Segment (line)
-                        const geom = generateSegmentGeometry(seg);
-                        const stationName = SEGMENT_ID_TO_STATION[id] || id;
-                        const colorName = color === '#22c55e' ? 'green' : 'red';
-                        features.push({
-                            type: 'Feature',
-                            geometry: {
-                                type: 'LineString',
-                                coordinates: [geom.leftPt, geom.rightPt]
-                            },
-                            properties: {
-                                color: color,
-                                colorName: colorName,
-                                type: 'segment',
-                                stationId: id,
-                                name: stationName,
-                                centerLon: seg.center[0],
-                                centerLat: seg.center[1]
-                            }
-                        });
-
-                        // 2. Add Segment Center (point for label placement)
-                        const labelName = formatStationLabelName(stationName);
-                        features.push({
-                            type: 'Feature',
-                            geometry: {
-                                type: 'Point',
-                                coordinates: seg.center
-                            },
-                            properties: {
-                                color: color,
-                                colorName: colorName,
-                                type: 'segment-center',
-                                stationId: id,
-                                name: labelName
-                            }
-                        });
-
-                        // 2. Add Connection to Next (with midpoints if available)
-                        if (i < ids.length - 1) {
-                            const nextId = ids[i + 1];
-                            const nextStopObj = { id: nextId };
-                            const nextSeg = getSegmentForStop(nextStopObj, segments);
-
-                            // Look up midpoints for this connection
-                            const connKey = getConnectionKey(id, nextId);
-                            const connMidpoints = midpoints[connKey] || [];
-
-                            const connGeom = generateConnectionGeometry(seg, nextSeg, connMidpoints);
-                            if (connGeom) {
-                                features.push({
-                                    type: 'Feature',
-                                    geometry: connGeom,
-                                    properties: { color: color, type: 'connection' }
-                                });
-                            }
-                        }
-                    }
-                });
+                const features = buildSchematicFeatures(segments, midpoints);
 
                 if (map.getSource('metro-schematic-source')) {
                     map.getSource('metro-schematic-source').setData({ type: 'FeatureCollection', features });
@@ -828,12 +840,20 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
             });
     } else {
         // Cache exists!
-        // 1. Ensure schematic layers are there
-        if (!map.getSource('metro-schematic-source')) {
-            // We have _cachedSegments but source is gone
-        } else {
-            addSchematicLayer();
+        relocalizeMetroStopFeatures(metroFeaturesRef);
+
+        if (_cachedSegments) {
+            const schematicFeatures = buildSchematicFeatures(_cachedSegments, _cachedMidpoints || {});
+            if (map.getSource('metro-schematic-source')) {
+                map.getSource('metro-schematic-source').setData({ type: 'FeatureCollection', features: schematicFeatures });
+            } else {
+                map.addSource('metro-schematic-source', {
+                    type: 'geojson',
+                    data: { type: 'FeatureCollection', features: schematicFeatures }
+                });
+            }
         }
+        addSchematicLayer();
 
         // Snap station markers to segment centers (using cached segments)
         if (_cachedSegments) {
@@ -843,17 +863,14 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
         // Re-annotate in case exits were updated
         if (_cachedExits) {
             metroFeaturesRef.forEach(f => {
-                const name = f.properties.name;
-                const color = f.properties.color;
-                let sid = null;
-                if (name === 'Station Square' || name.includes('Station Square')) {
-                    sid = (color === '#22c55e') ? 'metro_2_1' : 'metro_1_8';
-                } else {
-                    sid = STATION_TO_SEGMENT_ID[name];
-                }
+                const sid = f.properties.segmentId || getMetroSegmentId(f.properties.name, f.properties.color);
                 const hasExits = sid && _cachedExits[sid] && _cachedExits[sid].exits && _cachedExits[sid].exits.length > 0;
                 f.properties.hasExits = hasExits;
             });
+        }
+
+        if (map.getSource('metro-stops')) {
+            map.getSource('metro-stops').setData({ type: 'FeatureCollection', features: metroFeaturesRef });
         }
     }
 
@@ -907,7 +924,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                     'text-opacity': [
                         'step',
                         ['zoom'],
-                        ['case', ['all', ['==', ['get', 'name'], 'Station Square'], ['==', ['get', 'color'], '#22c55e']], 0, 1],  // Default (below zoom 16)
+                        ['case', ['==', ['get', 'segmentId'], 'metro_2_1'], 0, 1],  // Hide duplicate Station Square label for green line
                         15.2, 0  // Hidden at zoom 15.2+
                     ]
                 }
@@ -1054,7 +1071,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 'text-opacity': [
                     'step',
                     ['zoom'],
-                    ['case', ['all', ['==', ['get', 'name'], 'Station Square'], ['==', ['get', 'color'], '#22c55e']], 0, 1],  // Default (below zoom 16)
+                    ['case', ['==', ['get', 'segmentId'], 'metro_2_1'], 0, 1],  // Hide duplicate Station Square label for green line
                     15.2, 0  // Hidden at zoom 15.2+ (segment labels take over)
                 ]
             }
@@ -1223,14 +1240,7 @@ export function refreshMetroExits(map, exits) {
     // Re-annotate features if we have the reference
     if (_lastMetroFeatures && map.getSource('metro-stops')) {
         _lastMetroFeatures.forEach(f => {
-            const name = f.properties.name;
-            const color = f.properties.color;
-            let sid = null;
-            if (name === 'Station Square' || name.includes('Station Square')) {
-                sid = (color === '#22c55e') ? 'metro_2_1' : 'metro_1_8';
-            } else {
-                sid = STATION_TO_SEGMENT_ID[name];
-            }
+            const sid = f.properties.segmentId || getMetroSegmentId(f.properties.name, f.properties.color);
             const hasExits = sid && exits[sid] && exits[sid].exits && exits[sid].exits.length > 0;
             f.properties.hasExits = hasExits;
         });

@@ -2,6 +2,7 @@ import mapboxgl from 'mapbox-gl';
 import { map } from './map-setup.js';
 import { historyManager } from './history.js';
 import * as api from './api.js';
+import { getCurrentMapLanguage, onLanguageChange, t } from './i18n.ts';
 
 let appCallbacks = {
     onRouteSelect: null,
@@ -122,7 +123,7 @@ export function setupSearch(callbacks, dataProviders) {
                 const center = map.getCenter ? map.getCenter() : { lng: 44.78, lat: 41.72 };
                 const proximity = `${center.lng},${center.lat}`;
 
-                const geocodingUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${api.MAPBOX_TOKEN}&country=ge&language=en&types=place,address,poi&limit=10&proximity=${proximity}&bbox=${bbox}`;
+                const geocodingUrl = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${api.MAPBOX_TOKEN}&country=ge&language=${getCurrentMapLanguage()}&types=place,address,poi&limit=10&proximity=${proximity}&bbox=${bbox}`;
                 const res = await fetch(geocodingUrl);
                 if (res.ok) {
                     const data = await res.json();
@@ -145,6 +146,27 @@ export function setupSearch(callbacks, dataProviders) {
             suggestions.classList.add('hidden');
         }
     });
+
+    onLanguageChange((change) => {
+        if (change.target !== 'stops' && change.target !== 'ui') return;
+        if (!suggestions.classList.contains('hidden') && input.value.trim() === '') {
+            renderFullHistory(!!document.querySelector('.show-more-btn') === false);
+        }
+    });
+}
+
+function getCurrentStopForHistory(data) {
+    if (!data) return null;
+    const stopId = data.id || data.stopId || data.code;
+    if (!stopId) return null;
+    const allStops = appData.getAllStops();
+    const rawId = String(stopId);
+    const cleanId = rawId.replace(/^1:/, '');
+    const prefixedId = rawId.includes(':') ? rawId : `1:${cleanId}`;
+    return allStops.find((stop) => {
+        const id = String(stop.id);
+        return id === rawId || id === cleanId || id === prefixedId;
+    }) || null;
 }
 
 function renderFullHistory(expanded = false) {
@@ -167,15 +189,15 @@ function renderFullHistory(expanded = false) {
         header.style.cssText = 'padding: 12px 16px 4px; font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; background: var(--bg-panel); display: flex; justify-content: space-between; align-items: center;';
 
         const title = document.createElement('span');
-        title.innerText = 'RECENTLY SEARCHED';
+        title.innerText = t('recentlySearched');
         header.appendChild(title);
 
         const clearBtn = document.createElement('span');
-        clearBtn.innerText = 'CLEAR ALL';
+        clearBtn.innerText = t('clearAll');
         clearBtn.style.cssText = 'font-size: 0.65rem; color: var(--text-secondary); cursor: pointer; letter-spacing: 0.5px;';
         clearBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (confirm('Clear search history?')) {
+            if (confirm(t('clearSearchHistoryPrompt'))) {
                 historyManager.clearSearchHistory();
                 renderFullHistory();
             }
@@ -196,7 +218,7 @@ function renderFullHistory(expanded = false) {
             moreBtn.style.color = 'var(--primary)';
             moreBtn.style.fontWeight = '600';
             moreBtn.style.justifyContent = 'center';
-            moreBtn.innerHTML = 'Show more...';
+            moreBtn.innerHTML = t('showMore');
             moreBtn.addEventListener('click', (e) => {
                 e.stopPropagation(); // Prevent closing
                 renderFullHistory(true); // Re-render expanded
@@ -212,7 +234,7 @@ function renderFullHistory(expanded = false) {
         const cardHeader = document.createElement('div');
         cardHeader.className = 'suggestion-header';
         cardHeader.style.cssText = 'padding: 12px 16px 4px; font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; background: var(--bg-panel); border-top: 1px solid var(--border-light); margin-top: 4px;';
-        cardHeader.innerText = 'RECENT CARDS';
+        cardHeader.innerText = t('recentCards');
         container.appendChild(cardHeader);
 
         recentCards.forEach(item => {
@@ -228,7 +250,7 @@ function renderFullHistory(expanded = false) {
         container.innerHTML = `
             <div style="padding: 20px; text-align: center; color: var(--text-secondary); font-size: 0.9rem;">
                 <div style="font-size: 1.5rem; margin-bottom: 8px;">🔍</div>
-                <div>Type to search for stops,<br>routes, or addresses</div>
+                <div>${t('searchEmptyState')}</div>
             </div>
         `;
     }
@@ -256,11 +278,11 @@ function createSuggestionElement(item, historyType = null) {
             <div class="suggestion-subtext">${route.longName}</div>
         `;
     } else if (type === 'stop') {
-        const stop = data;
+        const stop = getCurrentStopForHistory(data) || data;
         iconHTML = `<div class="suggestion-icon stop" style="background: ${isHistory ? 'var(--bg-secondary)' : 'var(--primary-light)'}; color: ${isHistory ? 'var(--text-secondary)' : 'var(--primary)'};">${isHistory ? '🕒' : '🚏'}</div>`;
         textHTML = `
             <div style="font-weight:600;">${stop.name}</div>
-            <div class="suggestion-subtext">Code: ${stop.code || 'N/A'}</div>
+            <div class="suggestion-subtext">${t('codeLabel', stop.code || 'N/A')}</div>
         `;
     } else if (type === 'place') {
         iconHTML = `<div class="suggestion-icon place" style="background: ${isHistory ? 'var(--bg-secondary)' : 'var(--primary-light)'}; color: ${isHistory ? 'var(--text-secondary)' : 'var(--primary)'};">${isHistory ? '🕒' : '📍'}</div>`;
@@ -313,7 +335,7 @@ function createSuggestionElement(item, historyType = null) {
                 <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
         `;
-        deleteBtn.title = "Remove from history";
+        deleteBtn.title = t('clear');
         // Attach data for Delegation
         deleteBtn._item = item;
         deleteBtn._historyType = historyType;
