@@ -1866,7 +1866,9 @@ function setCachedArrivals(cacheKey, data) {
 function buildArrivalsFetchOptions() {
     return {
         headers: ARRIVALS_REQUEST_HEADERS,
-        credentials: 'include',
+        // Proxy deployments return wildcard ACAO, so browser arrivals requests
+        // must remain non-credentialed.
+        credentials: 'omit',
         mode: 'cors'
     };
 }
