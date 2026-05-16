@@ -4179,11 +4179,19 @@ const initMoreMenu = (triggerId, menuId) => {
             });
     };
 
+    const getPublicWebBaseUrl = () => {
+        const configured = import.meta.env.VITE_PUBLIC_WEB_BASE_URL;
+        if (configured && typeof configured === 'string') {
+            return configured.replace(/\/+$/, '');
+        }
+        return 'https://veaveberg.github.io/tbilisi-trans';
+    };
+
     const buildCurrentUrl = () => {
         let url = window.location.href;
         if (url.startsWith('capacitor://')) {
             const pathname = window.location.pathname + window.location.hash;
-            url = `https://veaveberg.github.io/tbilisi-trans${pathname}`;
+            url = `${getPublicWebBaseUrl()}${pathname}`;
         }
         return url;
     };
@@ -4507,7 +4515,7 @@ const handleCopyLink = (btnId) => {
         // If running in Capacitor (iOS app), replace with production URL
         if (url.startsWith('capacitor://')) {
             const pathname = window.location.pathname + window.location.hash;
-            url = `https://veaveberg.github.io/tbilisi-trans${pathname}`;
+            url = `${getPublicWebBaseUrl()}${pathname}`;
         }
 
         let success = false;

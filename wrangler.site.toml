@@ -1,0 +1,8 @@
+name = "tbilisi-trans-site"
+main = "cloudflare-site-proxy.js"
+compatibility_date = "2026-05-16"
+workers_dev = true
+
+[[routes]]
+pattern = "tbilisi-trans.samshabrg.org"
+custom_domain = true
