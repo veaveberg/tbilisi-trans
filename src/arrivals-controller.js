@@ -22,6 +22,7 @@ class ArrivalsController {
         this.abortController = null;
         this.refreshTimer = null;
         this.isRefreshing = false;
+        this.requestSeq = 0;
     }
 
     /**
@@ -30,6 +31,7 @@ class ArrivalsController {
      * Phase 2: Fetch live data with loading indicator
      */
     async selectStop(stopId) {
+        const requestId = ++this.requestSeq;
         const isRefresh = this.stopId === stopId;
 
         // Cancel any in-flight request
@@ -50,7 +52,7 @@ class ArrivalsController {
         if (!isRefresh) {
             try {
                 const scheduled = await fetchArrivalsOptimistic(stopId);
-                if (this.stopId !== stopId) return; // Stop changed during fetch
+                if (requestId !== this.requestSeq || this.stopId !== stopId) return;
 
                 if (scheduled.length > 0) {
                     this.arrivals = scheduled;
@@ -67,7 +69,7 @@ class ArrivalsController {
         updateArrivalsLoadingState(true);
         try {
             const live = await fetchArrivals(stopId);
-            if (this.stopId !== stopId) return; // Stop changed during fetch
+            if (requestId !== this.requestSeq || this.stopId !== stopId) return;
 
             if (live.length > 0) {
                 // Upgrade to live data
@@ -82,12 +84,16 @@ class ArrivalsController {
             }
             // else: keep showing scheduled (already rendered in phase 1)
 
-            this.startRefreshTimer();
+            if (requestId === this.requestSeq) {
+                this.startRefreshTimer();
+            }
         } catch (e) {
             console.warn('[ArrivalsController] Live fetch failed:', e);
             // Keep showing scheduled data if available
         } finally {
-            updateArrivalsLoadingState(false);
+            if (requestId === this.requestSeq) {
+                updateArrivalsLoadingState(false);
+            }
         }
     }
 
@@ -160,6 +166,7 @@ class ArrivalsController {
     clear() {
         if (this.abortController) this.abortController.abort();
         if (this.refreshTimer) clearInterval(this.refreshTimer);
+        this.requestSeq++;
         this.stopId = null;
         this.arrivals = [];
         this.timestamp = 0;

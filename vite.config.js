@@ -9,6 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 console.log('Loading vite.config.js...'); // Top-level debug
+const disablePwa = process.env.VITE_DISABLE_PWA === '1';
 
 const saveStopsPlugin = () => ({
     name: 'save-stops-middleware',
@@ -353,7 +354,7 @@ export default defineConfig({
     plugins: [
         hasCert ? null : basicSsl(),
         saveStopsPlugin(),
-        VitePWA({
+        disablePwa ? null : VitePWA({
             registerType: 'autoUpdate',
             includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg', 'data/*.json'], // Include fallback data!
             workbox: {
@@ -400,20 +401,34 @@ export default defineConfig({
                 ]
             },
             manifest: {
-      name: 'Tbilisi Trans',
-      short_name: 'Tbilisi Trans',
+                name: 'Tbilisi Trans',
+                short_name: 'Tbilisi Trans',
                 description: 'Real-time Tbilisi Transport',
                 theme_color: '#ffffff',
                 icons: [
                     {
-                        src: 'pwa-192x192.png',
+                        src: 'android-chrome-192x192.png',
                         sizes: '192x192',
-                        type: 'image/png'
+                        type: 'image/png',
+                        purpose: 'any'
                     },
                     {
-                        src: 'pwa-512x512.png',
+                        src: 'android-chrome-512x512.png',
                         sizes: '512x512',
-                        type: 'image/png'
+                        type: 'image/png',
+                        purpose: 'any'
+                    },
+                    {
+                        src: 'android-chrome-maskable-192x192.png',
+                        sizes: '192x192',
+                        type: 'image/png',
+                        purpose: 'maskable'
+                    },
+                    {
+                        src: 'android-chrome-maskable-512x512.png',
+                        sizes: '512x512',
+                        type: 'image/png',
+                        purpose: 'maskable'
                     }
                 ]
             }

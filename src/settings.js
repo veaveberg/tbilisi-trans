@@ -33,16 +33,12 @@ const NativeSettingsPlugin = registerPlugin('NativeSettings');
 function isNativeSettingsAvailable() {
     if (typeof Capacitor === 'undefined') return false;
     if (typeof Capacitor.isNativePlatform === 'function' && !Capacitor.isNativePlatform()) return false;
-    if (typeof Capacitor.isPluginAvailable === 'function') {
-        return Capacitor.isPluginAvailable('NativeSettings');
-    }
-    return typeof window !== 'undefined' &&
-        window.Capacitor &&
-        window.Capacitor.Plugins &&
-        window.Capacitor.Plugins.NativeSettings;
+    // Custom native plugins registered in MainActivity are always available on native platforms.
+    // Capacitor.isPluginAvailable() only tracks built-in Capacitor plugins, not custom ones.
+    return true;
 }
 
-function getNativeSettingsPlugin() {
+export function getNativeSettingsPlugin() {
     if (!isNativeSettingsAvailable()) return null;
     return NativeSettingsPlugin;
 }

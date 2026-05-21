@@ -32,7 +32,7 @@ import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
 
 
-import { initSettings, settings, simplifyNumber, shouldShowRoute, openNativeFavoritesMenu, openSheetForCurrentPath } from './settings.js';
+import { initSettings, settings, simplifyNumber, shouldShowRoute, openNativeFavoritesMenu, openSheetForCurrentPath, getNativeSettingsPlugin } from './settings.js';
 import { initICloudHistorySync } from './icloud-sync.js';
 import { favoritesManager } from './favorites.js';
 import {
@@ -54,6 +54,34 @@ let stopToRoutesMap = new Map();
 const hydratedStops = new Set();
 let lastRouteUpdateId = 0;
 const redirectMap = new Map();
+
+const getPublicWebBaseUrl = () => {
+    const configured = import.meta.env.VITE_PUBLIC_WEB_BASE_URL;
+    if (configured && typeof configured === 'string') {
+        return configured.replace(/\/+$/, '');
+    }
+    return 'https://veaveberg.github.io/tbilisi-trans';
+};
+
+const shouldUsePublicWebUrl = () => {
+    const cap = window.Capacitor;
+    if (cap?.isNativePlatform?.()) return true;
+
+    const href = window.location.href;
+    if (href.startsWith('capacitor://')) return true;
+
+    const host = window.location.hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+};
+
+const buildCurrentUrl = () => {
+    let url = window.location.href;
+    if (shouldUsePublicWebUrl()) {
+        const pathname = `${window.location.pathname || '/'}${window.location.hash || ''}`;
+        url = `${getPublicWebBaseUrl()}${pathname}`;
+    }
+    return url;
+};
 
 // --- Mobile Detection & Zoom Adjust ---
 initI18n();
@@ -84,8 +112,8 @@ const IOS_NATIVE_CACHE_VERSION_KEY = 'iosNativeCacheVersion';
 async function maybeRunNativeUpgradeCleanup() {
     try {
         const cap = window.Capacitor;
-        const isNativeIOS = cap?.isNativePlatform?.() && cap?.getPlatform?.() === 'ios';
-        if (!isNativeIOS || typeof localStorage === 'undefined') return;
+        const isNative = cap?.isNativePlatform?.() && (cap?.getPlatform?.() === 'ios' || cap?.getPlatform?.() === 'android');
+        if (!isNative || typeof localStorage === 'undefined') return;
 
         const appInfo = await cap?.Plugins?.App?.getInfo?.();
         if (!appInfo) return;
@@ -204,10 +232,10 @@ try {
     }
 } catch (e) { }
 
-// In native iOS app we don't need PWA service workers; clear them to avoid stale cached bundles.
+// Native app bundles should not rely on PWA service workers; clear any previously registered ones.
 try {
     const cap = window.Capacitor;
-    if (cap?.isNativePlatform?.() && cap?.getPlatform?.() === 'ios' && 'serviceWorker' in navigator) {
+    if (cap?.isNativePlatform?.() && 'serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations()
             .then((registrations) => Promise.allSettled(registrations.map((r) => r.unregister())))
             .catch(() => { });
@@ -916,14 +944,16 @@ function startNativeSplashReveal() {
     const overlay = document.getElementById('splash-overlay');
     if (overlay) overlay.remove();
 
-    // On native: trigger the native Swift zoom-reveal animation
+    // On native: trigger the native zoom-reveal animation via the registered plugin
     try {
-        const ns = window.Capacitor?.Plugins?.NativeSettings;
+        const ns = getNativeSettingsPlugin();
         if (ns && typeof ns.hideSplash === 'function') {
             ns.hideSplash();
             return;
         }
-    } catch (e) { }
+    } catch (e) {
+        console.warn('[Splash] Failed to call native hideSplash:', e);
+    }
 
     // Fallback: also hide Capacitor's built-in splash
     try {
@@ -4148,10 +4178,10 @@ const initMoreMenu = (triggerId, menuId) => {
 
     const closeMenu = () => menu.classList.add('hidden');
 
-    const isNativeIOS = () => {
+    const isNative = () => {
         const cap = window.Capacitor;
         if (!cap || typeof cap.isNativePlatform !== 'function' || typeof cap.getPlatform !== 'function') return false;
-        return cap.isNativePlatform() && cap.getPlatform() === 'ios';
+        return cap.isNativePlatform() && (cap.getPlatform() === 'ios' || cap.getPlatform() === 'android');
     };
 
     const getNativeSettings = () => window.Capacitor?.Plugins?.NativeSettings;
@@ -4179,23 +4209,6 @@ const initMoreMenu = (triggerId, menuId) => {
             });
     };
 
-    const getPublicWebBaseUrl = () => {
-        const configured = import.meta.env.VITE_PUBLIC_WEB_BASE_URL;
-        if (configured && typeof configured === 'string') {
-            return configured.replace(/\/+$/, '');
-        }
-        return 'https://veaveberg.github.io/tbilisi-trans';
-    };
-
-    const buildCurrentUrl = () => {
-        let url = window.location.href;
-        if (url.startsWith('capacitor://')) {
-            const pathname = window.location.pathname + window.location.hash;
-            url = `${getPublicWebBaseUrl()}${pathname}`;
-        }
-        return url;
-    };
-
     const showNativeMenu = async (event) => {
         const plugin = getNativeSettings();
         if (!plugin || typeof plugin.showActionSheet !== 'function') return false;
@@ -4211,6 +4224,7 @@ const initMoreMenu = (triggerId, menuId) => {
         try {
             res = await plugin.showActionSheet({
                 actions,
+                theme: localStorage.getItem('theme') || 'system',
                 anchorX: Number(event?.clientX ?? 0),
                 anchorY: Number(event?.clientY ?? 0)
             });
@@ -4266,7 +4280,7 @@ const initMoreMenu = (triggerId, menuId) => {
     trigger.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (isNativeIOS()) {
+        if (isNative()) {
             const handled = await showNativeMenu(e);
             if (handled) return;
         }
@@ -4509,14 +4523,7 @@ const handleCopyLink = (btnId) => {
         e.stopPropagation();
         e.preventDefault();
 
-        // Get current URL and convert Capacitor URLs to production URLs
-        let url = window.location.href;
-
-        // If running in Capacitor (iOS app), replace with production URL
-        if (url.startsWith('capacitor://')) {
-            const pathname = window.location.pathname + window.location.hash;
-            url = `${getPublicWebBaseUrl()}${pathname}`;
-        }
+        const url = buildCurrentUrl();
 
         let success = false;
 

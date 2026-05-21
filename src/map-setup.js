@@ -59,6 +59,41 @@ export const map = new mapboxgl.Map({
     trackResize: false
 });
 
+function installTapDragZoomAnchorPatch() {
+    const tapDragZoom = map.touchZoomRotate?._tapDragZoom;
+    if (!tapDragZoom || tapDragZoom.__tapAnchorPatched) return;
+
+    const originalReset = tapDragZoom.reset;
+    const originalTouchstart = tapDragZoom.touchstart;
+    const originalTouchmove = tapDragZoom.touchmove;
+
+    tapDragZoom.reset = function patchedReset(...args) {
+        this._anchorPoint = undefined;
+        return originalReset.apply(this, args);
+    };
+
+    tapDragZoom.touchstart = function patchedTouchstart(e, points, mapTouches) {
+        const result = originalTouchstart.call(this, e, points, mapTouches);
+        if (this._tapTime && this._swipePoint && !this._anchorPoint) {
+            // Keep the second tap point as the zoom anchor for the whole drag gesture.
+            this._anchorPoint = this._swipePoint;
+        }
+        return result;
+    };
+
+    tapDragZoom.touchmove = function patchedTouchmove(e, points, mapTouches) {
+        const result = originalTouchmove.call(this, e, points, mapTouches);
+        if (result?.zoomDelta !== undefined && this._anchorPoint) {
+            result.around = this._anchorPoint;
+        }
+        return result;
+    };
+
+    tapDragZoom.__tapAnchorPatched = true;
+}
+
+installTapDragZoomAnchorPatch();
+
 export function updateMapLanguage(language = getCurrentMapLanguage()) {
     if (!map || typeof map.setLanguage !== 'function') return;
     try {

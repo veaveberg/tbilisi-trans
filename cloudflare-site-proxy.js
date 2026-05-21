@@ -18,7 +18,15 @@ function buildUpstreamUrl(requestUrl, request) {
         return `${UPSTREAM_ORIGIN}${UPSTREAM_BASE}/index.html`;
     }
 
-    const upstreamPath = subpath === '/' ? `${UPSTREAM_BASE}/` : `${UPSTREAM_BASE}${subpath}`;
+    let upstreamPath;
+    if (subpath === '/') {
+        upstreamPath = `${UPSTREAM_BASE}/`;
+    } else if (subpath === UPSTREAM_BASE || subpath.startsWith(`${UPSTREAM_BASE}/`)) {
+        // Requests from the GH Pages-built HTML already include /tbilisi-trans/.
+        upstreamPath = subpath;
+    } else {
+        upstreamPath = `${UPSTREAM_BASE}${subpath}`;
+    }
     return `${UPSTREAM_ORIGIN}${upstreamPath}${url.search}`;
 }
 

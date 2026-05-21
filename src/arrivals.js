@@ -551,6 +551,50 @@ export function getValidDirectionsForStop(routeId, stopIds) {
     return getValidDirectionsForRoute(routeId, stopIds);
 }
 
+function getSchedulePatternSuffixForItem(item, stopId) {
+    const routeId = item?.data?.id || item?.data?.routeId;
+    if (!routeId || !stopId) return null;
+
+    const explicitPatternSuffix = item?.data?.patternSuffix;
+    if (explicitPatternSuffix) return explicitPatternSuffix;
+
+    const matchedRoute = deps.allRoutes().find(r => String(r.id) === String(routeId)) ||
+        deps.allRoutes().find(r => normalizeRouteId(r.id) === normalizeRouteId(routeId)) ||
+        resolveRouteByShortName(item?.data?.shortName, { preferredStopId: stopId, preferBus: true }) ||
+        item?.data;
+
+    const staticDetails = getStaticRouteDetails(routeId);
+    const stopEntry = staticDetails?._stopsOfPatterns?.find(s => {
+        const sId = String(s?.stop?.id || s?.stop || '');
+        return sId === String(stopId) || normalizeRouteId(sId) === normalizeRouteId(stopId);
+    });
+
+    const suffixes = Array.isArray(stopEntry?.patternSuffixes) ? stopEntry.patternSuffixes.filter(Boolean) : [];
+    if (suffixes.length === 0) return null;
+    if (suffixes.length === 1) return suffixes[0];
+
+    const targetDirectionIndex = Number.isFinite(item?.directionIndex) ? item.directionIndex : null;
+    if (targetDirectionIndex === null) return suffixes[0];
+
+    const matchingSuffixes = suffixes.filter(suffix => {
+        const info = resolveDirectionInfo({ patternSuffix: suffix }, matchedRoute, stopId);
+        return info.directionIndex === targetDirectionIndex;
+    });
+
+    if (matchingSuffixes.length === 1) return matchingSuffixes[0];
+    if (matchingSuffixes.length > 1) {
+        const routePatterns = Array.isArray(staticDetails?.patterns) ? staticDetails.patterns : [];
+        const nonTerminusSuffix = matchingSuffixes.find(suffix => {
+            const pattern = routePatterns.find(p => p.patternSuffix === suffix);
+            if (!pattern?.lastStop?.id) return true;
+            return normalizeRouteId(pattern.lastStop.id) !== normalizeRouteId(stopId);
+        });
+        return nonTerminusSuffix || matchingSuffixes[0];
+    }
+
+    return suffixes[0];
+}
+
 /**
  * Public wrapper for stop-card direction/headsign resolution.
  * Reuses the same internal logic used by arrivals rendering.
@@ -659,13 +703,6 @@ function isRealtimeArrival(value) {
     return value === true || value === 1 || value === '1' || value === 'true';
 }
 
-function logLateWarningDebug(stage, payload = {}) {
-    try {
-        if (!payload || (!payload.lateIndices?.length && !payload.lateWarningIndices?.length)) return;
-        console.log(`[LateWarning][${stage}]`, payload);
-    } catch (_) { }
-}
-
 function getLateWarningIndices(item, lastScheduledMinutes, firstScheduledMinutes, options = {}) {
     if (options.isMetroCard === true) return [];
     if (item.type !== 'live') return [];
@@ -678,21 +715,6 @@ function getLateWarningIndices(item, lastScheduledMinutes, firstScheduledMinutes
         const isLate = shouldShowLateDepotWarning(entry.minutes, lastScheduledMinutes, firstScheduledMinutes);
         if (!isLate) return [];
         return [index];
-    });
-
-    logLateWarningDebug('compute', {
-        route: item?.data?.shortName,
-        routeId: item?.data?.id,
-        headsign: item?.headsign,
-        firstScheduledMinutes,
-        lastScheduledMinutes,
-        displayArrivals: displayArrivals.map((entry, index) => ({
-            index,
-            minutes: entry?.minutes,
-            isScheduled: entry?.isScheduled,
-            text: entry?.text
-        })),
-        lateIndices
     });
 
     return lateIndices;
@@ -866,15 +888,26 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
     }
 
     try {
-        const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
-        const todayStr = tbilisiNow;
+        const { todayStr, todayName, todayIdx } = getTbilisiDayInfo();
+        const OVERNIGHT_CUTOFF_HOUR = 4;
+        const toServiceDayMinutes = (timeStr) => {
+            const [rawH, rawM] = String(timeStr || '').split(':').map(Number);
+            if (!Number.isFinite(rawH) || !Number.isFinite(rawM)) return null;
+            let h = rawH;
+            if (h < OVERNIGHT_CUTOFF_HOUR) h += 24;
+            return h * 60 + rawM;
+        };
+        const formatServiceDayTime = (minutesValue) => {
+            if (!Number.isFinite(minutesValue)) return null;
+            const total = ((minutesValue % (24 * 60)) + (24 * 60)) % (24 * 60);
+            const h = Math.floor(total / 60);
+            const m = total % 60;
+            return `${h}:${String(m).padStart(2, '0')}`;
+        };
 
-        let daySchedule = schedule.find(s => s.serviceDates.includes(todayStr));
-
-        if (!daySchedule) {
-            console.warn(`[V3 Debug] No schedule found for today(${todayStr}). Using first available.`);
-            daySchedule = schedule[0];
-        }
+        const selectedSchedule = selectScheduleForTbilisiToday(schedule, { todayStr, todayName, todayIdx });
+        const daySchedule = selectedSchedule?.entry;
+        if (!daySchedule) return null;
 
         let firstTimeStr = null;
         let lastTimeStr = null;
@@ -907,12 +940,12 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
             matchedStops.forEach((stop, idx) => {
                 if (stop.arrivalTimes) {
                     stop.arrivalTimes.split(',').forEach(t => {
-                        const [h, m] = t.split(':').map(Number);
-                        const mins = h * 60 + m;
+                        const mins = toServiceDayMinutes(t);
+                        if (!Number.isFinite(mins)) return;
                         allDepartures.push({
-                            time: `${h % 24}:${String(m).padStart(2, '0')}`,
+                            time: formatServiceDayTime(mins),
                             minutes: mins,
-                            hour: h % 24,
+                            hour: Math.floor((((mins % (24 * 60)) + (24 * 60)) % (24 * 60)) / 60),
                             progress: idx / daySchedule.stops.length, // approximate
                             patternSuffix: patternSuffix
                         });
@@ -926,10 +959,7 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
             allDepartures.sort((a, b) => a.minutes - b.minutes);
 
             // Format time helper (handle > 24h if necessary, though raw string is usually fine)
-            const formatTime = (dep) => {
-                const [h, m] = dep.time.split(':');
-                return `${parseInt(h) % 24}:${m}`;
-            };
+            const formatTime = (dep) => formatServiceDayTime(dep.minutes);
 
             // Special handling for route 174 - split into service windows
             if (String(routeShortName) === '174') {
@@ -971,8 +1001,9 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
                         minute: 'numeric',
                         hour12: false
                     }).formatToParts(now);
-                    const h = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
+                    let h = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
                     const m = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
+                    if (h < OVERNIGHT_CUTOFF_HOUR) h += 24;
                     const curMinutes = h * 60 + m;
                     const futureDepartures = allDepartures.filter(d => d.minutes > curMinutes);
                     if (futureDepartures.length > 0) {
@@ -1001,8 +1032,9 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
                 minute: 'numeric',
                 hour12: false
             }).formatToParts(now);
-            const h = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
+            let h = parseInt(tbilisiParts.find(p => p.type === 'hour').value);
             const m = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
+            if (h < OVERNIGHT_CUTOFF_HOUR) h += 24;
             const curMinutes = h * 60 + m;
 
             // Filter for future (or very recent past if we want to be generous? No, strictly future for "Next")
@@ -1083,6 +1115,49 @@ function formatDayLabel(fromDay, toDay) {
     return from === to ? from : `${from}-${to}`;
 }
 
+function getTbilisiDayInfo() {
+    const now = new Date();
+    const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
+    const weekday = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Tbilisi',
+        weekday: 'long'
+    }).format(now).toUpperCase();
+    const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+    return {
+        todayStr,
+        todayName: weekday,
+        todayIdx: dayNames.indexOf(weekday)
+    };
+}
+
+function matchesServiceDayRange(entry, todayIdx) {
+    if (!entry?.fromDay || !entry?.toDay || todayIdx < 0) return false;
+    const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+    const fromIdx = dayNames.indexOf(entry.fromDay);
+    const toIdx = dayNames.indexOf(entry.toDay);
+    if (fromIdx === -1 || toIdx === -1) return false;
+    if (fromIdx <= toIdx) return todayIdx >= fromIdx && todayIdx <= toIdx;
+    return todayIdx >= fromIdx || todayIdx <= toIdx;
+}
+
+function selectScheduleForTbilisiToday(schedule, info = getTbilisiDayInfo()) {
+    if (!Array.isArray(schedule) || schedule.length === 0) return null;
+    const { todayStr, todayName, todayIdx } = info;
+
+    const exactDateMatch = schedule.find(entry => Array.isArray(entry?.serviceDates) && entry.serviceDates.includes(todayStr));
+    if (exactDateMatch) return { entry: exactDateMatch, reason: 'exact-service-date', label: formatDayLabel(exactDateMatch.fromDay, exactDateMatch.toDay) };
+
+    const weekdayRangeMatch = schedule.find(entry => matchesServiceDayRange(entry, todayIdx));
+    if (weekdayRangeMatch) {
+        console.warn(`[V3 Debug] No exact service date for ${todayStr}; using ${todayName} weekday schedule.`);
+        return { entry: weekdayRangeMatch, reason: 'weekday-range-fallback', label: formatDayLabel(weekdayRangeMatch.fromDay, weekdayRangeMatch.toDay) };
+    }
+
+    console.warn(`[V3 Debug] No schedule found for ${todayStr}/${todayName}. Using first available.`);
+    const first = schedule[0] || null;
+    return first ? { entry: first, reason: 'first-available-fallback', label: formatDayLabel(first.fromDay, first.toDay) } : null;
+}
+
 /**
  * Get schedule entries metadata for tab UI
  * @param {Array} schedule - Raw schedule array from API
@@ -1091,21 +1166,11 @@ function formatDayLabel(fromDay, toDay) {
 export function getScheduleEntries(schedule) {
     if (!schedule || !Array.isArray(schedule)) return [];
 
-    const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
-    const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
-    const todayName = dayNames[new Date().getDay()];
-    const todayIdx = dayNames.indexOf(todayName);
+    const { todayStr, todayIdx } = getTbilisiDayInfo();
 
     return schedule.map((entry, index) => {
-        let isToday = entry.serviceDates?.includes(tbilisiNow) || false;
-        if (!isToday && entry.fromDay && entry.toDay) {
-            const fIdx = dayNames.indexOf(entry.fromDay);
-            const tIdx = dayNames.indexOf(entry.toDay);
-            if (fIdx !== -1 && tIdx !== -1) {
-                if (fIdx <= tIdx) isToday = todayIdx >= fIdx && todayIdx <= tIdx;
-                else isToday = todayIdx >= fIdx || todayIdx <= tIdx;
-            }
-        }
+        let isToday = entry.serviceDates?.includes(todayStr) || false;
+        if (!isToday) isToday = matchesServiceDayRange(entry, todayIdx);
         return {
             label: formatDayLabel(entry.fromDay, entry.toDay),
             index,
@@ -1141,26 +1206,15 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
     if (!result || !result.schedule) return null;
 
     const { schedule } = result;
-    // Determine today's info for isToday check
-    const tbilisiNow = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
-    const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
-    const todayName = dayNames[new Date().getDay()];
-    const todayIdx = dayNames.indexOf(todayName);
+    const { todayStr, todayIdx } = getTbilisiDayInfo();
 
     // Build entries for tabs
     const entries = schedule.map((entry, index) => {
         const label = formatDayLabel(entry.fromDay, entry.toDay);
 
         // Calculate isToday
-        let isToday = entry.serviceDates?.includes(tbilisiNow) || false;
-        if (!isToday && entry.fromDay && entry.toDay) {
-            const fIdx = dayNames.indexOf(entry.fromDay);
-            const tIdx = dayNames.indexOf(entry.toDay);
-            if (fIdx !== -1 && tIdx !== -1) {
-                if (fIdx <= tIdx) isToday = todayIdx >= fIdx && todayIdx <= tIdx;
-                else isToday = todayIdx >= fIdx || todayIdx <= tIdx;
-            }
-        }
+        let isToday = entry.serviceDates?.includes(todayStr) || false;
+        if (!isToday) isToday = matchesServiceDayRange(entry, todayIdx);
 
         // Calculate summary (First - Last, Interval)
         let summaryTimes = '';
@@ -1221,22 +1275,10 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
     let activeIndex = options.scheduleIndex;
     if (activeIndex === undefined || activeIndex === null || isNaN(activeIndex)) {
         // Default to today's schedule
-        const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
-        const todayName = dayNames[new Date().getDay()];
-        const todayIdx = dayNames.indexOf(todayName);
-
-        activeIndex = schedule.findIndex(s => {
-            if (s.serviceDates?.includes(tbilisiNow)) return true;
-            if (s.fromDay && s.toDay) {
-                const fIdx = dayNames.indexOf(s.fromDay);
-                const tIdx = dayNames.indexOf(s.toDay);
-                if (fIdx !== -1 && tIdx !== -1) {
-                    if (fIdx <= tIdx) return todayIdx >= fIdx && todayIdx <= tIdx;
-                    return todayIdx >= fIdx || todayIdx <= tIdx;
-                }
-            }
-            return false;
-        });
+        activeIndex = schedule.findIndex(s => s.serviceDates?.includes(todayStr));
+        if (activeIndex === -1) {
+            activeIndex = schedule.findIndex(s => matchesServiceDayRange(s, todayIdx));
+        }
         if (activeIndex === -1 && schedule.length > 0) activeIndex = 0;
     }
 
@@ -1538,6 +1580,21 @@ function updateCardDisplayArrivals(cardEl, timeElId, displayEntries, primaryMinu
     }
 }
 
+function isCardRenderCurrent(cardId, stopId, renderVersion) {
+    const cardEl = document.getElementById(cardId);
+    if (!cardEl) return false;
+    if (String(cardEl.getAttribute('data-stop-id') || '') !== String(stopId)) return false;
+    return String(cardEl.getAttribute('data-render-version') || '') === String(renderVersion);
+}
+
+function escapeHtmlAttribute(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 // === RENDER ARRIVALS
 export function renderArrivals(arrivalsData, currentStopId = null) {
     const listEl = document.getElementById('arrivals-list');
@@ -1570,6 +1627,8 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         resetStopRouteFilter(stopId);
     }
     window._lastRenderedStopId = String(stopId);
+    const renderVersion = (Number(window._arrivalsRenderVersion) || 0) + 1;
+    window._arrivalsRenderVersion = renderVersion;
 
 
     // NOTE: Staleness-based refresh is now handled by ArrivalsController
@@ -2024,6 +2083,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         div.setAttribute('data-stop-id', stopId);
         div.setAttribute('data-route-id', routeId);
         div.setAttribute('data-direction', dirIdx);
+        div.setAttribute('data-render-version', String(renderVersion));
 
         if (div.style.opacity === '0' && !isNew) {
             div.style.opacity = '1';
@@ -2117,7 +2177,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
         const timeElId = `time-${stableId}`;
         const bottomBarId = `bottom-${stableId}`;
-        const bottomBarAttr = `id="${bottomBarId}"`;
+        let bottomBarDataAttrs = '';
 
         let bottomContent = '&nbsp;';
         // Preserve bottom content if already exists
@@ -2126,7 +2186,12 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             const baseHtml = existingBottom.dataset.baseHtml || extractBaseArrivalBottomHtml(existingBottom.innerHTML);
             const lastScheduledMinutes = existingBottom.dataset.lastScheduledMinutes;
             const firstScheduledMinutes = existingBottom.dataset.firstScheduledMinutes;
-            lateWarningIndices = getLateWarningIndices(item, lastScheduledMinutes, firstScheduledMinutes, { isMetroCard: isMetroStop });
+            const existingSchedulePatternSuffix = existingBottom.dataset.schedulePatternSuffix || '';
+            lateWarningIndices = getLateWarningIndices(item, lastScheduledMinutes, firstScheduledMinutes, {
+                isMetroCard: isMetroStop,
+                stopId,
+                schedulePatternSuffix: existingSchedulePatternSuffix
+            });
             if (lateWarningIndices.length === 0) {
                 lateWarningIndices = (div.getAttribute('data-late-warning-indices') || '')
                     .split(',')
@@ -2134,14 +2199,13 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                     .map(v => parseInt(v, 10))
                     .filter(v => Number.isFinite(v));
             }
-            logLateWarningDebug('render-existing-bottom', {
-                route: item?.data?.shortName,
-                routeId: item?.data?.id,
-                cardId: stableId,
-                firstScheduledMinutes,
-                lastScheduledMinutes,
-                lateWarningIndices
-            });
+            bottomBarDataAttrs = [
+                `data-base-html="${escapeHtmlAttribute(baseHtml)}"`,
+                `data-late-warning-indices="${escapeHtmlAttribute(lateWarningIndices.join(','))}"`,
+                `data-schedule-pattern-suffix="${escapeHtmlAttribute(existingSchedulePatternSuffix)}"`,
+                firstScheduledMinutes !== undefined ? `data-first-scheduled-minutes="${escapeHtmlAttribute(firstScheduledMinutes)}"` : '',
+                lastScheduledMinutes !== undefined ? `data-last-scheduled-minutes="${escapeHtmlAttribute(lastScheduledMinutes)}"` : ''
+            ].filter(Boolean).join(' ');
             bottomContent = buildArrivalBottomHtml(baseHtml, item, lastScheduledMinutes, firstScheduledMinutes, {
                 isMetroCard: isMetroStop,
                 lateWarningIndices
@@ -2154,7 +2218,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                     <div class="route-number" style="color: ${routeColor}">${simplifyNumber(routeShortName)}</div>
                     <div class="destination" title="${headsign}">${headsign}</div>
                 </div>
-                <div class="arrival-card-bottom" ${bottomBarAttr}>
+                <div class="arrival-card-bottom" id="${bottomBarId}" ${bottomBarDataAttrs}>
                     ${bottomContent}
                 </div>
             </div>
@@ -2168,18 +2232,6 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         }
         div.setAttribute('data-late-warning-indices', lateWarningIndices.join(','));
         applyLateWarningClasses(div, lateWarningIndices);
-        logLateWarningDebug('render-card', {
-            route: item?.data?.shortName,
-            routeId: item?.data?.id,
-            cardId: stableId,
-            lateWarningIndices,
-            displayArrivals: displayArrivals.map((entry, index) => ({
-                index,
-                minutes: entry?.minutes,
-                isScheduled: entry?.isScheduled,
-                text: entry?.text
-            }))
-        });
 
         // Click handler (refresh every time to ensure latest closure)
         let routeObj = deps.allRoutes().find(r => r.id === routeIdForClick) ||
@@ -2204,11 +2256,12 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 div.setAttribute('data-live-route-arrivals-fetch', 'pending');
                 const actualStopId = item.data._sourceStopId || stopId;
                 api.fetchRouteArrivalsForStop(actualStopId, routeIdForClick).then(routeArrivals => {
-                    if (String(div.getAttribute('data-stop-id') || '') !== String(stopId)) {
+                    if (!isCardRenderCurrent(stableId, stopId, renderVersion)) {
                         return;
                     }
                     if (!Array.isArray(routeArrivals) || routeArrivals.length === 0) {
-                        div.setAttribute('data-live-route-arrivals-fetch', 'done');
+                        const currentDiv = document.getElementById(stableId);
+                        if (currentDiv) currentDiv.setAttribute('data-live-route-arrivals-fetch', 'done');
                         return;
                     }
 
@@ -2225,24 +2278,21 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                     const nextDisplayArrivals = buildDisplayedArrivals(candidateArrivals, 3);
                     if (
                         nextDisplayArrivals.length > 1 &&
-                        document.getElementById(div.id) === div &&
-                        String(div.getAttribute('data-stop-id') || '') === String(stopId)
+                        isCardRenderCurrent(stableId, stopId, renderVersion)
                     ) {
+                        const currentDiv = document.getElementById(stableId);
+                        if (!currentDiv) return;
                         item.displayArrivals = nextDisplayArrivals;
                         const currentBottomEl = document.getElementById(bottomBarId);
                         const firstScheduledMinutes = currentBottomEl?.dataset.firstScheduledMinutes;
                         const lastScheduledMinutes = currentBottomEl?.dataset.lastScheduledMinutes;
-                        const lateWarnings = getLateWarningEntries(item, lastScheduledMinutes, firstScheduledMinutes, { isMetroCard: isMetroStop });
-                        const lateWarningIndices = getLateWarningIndices(item, lastScheduledMinutes, firstScheduledMinutes, { isMetroCard: isMetroStop });
-                        logLateWarningDebug('route-fetch-update', {
-                            route: item?.data?.shortName,
-                            routeId: item?.data?.id,
-                            cardId: stableId,
-                            firstScheduledMinutes,
-                            lastScheduledMinutes,
-                            nextDisplayArrivals,
-                            lateWarningIndices
-                        });
+                        const lateWarningOptions = {
+                            isMetroCard: isMetroStop,
+                            stopId,
+                            schedulePatternSuffix: currentBottomEl?.dataset.schedulePatternSuffix
+                        };
+                        const lateWarnings = getLateWarningEntries(item, lastScheduledMinutes, firstScheduledMinutes, lateWarningOptions);
+                        const lateWarningIndices = getLateWarningIndices(item, lastScheduledMinutes, firstScheduledMinutes, lateWarningOptions);
                         if (currentBottomEl) {
                             currentBottomEl.dataset.lateWarningIndices = lateWarningIndices.join(',');
                             const baseHtml = currentBottomEl.dataset.baseHtml || currentBottomEl.innerHTML;
@@ -2251,17 +2301,23 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                                 lateWarningIndices
                             });
                         }
-                        div.setAttribute('data-late-warning-indices', lateWarningIndices.join(','));
-                        applyLateWarningClasses(div, lateWarningIndices);
-                        updateCardDisplayArrivals(div, timeElId, nextDisplayArrivals, nextDisplayArrivals[0].minutes, {
+                        currentDiv.setAttribute('data-late-warning-indices', lateWarningIndices.join(','));
+                        applyLateWarningClasses(currentDiv, lateWarningIndices);
+                        updateCardDisplayArrivals(currentDiv, timeElId, nextDisplayArrivals, nextDisplayArrivals[0].minutes, {
                             isMetroCard: isMetroStop,
                             lateWarningIndices
                         });
                     }
-                    div.setAttribute('data-live-route-arrivals-fetch', 'done');
+                    const currentDiv = document.getElementById(stableId);
+                    if (currentDiv && isCardRenderCurrent(stableId, stopId, renderVersion)) {
+                        currentDiv.setAttribute('data-live-route-arrivals-fetch', 'done');
+                    }
                 }).catch(err => {
                     console.warn('[Arrivals] Route-specific live arrivals fetch failed', err);
-                    div.setAttribute('data-live-route-arrivals-fetch', 'error');
+                    const currentDiv = document.getElementById(stableId);
+                    if (currentDiv && isCardRenderCurrent(stableId, stopId, renderVersion)) {
+                        currentDiv.setAttribute('data-live-route-arrivals-fetch', 'error');
+                    }
                 });
             }
         } else if (item.type !== 'live' || displayArrivals.length >= 3) {
@@ -2295,14 +2351,25 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             const hasInfo = bottomEl && bottomEl.innerHTML.trim() !== '&nbsp;' && bottomEl.innerHTML.trim() !== '';
 
             if (!hasInfo || item.needsFetch) {
-                getV3Schedule(item.data.shortName, stopId, item.data.id).then(res => {
-                    if (String(div.getAttribute('data-stop-id') || '') !== String(stopId)) return;
+                const explicitSuffix = getSchedulePatternSuffixForItem(item, stopId);
+                getV3Schedule(item.data.shortName, stopId, item.data.id, explicitSuffix).then(res => {
+                    if (!isCardRenderCurrent(stableId, stopId, renderVersion)) return;
                     if (!res) return;
-                    const { nextArrivals, firstTime, lastTime, serviceWindows, firstScheduledMinutes, lastScheduledMinutes, sparseTripSummary } = res;
+                    const currentDiv = document.getElementById(stableId);
+                    if (!currentDiv) return;
+                    const {
+                        nextArrivals,
+                        firstTime,
+                        lastTime,
+                        serviceWindows,
+                        firstScheduledMinutes,
+                        lastScheduledMinutes,
+                        sparseTripSummary
+                    } = res;
 
                     // 1. Update Bottom Bar (First/Last + Interval Description)
                     const currentBottomEl = document.getElementById(bottomBarId);
-                    if (!currentBottomEl || String(div.getAttribute('data-stop-id') || '') !== String(stopId)) return;
+                    if (!currentBottomEl || !isCardRenderCurrent(stableId, stopId, renderVersion)) return;
 
                     // Route 174 uses serviceWindows instead of firstTime/lastTime
                     if (currentBottomEl && (serviceWindows || (firstTime && lastTime))) {
@@ -2332,16 +2399,14 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                         }
 
                         currentBottomEl.dataset.baseHtml = bottomHTML;
-                        const lateWarningIndices = getLateWarningIndices(item, lastScheduledMinutes, firstScheduledMinutes, { isMetroCard: isMetroStop });
-                        logLateWarningDebug('schedule-bottom-update', {
-                            route: item?.data?.shortName,
-                            routeId: item?.data?.id,
-                            cardId: stableId,
-                            firstScheduledMinutes,
-                            lastScheduledMinutes,
-                            lateWarningIndices
-                        });
+                        const lateWarningOptions = {
+                            isMetroCard: isMetroStop,
+                            stopId,
+                            schedulePatternSuffix: explicitSuffix
+                        };
+                        const lateWarningIndices = getLateWarningIndices(item, lastScheduledMinutes, firstScheduledMinutes, lateWarningOptions);
                         currentBottomEl.dataset.lateWarningIndices = lateWarningIndices.join(',');
+                        currentBottomEl.dataset.schedulePatternSuffix = explicitSuffix || '';
                         if (firstScheduledMinutes !== undefined && firstScheduledMinutes !== null) {
                             currentBottomEl.dataset.firstScheduledMinutes = String(firstScheduledMinutes);
                         } else {
@@ -2357,11 +2422,11 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                             isMetroCard: isMetroStop,
                             lateWarningIndices
                         });
-                        div.setAttribute('data-late-warning-indices', lateWarningIndices.join(','));
-                        applyLateWarningClasses(div, lateWarningIndices);
+                        currentDiv.setAttribute('data-late-warning-indices', lateWarningIndices.join(','));
+                        applyLateWarningClasses(currentDiv, lateWarningIndices);
                         const displayEntries = Array.isArray(item.displayArrivals) ? item.displayArrivals.slice(0, 3) : [];
                         if (displayEntries.length > 0) {
-                            updateCardDisplayArrivals(div, timeElId, displayEntries, item.minutes, { isMetroCard: isMetroStop, lateWarningIndices });
+                            updateCardDisplayArrivals(currentDiv, timeElId, displayEntries, item.minutes, { isMetroCard: isMetroStop, lateWarningIndices });
                         }
                     }
 
@@ -2370,27 +2435,22 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                         const displayEntries = buildScheduleDisplayEntries(nextArrivals, 3);
                         const firstArrival = displayEntries[0];
                         const timeEl = document.getElementById(timeElId);
-                        if (String(div.getAttribute('data-stop-id') || '') !== String(stopId)) return;
+                        if (!isCardRenderCurrent(stableId, stopId, renderVersion)) return;
                         if (timeEl && firstArrival) {
-                            const currentType = div.getAttribute('data-item-type');
+                            const currentType = currentDiv.getAttribute('data-item-type');
                             const isStillScheduled = currentType === 'scheduled' || timeEl.classList.contains('scheduled-time');
                             if (!isStillScheduled) return;
                             const minsFromNow = firstArrival.minutes;
                             item.displayArrivals = displayEntries;
                             const warningItem = { ...item, displayArrivals: displayEntries };
-                            const lateWarningIndices = getLateWarningIndices(warningItem, lastScheduledMinutes, firstScheduledMinutes, { isMetroCard: isMetroStop });
-                            logLateWarningDebug('schedule-primary-update', {
-                                route: item?.data?.shortName,
-                                routeId: item?.data?.id,
-                                cardId: stableId,
-                                firstScheduledMinutes,
-                                lastScheduledMinutes,
-                                displayEntries,
-                                lateWarningIndices
+                            const lateWarningIndices = getLateWarningIndices(warningItem, lastScheduledMinutes, firstScheduledMinutes, {
+                                isMetroCard: isMetroStop,
+                                stopId,
+                                schedulePatternSuffix: explicitSuffix
                             });
-                            div.setAttribute('data-late-warning-indices', lateWarningIndices.join(','));
-                            applyLateWarningClasses(div, lateWarningIndices);
-                            updateCardDisplayArrivals(div, timeElId, displayEntries, minsFromNow, { isMetroCard: isMetroStop, lateWarningIndices });
+                            currentDiv.setAttribute('data-late-warning-indices', lateWarningIndices.join(','));
+                            applyLateWarningClasses(currentDiv, lateWarningIndices);
+                            updateCardDisplayArrivals(currentDiv, timeElId, displayEntries, minsFromNow, { isMetroCard: isMetroStop, lateWarningIndices });
                             const cacheKey = `${stopId}|${item.data.id || item.data.shortName}|${item.directionIndex || 0}`;
                             scheduledArrivalsCache.set(cacheKey, {
                                 minutes: minsFromNow,
@@ -2590,13 +2650,6 @@ export function startArrivalsCountdown() {
                 });
 
                 applyLateWarningClasses(item, lateWarningIndices);
-                logLateWarningDebug('countdown-refresh', {
-                    cardId: item.id,
-                    adjustedMinutes,
-                    displayMinutes,
-                    displayScheduled,
-                    lateWarningIndices
-                });
 
                 needsResort = true;
             }

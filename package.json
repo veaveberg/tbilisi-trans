@@ -11,11 +11,17 @@
     "build": "vite build",
     "build:all": "npm run prefetch && vite build",
     "build:cap": "VITE_BASE_URL=/ npm run build",
-    "build:ios": "VITE_BASE_URL=/ VITE_OUT_DIR=dist-ios npm run build && npx cap copy ios",
+    "build:ios": "VITE_BASE_URL=/ VITE_OUT_DIR=dist-ios VITE_DISABLE_PWA=1 npm run build && npx cap copy ios",
     "sync:ios": "npm run build:ios",
+    "build:android": "VITE_BASE_URL=/ VITE_OUT_DIR=dist-ios VITE_DISABLE_PWA=1 npm run build && npx cap copy android",
+    "sync:android": "npm run build:android",
+    "android:open": "export JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' && npx cap open android",
+    "android:run": "export JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' && npx cap run android",
+    "android:build": "export JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' && cd android && ./gradlew assembleDebug",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.0.1",
     "@capacitor/app": "^8.0.0",
     "@capacitor/cli": "^8.0.1",
     "@capacitor/core": "^8.0.1",

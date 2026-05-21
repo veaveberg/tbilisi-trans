@@ -49,9 +49,7 @@ const TBILISI_REGION_BBOX = Object.freeze({
 const FOLLOW_SMOOTHING_FACTOR = 0.35;
 const FOLLOW_SNAP_DISTANCE_METERS = 250;
 const NativeGeolocation = registerPlugin('NativeGeolocation');
-const isNativeIOS = typeof Capacitor?.getPlatform === 'function' &&
-    Capacitor.getPlatform() === 'ios' &&
-    (typeof Capacitor.isNativePlatform !== 'function' || Capacitor.isNativePlatform());
+const isNative = typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform();
 const nativeWatchCallbacks = new Map();
 let nativeWatchListenerPromise = null;
 
@@ -121,7 +119,7 @@ function repairUserLocationMarker(map, position = null) {
 }
 
 function triggerGeolocateWithoutStoppingActiveWatch(map, options = {}) {
-    if (!isNativeIOS) {
+    if (!isNative) {
         geolocate.trigger();
         return true;
     }
@@ -262,14 +260,14 @@ const geolocate = new mapboxgl.GeolocateControl({
     fitBoundsOptions: {
         maxZoom: 18
     },
-    geolocation: isNativeIOS ? nativeGeolocation : navigator.geolocation
+    geolocation: isNative ? nativeGeolocation : navigator.geolocation
 });
 
 // Defensive fix 
 if (!geolocate._onGeolocateStop) {
     geolocate._onGeolocateStop = () => { };
 }
-if (isNativeIOS) {
+if (isNative) {
     geolocate._checkGeolocationSupport = (callback) => {
         geolocate._supportsGeolocation = true;
         callback(true);
@@ -308,7 +306,7 @@ export async function refreshLocationMarker(map, options = {}) {
         updateLocationIcon(document.getElementById('locate-me'));
     }
 
-    if (isNativeIOS) {
+    if (isNative) {
         try {
             const perms = await NativeGeolocation.checkPermissions();
             if (perms?.location !== 'granted') return false;
@@ -378,14 +376,14 @@ export async function refreshLocationMarker(map, options = {}) {
 
 // Helpers
 function isSecureContext() {
-    if (isNativeIOS) return true;
+    if (isNative) return true;
     const isSecure = window.isSecureContext || window.location.hostname === 'localhost';
     const hasGeo = !!navigator.geolocation;
     return isSecure && hasGeo;
 }
 
 function checkHeadingSupport() {
-    if (isNativeIOS) return true;
+    if (isNative) return true;
     return !!(window.DeviceOrientationEvent) &&
         ('ontouchstart' in window || 'ondeviceorientationabsolute' in window || 'ondeviceorientation' in window);
 }
@@ -513,7 +511,7 @@ function updateLocationIcon(btn) {
 function startPersistentOrientationTracking(map) {
     if (isOrientationTrackingStarted) return;
 
-    if (isNativeIOS) {
+    if (isNative) {
         nativeHeadingListenerPromise = nativeHeadingListenerPromise || NativeGeolocation.addListener('headingUpdate', (event) => {
             handleHeadingUpdate(map, event?.heading);
         }).catch(() => null);
@@ -562,7 +560,7 @@ export function setupGeolocation(map) {
     const compassIcon = miniCompass?.querySelector('svg');
 
     checkHeadingSupport();
-    if (!isNativeIOS && localStorage.getItem('compassPermissionGranted') === 'true') {
+    if (!isNative && localStorage.getItem('compassPermissionGranted') === 'true') {
         startPersistentOrientationTracking(map);
     }
     updateLocationIcon(locateBtn);
@@ -609,7 +607,7 @@ export function setupGeolocation(map) {
         locateBtn.addEventListener('click', () => {
             lastLocateClickTime = Date.now();
 
-            if (!isNativeIOS && checkHeadingSupport() && typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            if (!isNative && checkHeadingSupport() && typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                 const granted = localStorage.getItem('compassPermissionGranted') === 'true';
                 if (!granted) {
                     // Defer permission prompt so UI state updates immediately.
@@ -636,7 +634,7 @@ export function setupGeolocation(map) {
                 return;
             }
 
-            if (isNativeIOS && lastUserCoords && !hasUserLocationMarker()) {
+            if (isNative && lastUserCoords && !hasUserLocationMarker()) {
                 repairUserLocationMarker(map);
                 refreshLocationMarker(map, {
                     preserveCurrentZoom: true,
@@ -661,7 +659,7 @@ export function setupGeolocation(map) {
                         center: [lastUserCoords.lng, lastUserCoords.lat],
                         duration: 500
                     });
-                    if (isNativeIOS) {
+                    if (isNative) {
                         refreshLocationMarker(map, {
                             activateFollow: true,
                             preserveCurrentZoom: true,
@@ -676,7 +674,7 @@ export function setupGeolocation(map) {
                     startPersistentOrientationTracking(map);
                 };
 
-                if (isNativeIOS) {
+                if (isNative) {
                     enableHeadingIndicator();
                 } else if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                     DeviceOrientationEvent.requestPermission()
@@ -719,7 +717,7 @@ export function setupGeolocation(map) {
                 };
 
                 if (checkHeadingSupport()) {
-                    if (isNativeIOS) {
+                    if (isNative) {
                         attemptHeadingTransition();
                     } else if (typeof DeviceOrientationEvent.requestPermission === 'function') {
                         DeviceOrientationEvent.requestPermission()
@@ -981,7 +979,7 @@ export function setupGeolocation(map) {
             startPersistentOrientationTracking(map);
         }
 
-        if (isNativeIOS) {
+        if (isNative) {
             try {
                 const perms = await NativeGeolocation.checkPermissions();
                 if (perms?.location === 'denied') return;

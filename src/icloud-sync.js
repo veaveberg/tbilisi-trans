@@ -1,8 +1,7 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
 import { historyManager } from './history.js';
 import { favoritesManager } from './favorites.js';
-
-const NativeSettingsPlugin = registerPlugin('NativeSettings');
+import { getNativeSettingsPlugin } from './settings.js';
 
 const SEARCH_LIMIT = 30;
 const CARD_LIMIT = 30;
@@ -15,23 +14,6 @@ let isApplyingRemote = false;
 let pushTimer = null;
 let lastPushedSignature = '';
 let pendingEnableMode = null;
-
-function isNativeSettingsAvailable() {
-    if (typeof Capacitor === 'undefined') return false;
-    if (typeof Capacitor.isNativePlatform === 'function' && !Capacitor.isNativePlatform()) return false;
-    if (typeof Capacitor.isPluginAvailable === 'function') {
-        return Capacitor.isPluginAvailable('NativeSettings');
-    }
-    return typeof window !== 'undefined' &&
-        window.Capacitor &&
-        window.Capacitor.Plugins &&
-        window.Capacitor.Plugins.NativeSettings;
-}
-
-function getNativeSettingsPlugin() {
-    if (!isNativeSettingsAvailable()) return null;
-    return NativeSettingsPlugin;
-}
 
 function normalizeList(list, limit) {
     if (!Array.isArray(list)) return [];
