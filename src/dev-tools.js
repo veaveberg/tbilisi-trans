@@ -761,6 +761,7 @@ function startEditing(stopId) {
     const toggleRot = document.getElementById('edit-toggle-rot');
     const nameEn = document.getElementById('edit-name-en');
     const nameKa = document.getElementById('edit-name-ka');
+    const gondolaInfoInput = document.getElementById('edit-gondola-info');
 
     // Populate Names (simplified logic compared to main.js for brevity but robust)
     const urlParams = new URLSearchParams(window.location.search);
@@ -1197,8 +1198,12 @@ async function saveEditChanges() {
     }
 
     const api = await import('./api.js');
+    const toSavedStopId = (id) => {
+        if (typeof id === 'string' && id.startsWith('r')) return id;
+        return api.getApiId(id);
+    };
 
-    // Create a cleaned version for saving with fully qualified API IDs
+    // Save Tbilisi stops with API IDs and preserve Rustavi's canonical r-prefixed IDs.
     const saveStopsConfig = {
         overrides: {},
         merges: {},
@@ -1206,16 +1211,16 @@ async function saveEditChanges() {
     };
 
     Object.keys(stopsConfig.overrides || {}).forEach(id => {
-        saveStopsConfig.overrides[api.getApiId(id)] = stopsConfig.overrides[id];
+        saveStopsConfig.overrides[toSavedStopId(id)] = stopsConfig.overrides[id];
     });
 
     Object.keys(stopsConfig.merges || {}).forEach(id => {
-        saveStopsConfig.merges[api.getApiId(id)] = api.getApiId(stopsConfig.merges[id]);
+        saveStopsConfig.merges[toSavedStopId(id)] = toSavedStopId(stopsConfig.merges[id]);
     });
 
     Object.keys(stopsConfig.hubs || {}).forEach(hubId => {
         // Hub IDs are internal (e.g. HUB_1_811), no need to getApiId for the key
-        saveStopsConfig.hubs[hubId] = (stopsConfig.hubs[hubId] || []).map(id => api.getApiId(id));
+        saveStopsConfig.hubs[hubId] = (stopsConfig.hubs[hubId] || []).map(id => toSavedStopId(id));
     });
 
     try {

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { parseCSV, rowsToCSV } from '../src/csv-parser.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -8,78 +9,88 @@ const __dirname = path.dirname(__filename);
 const BEARINGS_FILE = path.join(__dirname, '../src/data/stop_bearings.json');
 const CSV_FILE = path.join(__dirname, '../public/data/stops_overrides.csv');
 const RUSTAVI_STOPS_FILE = path.join(__dirname, '../public/data/rustavi_stops_en.json');
+const RUSTAVI_STOPS_KA_FILE = path.join(__dirname, '../public/data/rustavi_stops_ka.json');
 
 const bearings = JSON.parse(fs.readFileSync(BEARINGS_FILE, 'utf-8'));
 const csv = fs.readFileSync(CSV_FILE, 'utf-8');
-const lines = csv.split('\n');
-const header = lines[0];
+const rows = parseCSV(csv);
+const rustaviStops = JSON.parse(fs.readFileSync(RUSTAVI_STOPS_FILE, 'utf-8'));
+const rustaviStopsKa = fs.existsSync(RUSTAVI_STOPS_KA_FILE)
+    ? JSON.parse(fs.readFileSync(RUSTAVI_STOPS_KA_FILE, 'utf-8'))
+    : [];
 
-// Find column indices
-const headers = header.split(',');
-const rotationIndex = headers.indexOf('rotation');
-console.log('Rotation column index:', rotationIndex);
+const kaNameById = new Map(rustaviStopsKa.map(stop => [stop.id, stop.name || '']));
+const rowById = new Map(rows.map(row => [row.id, row]));
+const headers = [
+    'id',
+    'name_en',
+    'name_en_override',
+    'name_ka',
+    'name_ka_override',
+    'name_ru_override',
+    'lat',
+    'lat_override',
+    'lon',
+    'lon_override',
+    'rotation',
+    'rotation_override',
+    'mergeParent',
+    'hubTarget',
+    'vehicleMode_override',
+    'provider_override',
+    'gondolaInfo_override'
+];
 
 // Track existing IDs
-const existingIds = new Set();
-
 let updated = 0;
-const newLines = [header];
 
-// Update existing lines
-for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line.trim()) continue;
+for (const stop of rustaviStops) {
+    const appId = 'r' + stop.id.replace('1:', '');
+    const bearing = bearings[appId];
 
-    const parts = line.split(',');
-    const id = parts[0];
-    existingIds.add(id);
+    if (!rowById.has(appId)) continue;
+    if (bearing === undefined) continue;
 
-    // Update rotation column with new bearing
-    if (bearings[id] !== undefined) {
-        parts[rotationIndex] = String(bearings[id]);
+    const row = rowById.get(appId);
+    if (String(row.rotation || '') !== String(bearing)) {
+        row.rotation = String(bearing);
         updated++;
     }
-
-    newLines.push(parts.join(','));
 }
 
-console.log(`Updated rotation for ${updated} existing stops`);
+console.log(`Updated rotation for ${updated} existing Rustavi stops`);
 
 // Add missing Rustavi stops
 let added = 0;
-const rustaviStops = JSON.parse(fs.readFileSync(RUSTAVI_STOPS_FILE, 'utf-8'));
 
 for (const stop of rustaviStops) {
-    // Convert 1:xxx to rxxx
     const appId = 'r' + stop.id.replace('1:', '');
+    if (rowById.has(appId)) continue;
 
-    if (existingIds.has(appId)) continue;
-
-    const rotation = bearings[appId] || 0;
-
-    // Build row: id,name_en,name_en_override,name_ka,name_ka_override,name_ru_override,lat,lat_override,lon,lon_override,rotation,rotation_override,mergeParent,hubTarget
-    const row = [
-        appId,                    // id
-        stop.name || '',          // name_en
-        '',                       // name_en_override
-        '',                       // name_ka (will need to get from ka file)
-        '',                       // name_ka_override
-        '',                       // name_ru_override
-        stop.lat || '',           // lat
-        '',                       // lat_override
-        stop.lon || '',           // lon
-        '',                       // lon_override
-        rotation,                 // rotation
-        '',                       // rotation_override
-        '',                       // mergeParent
-        ''                        // hubTarget
-    ];
-
-    newLines.push(row.join(','));
+    rows.push({
+        id: appId,
+        name_en: stop.name || '',
+        name_en_override: '',
+        name_ka: kaNameById.get(stop.id) || '',
+        name_ka_override: '',
+        name_ru_override: '',
+        lat: stop.lat || '',
+        lat_override: '',
+        lon: stop.lon || '',
+        lon_override: '',
+        rotation: String(bearings[appId] ?? 0),
+        rotation_override: '',
+        mergeParent: '',
+        hubTarget: '',
+        vehicleMode_override: '',
+        provider_override: '',
+        gondolaInfo_override: ''
+    });
     added++;
 }
 
 console.log(`Added ${added} new Rustavi stops`);
 
-fs.writeFileSync(CSV_FILE, newLines.join('\n'));
+rows.sort((a, b) => String(a.id || '').localeCompare(String(b.id || ''), undefined, { numeric: true }));
+fs.writeFileSync(CSV_FILE, rowsToCSV(rows, headers));
 console.log(`\nTotal: ${updated} updated, ${added} added to ${CSV_FILE}`);

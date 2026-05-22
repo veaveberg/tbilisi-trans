@@ -666,14 +666,19 @@ export function initSettings({ onUpdate }) {
 
     // Toggle Menu
     if (menuBtn && menuPopup) {
+        const setMenuVisibility = (isOpen) => {
+            menuPopup.classList.toggle('hidden', !isOpen);
+            document.body.classList.toggle('menu-open', isOpen);
+        };
+
         menuBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (isNativeSettingsAvailable()) {
-                menuPopup.classList.add('hidden');
+                setMenuVisibility(false);
                 openNativeSettings();
                 return;
             }
-            menuPopup.classList.toggle('hidden');
+            setMenuVisibility(menuPopup.classList.contains('hidden'));
         });
 
         // Close when clicking outside
@@ -681,7 +686,7 @@ export function initSettings({ onUpdate }) {
             if (!menuPopup.classList.contains('hidden')) {
                 // If click is NOT inside menu and NOT inside button
                 if (!menuPopup.contains(e.target) && !menuBtn.contains(e.target)) {
-                    menuPopup.classList.add('hidden');
+                    setMenuVisibility(false);
                 }
             }
         });

@@ -1503,10 +1503,12 @@ function buildArrivalTimesMarkup(displayArrivals, timeElId, options = {}) {
     const entries = Array.isArray(displayArrivals) ? displayArrivals.slice(0, 3) : [];
     const primary = entries[0] || { text: '--:--', isScheduled: false };
     const isMetroCard = options.isMetroCard === true;
+    const staleLive = options.staleLive === true;
     const lateWarningIndices = new Set(Array.isArray(options.lateWarningIndices) ? options.lateWarningIndices : []);
     const lateStyleAttr = ` style="color:#fbbf24 !important; text-shadow:0 0 5px rgba(251, 191, 36, 0.28) !important;"`;
     const primaryClasses = ['led-text', 'arrival-time-primary'];
     if (primary.isScheduled) primaryClasses.push('scheduled-time');
+    if (staleLive && !primary.isScheduled) primaryClasses.push('stale-live-time');
     if (lateWarningIndices.has(0)) primaryClasses.push('late-depot-time');
     const primaryText = isMetroCard && primary.isScheduled ? String(primary.text || '').replace(/˚$/, '') : primary.text;
     const primaryMarkup = isMetroCard && primary.isScheduled
@@ -1523,6 +1525,7 @@ function buildArrivalTimesMarkup(displayArrivals, timeElId, options = {}) {
             ${entries.slice(1, 3).map((entry, index) => {
                 const classes = ['led-text', 'led-text-secondary'];
                 if (entry.isScheduled) classes.push('scheduled-time');
+                if (staleLive && !entry.isScheduled) classes.push('stale-live-time');
                 if (lateWarningIndices.has(index + 1)) classes.push('late-depot-time');
                 return `<div class="${classes.join(' ')}" data-secondary-index="${index + 1}"${lateWarningIndices.has(index + 1) ? lateStyleAttr : ''}>${entry.text}</div>`;
             }).join('')}
@@ -1578,6 +1581,43 @@ function updateCardDisplayArrivals(cardEl, timeElId, displayEntries, primaryMinu
         cardEl.setAttribute('data-minutes', primaryMinutes);
         cardEl.setAttribute('data-minutes-original', primaryMinutes);
     }
+}
+
+function isArrivalsLiveDataStale() {
+    return window.arrivalsLiveDataStale === true;
+}
+
+function shouldCardShowStaleLiveState(cardEl) {
+    if (!cardEl || !isArrivalsLiveDataStale()) return false;
+    return (cardEl.getAttribute('data-display-arrival-scheduled') || '')
+        .split(',')
+        .some(flag => flag === '0');
+}
+
+function applyStaleLiveTimeState(cardEl, force = null) {
+    if (!cardEl) return;
+    const isStale = typeof force === 'boolean' ? force : shouldCardShowStaleLiveState(cardEl);
+    const primaryEl = cardEl.querySelector('.arrival-time-primary');
+    if (primaryEl && !primaryEl.classList.contains('scheduled-time')) {
+        primaryEl.classList.toggle('stale-live-time', isStale);
+    }
+    const secondaryEls = cardEl.querySelectorAll('.led-text-secondary');
+    secondaryEls.forEach((secondaryEl) => {
+        if (!secondaryEl.classList.contains('scheduled-time')) {
+            secondaryEl.classList.toggle('stale-live-time', isStale);
+        }
+    });
+}
+
+export function setArrivalsLiveDataStale(isStale) {
+    window.arrivalsLiveDataStale = isStale === true;
+    document.querySelectorAll('.arrival-item').forEach(cardEl => {
+        applyStaleLiveTimeState(cardEl, shouldCardShowStaleLiveState(cardEl));
+    });
+}
+
+export function markArrivalsLiveDataStale() {
+    setArrivalsLiveDataStale(true);
 }
 
 function isCardRenderCurrent(cardId, stopId, renderVersion) {
@@ -2170,6 +2210,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
         div.setAttribute('data-display-arrival-minutes', displayArrivals.map(entry => entry.minutes).join(','));
         div.setAttribute('data-display-arrival-scheduled', displayArrivals.map(entry => entry.isScheduled ? '1' : '0').join(','));
+        const staleLive = isArrivalsLiveDataStale() && displayArrivals.some(entry => !entry.isScheduled);
 
         if (!headsign || headsign === 'undefined') {
             headsign = t('destinationUnknown');
@@ -2223,7 +2264,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 </div>
             </div>
             <div class="arrival-card-right">
-                ${buildArrivalTimesMarkup(displayArrivals, timeElId, { isMetroCard: isMetroStop, lateWarningIndices })}
+                ${buildArrivalTimesMarkup(displayArrivals, timeElId, { isMetroCard: isMetroStop, lateWarningIndices, staleLive })}
             </div>
         `;
 
@@ -2232,6 +2273,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         }
         div.setAttribute('data-late-warning-indices', lateWarningIndices.join(','));
         applyLateWarningClasses(div, lateWarningIndices);
+        applyStaleLiveTimeState(div, staleLive);
 
         // Click handler (refresh every time to ensure latest closure)
         let routeObj = deps.allRoutes().find(r => r.id === routeIdForClick) ||
@@ -2305,7 +2347,8 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                         applyLateWarningClasses(currentDiv, lateWarningIndices);
                         updateCardDisplayArrivals(currentDiv, timeElId, nextDisplayArrivals, nextDisplayArrivals[0].minutes, {
                             isMetroCard: isMetroStop,
-                            lateWarningIndices
+                            lateWarningIndices,
+                            staleLive: isArrivalsLiveDataStale()
                         });
                     }
                     const currentDiv = document.getElementById(stableId);
@@ -2426,7 +2469,11 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                         applyLateWarningClasses(currentDiv, lateWarningIndices);
                         const displayEntries = Array.isArray(item.displayArrivals) ? item.displayArrivals.slice(0, 3) : [];
                         if (displayEntries.length > 0) {
-                            updateCardDisplayArrivals(currentDiv, timeElId, displayEntries, item.minutes, { isMetroCard: isMetroStop, lateWarningIndices });
+                            updateCardDisplayArrivals(currentDiv, timeElId, displayEntries, item.minutes, {
+                                isMetroCard: isMetroStop,
+                                lateWarningIndices,
+                                staleLive: isArrivalsLiveDataStale()
+                            });
                         }
                     }
 
@@ -2450,7 +2497,11 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                             });
                             currentDiv.setAttribute('data-late-warning-indices', lateWarningIndices.join(','));
                             applyLateWarningClasses(currentDiv, lateWarningIndices);
-                            updateCardDisplayArrivals(currentDiv, timeElId, displayEntries, minsFromNow, { isMetroCard: isMetroStop, lateWarningIndices });
+                            updateCardDisplayArrivals(currentDiv, timeElId, displayEntries, minsFromNow, {
+                                isMetroCard: isMetroStop,
+                                lateWarningIndices,
+                                staleLive: isArrivalsLiveDataStale()
+                            });
                             const cacheKey = `${stopId}|${item.data.id || item.data.shortName}|${item.directionIndex || 0}`;
                             scheduledArrivalsCache.set(cacheKey, {
                                 minutes: minsFromNow,

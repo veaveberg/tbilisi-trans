@@ -11,6 +11,7 @@ import {
     fetchArrivals,
     fetchArrivalsOptimistic,
     renderArrivals,
+    setArrivalsLiveDataStale,
     updateArrivalsLoadingState
 } from './arrivals.js';
 
@@ -77,6 +78,7 @@ class ArrivalsController {
                 this.timestamp = Date.now();
                 window.lastArrivals = live;
                 window.arrivalsDataTimestamp = this.timestamp;
+                setArrivalsLiveDataStale(false);
                 renderArrivals(live, stopId);
             } else if (this.arrivals.length === 0) {
                 // No live AND no scheduled - render empty state

@@ -714,29 +714,36 @@ export function updateMapTheme() {
     }
 }
 
-export function addStopsToMap(stops, options = {}) {
-    // Note: options like redirectMap, filterManager, updateConnectionLine are needed for interaction setup
-    // But interaction logic (setupHoverHandlers) is likely called SEPARATELY in main.js
-    // This function focuses on LAYERS.
-    // However, it creates a filter connection layer dependent on filterManager?
-    // Let's keep it as is.
-    const { redirectMap, filterManager, updateConnectionLine } = options;
+const STOP_STACK_SOURCE_IDS = [
+    'metro-stops',
+    'metro-schematic-source',
+    'metro-exits',
+    'metro-lines-manual',
+    'stops',
+    'selected-stop',
+    'filter-connection'
+];
 
-    const sourcesToClean = [
-        'metro-stops',
-        'metro-schematic-source',
-        'metro-exits',
-        'metro-lines-manual',
-        'stops',
-        'selected-stop',
-        'filter-connection'
-    ];
+const STOP_STACK_LAYER_IDS = [
+    'stops-layer-hit-target',
+    'stops-layer-glow',
+    'stops-layer-circle',
+    'stops-layer-circle-hover',
+    'stops-layer',
+    'stops-layer-hover',
+    'stops-highlight-glow',
+    'stops-highlight',
+    'filter-connection-line',
+    'filter-connection-label',
+    'filter-connection-label-sub',
+    'stops-label-selected'
+];
 
-    // Exhaustive cleanup: Remove ALL layers using our sources, then remove sources.
+function clearStopLayerStack() {
     const currentStyle = map.getStyle();
     if (currentStyle && currentStyle.layers) {
         currentStyle.layers.forEach(layer => {
-            if (sourcesToClean.includes(layer.source) ||
+            if (STOP_STACK_SOURCE_IDS.includes(layer.source) ||
                 layer.id.startsWith('filter-connection-') ||
                 layer.id === 'stops-highlight-glow' ||
                 layer.id === 'stops-label-selected') {
@@ -749,25 +756,66 @@ export function addStopsToMap(stops, options = {}) {
         });
     }
 
-    // Now remove the sources
-    sourcesToClean.forEach(sourceId => {
+    STOP_STACK_SOURCE_IDS.forEach(sourceId => {
         try {
             if (map.getSource(sourceId)) map.removeSource(sourceId);
         } catch (e) {
             console.warn(`[Map] Failed to remove source ${sourceId}:`, e.message);
         }
     });
+}
 
-    const { busStops, metroFeatures } = metro.processMetroStops(stops, stopRotations);
-    const metroLines = metro.generateMetroLines(metroFeatures);
+function hasCompleteStopLayerStack() {
+    return STOP_STACK_LAYER_IDS.every((id) => map.getLayer(id)) &&
+        map.getSource('stops') &&
+        map.getSource('selected-stop') &&
+        map.getSource('filter-connection');
+}
 
-    map.addSource('stops', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: busStops },
-        cluster: false
-    });
+function moveStopLayerStackToExpectedOrder() {
+    if (map.getLayer('filter-connection-line') && map.getLayer('stops-layer')) {
+        map.moveLayer('filter-connection-line', 'stops-layer');
+    }
+    if (map.getLayer('stops-layer-glow') && map.getLayer('stops-layer-circle')) {
+        map.moveLayer('stops-layer-glow', 'stops-layer-circle');
+    }
+    if (map.getLayer('stops-highlight-glow') && map.getLayer('stops-highlight')) {
+        map.moveLayer('stops-highlight-glow', 'stops-highlight');
+    }
+    if (map.getLayer('metro-lines-layer') && map.getLayer('stops-layer')) {
+        map.moveLayer('metro-lines-layer', 'stops-layer');
+    }
+    if (map.getLayer('stops-highlight')) {
+        map.moveLayer('stops-highlight');
+    }
+    if (map.getLayer('stops-layer-circle-hover')) {
+        map.moveLayer('stops-layer-circle-hover');
+    }
+    if (map.getLayer('stops-layer-hover')) {
+        map.moveLayer('stops-layer-hover');
+    }
+    if (map.getLayer('metro-exits-glow')) {
+        map.moveLayer('metro-exits-glow');
+    }
+    if (map.getLayer('metro-exits-layer')) {
+        map.moveLayer('metro-exits-layer');
+    }
+    if (map.getLayer('metro-segment-center-label')) {
+        map.moveLayer('metro-segment-center-label');
+    }
+}
 
-    map.addLayer({
+function ensureStopsLayerStack() {
+    if (!map.getSource('stops')) {
+        map.addSource('stops', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] },
+            cluster: false
+        });
+    }
+
+    if (!map.getLayer('stops-layer-hit-target')) {
+        map.addLayer({
         id: 'stops-layer-hit-target',
         type: 'circle',
         source: 'stops',
@@ -779,8 +827,10 @@ export function addStopsToMap(stops, options = {}) {
             'circle-stroke-width': 0
         }
     });
+    }
 
-    map.addLayer({
+    if (!map.getLayer('stops-layer-glow')) {
+        map.addLayer({
         id: 'stops-layer-glow',
         type: 'circle',
         source: 'stops',
@@ -793,8 +843,10 @@ export function addStopsToMap(stops, options = {}) {
             'circle-emissive-strength': 1
         }
     });
+    }
 
-    map.addLayer({
+    if (!map.getLayer('stops-layer-circle')) {
+        map.addLayer({
         id: 'stops-layer-circle',
         type: 'circle',
         source: 'stops',
@@ -810,30 +862,34 @@ export function addStopsToMap(stops, options = {}) {
             'circle-emissive-strength': 1
         }
     });
+    }
 
-    // Hover layer: renders above stops-layer-circle to pop hovered stop to top
-    map.addLayer({
-        id: 'stops-layer-circle-hover',
-        type: 'circle',
-        source: 'stops',
-        maxzoom: 15.2,
-        slot: 'top',
-        filter: ['==', ['get', 'id'], ''], // Initially hidden (no match)
-        paint: {
-            'circle-color': '#000000',
-            'circle-stroke-color': '#555555',
-            'circle-stroke-width': 1.5,
-            'circle-stroke-opacity': 1,
-            'circle-radius': getCircleRadiusExpression(1),
-            'circle-opacity': 1,
-            'circle-emissive-strength': 1
-        }
-    });
+    if (!map.getLayer('stops-layer-circle-hover')) {
+        // Hover layer: renders above stops-layer-circle to pop hovered stop to top
+        map.addLayer({
+            id: 'stops-layer-circle-hover',
+            type: 'circle',
+            source: 'stops',
+            maxzoom: 15.2,
+            slot: 'top',
+            filter: ['==', ['get', 'id'], ''], // Initially hidden (no match)
+            paint: {
+                'circle-color': '#000000',
+                'circle-stroke-color': '#555555',
+                'circle-stroke-width': 1.5,
+                'circle-stroke-opacity': 1,
+                'circle-radius': getCircleRadiusExpression(1),
+                'circle-opacity': 1,
+                'circle-emissive-strength': 1
+            }
+        });
+    }
 
     const isDark = document.body.classList.contains('dark-mode');
     const themeSuffix = isDark ? 'dark' : 'light';
 
-    map.addLayer({
+    if (!map.getLayer('stops-layer')) {
+        map.addLayer({
         id: 'stops-layer',
         type: 'symbol',
         source: 'stops',
@@ -868,9 +924,11 @@ export function addStopsToMap(stops, options = {}) {
             'icon-emissive-strength': 1
         }
     });
+    }
 
-    // Hover symbol layer: renders above stops-layer to pop hovered stop to top at high zoom
-    map.addLayer({
+    if (!map.getLayer('stops-layer-hover')) {
+        // Hover symbol layer: renders above stops-layer to pop hovered stop to top at high zoom
+        map.addLayer({
         id: 'stops-layer-hover',
         type: 'symbol',
         source: 'stops',
@@ -906,13 +964,17 @@ export function addStopsToMap(stops, options = {}) {
             'icon-emissive-strength': 1
         }
     });
+    }
 
-    map.addSource('selected-stop', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] }
-    });
+    if (!map.getSource('selected-stop')) {
+        map.addSource('selected-stop', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+    }
 
-    map.addLayer({
+    if (!map.getLayer('stops-highlight-glow')) {
+        map.addLayer({
         id: 'stops-highlight-glow',
         type: 'circle',
         source: 'selected-stop',
@@ -925,8 +987,10 @@ export function addStopsToMap(stops, options = {}) {
             'circle-emissive-strength': 1
         }
     });
+    }
 
-    map.addLayer({
+    if (!map.getLayer('stops-highlight')) {
+        map.addLayer({
         id: 'stops-highlight',
         type: 'symbol',
         source: 'selected-stop',
@@ -959,12 +1023,16 @@ export function addStopsToMap(stops, options = {}) {
             'icon-emissive-strength': 1
         }
     });
+    }
 
-    map.addSource('filter-connection', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] }
-    });
-    map.addLayer({
+    if (!map.getSource('filter-connection')) {
+        map.addSource('filter-connection', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+    }
+    if (!map.getLayer('filter-connection-line')) {
+        map.addLayer({
         id: 'filter-connection-line',
         type: 'line',
         source: 'filter-connection',
@@ -977,9 +1045,10 @@ export function addStopsToMap(stops, options = {}) {
             'line-emissive-strength': 1
         }
     });
-    if (map.getLayer('stops-layer')) map.moveLayer('filter-connection-line', 'stops-layer');
+    }
 
-    map.addLayer({
+    if (!map.getLayer('filter-connection-label')) {
+        map.addLayer({
         id: 'filter-connection-label',
         type: 'symbol',
         source: 'filter-connection',
@@ -1010,8 +1079,10 @@ export function addStopsToMap(stops, options = {}) {
             'icon-opacity': 0.95
         }
     });
+    }
 
-    map.addLayer({
+    if (!map.getLayer('filter-connection-label-sub')) {
+        map.addLayer({
         id: 'filter-connection-label-sub',
         type: 'symbol',
         source: 'filter-connection',
@@ -1035,10 +1106,10 @@ export function addStopsToMap(stops, options = {}) {
             'text-opacity': 1
         }
     });
+    }
 
-    metro.addMetroLayers(map, metroFeatures, metroLines, stops);
-
-    map.addLayer({
+    if (!map.getLayer('stops-label-selected')) {
+        map.addLayer({
         id: 'stops-label-selected',
         type: 'symbol',
         source: 'stops',
@@ -1059,39 +1130,40 @@ export function addStopsToMap(stops, options = {}) {
             'text-emissive-strength': 1
         }
     });
+    }
+}
 
-    if (map.getLayer('stops-layer-glow') && map.getLayer('stops-layer-circle')) {
-        map.moveLayer('stops-layer-glow', 'stops-layer-circle');
-    }
-    if (map.getLayer('stops-highlight-glow') && map.getLayer('stops-highlight')) {
-        map.moveLayer('stops-highlight-glow', 'stops-highlight');
-    }
-    if (map.getLayer('metro-lines-layer') && map.getLayer('stops-layer')) {
-        map.moveLayer('metro-lines-layer', 'stops-layer');
-    }
-    if (map.getLayer('stops-highlight')) {
-        map.moveLayer('stops-highlight');
-    }
-    // Move hover layers to very top so hovered stop always renders above all other stops
-    if (map.getLayer('stops-layer-circle-hover')) {
-        map.moveLayer('stops-layer-circle-hover');
-    }
-    if (map.getLayer('stops-layer-hover')) {
-        map.moveLayer('stops-layer-hover');
+export function addStopsToMap(stops, options = {}) {
+    // Note: options like redirectMap, filterManager, updateConnectionLine are needed for interaction setup
+    // But interaction logic (setupHoverHandlers) is likely called SEPARATELY in main.js
+    // This function focuses on LAYERS.
+    // However, it creates a filter connection layer dependent on filterManager?
+    // Let's keep it as is.
+    const { redirectMap, filterManager, updateConnectionLine } = options;
+
+    const { busStops, metroFeatures } = metro.processMetroStops(stops, stopRotations);
+    const metroLines = metro.generateMetroLines(metroFeatures);
+
+    if (!hasCompleteStopLayerStack()) {
+        clearStopLayerStack();
+        ensureStopsLayerStack();
     }
 
-    // Move metro exits even higher than bus stops
-    if (map.getLayer('metro-exits-glow')) {
-        map.moveLayer('metro-exits-glow');
-    }
-    if (map.getLayer('metro-exits-layer')) {
-        map.moveLayer('metro-exits-layer');
-    }
+    map.getSource('stops')?.setData({
+        type: 'FeatureCollection',
+        features: busStops
+    });
+    map.getSource('selected-stop')?.setData({
+        type: 'FeatureCollection',
+        features: []
+    });
+    map.getSource('filter-connection')?.setData({
+        type: 'FeatureCollection',
+        features: []
+    });
 
-    // Ensure segment center labels are also on top
-    if (map.getLayer('metro-segment-center-label')) {
-        map.moveLayer('metro-segment-center-label');
-    }
+    metro.addMetroLayers(map, metroFeatures, metroLines, stops);
+    moveStopLayerStackToExpectedOrder();
 
     // Move place/district labels below our transit layers
     movePlaceLabelsBelow();

@@ -13,6 +13,10 @@
     pointer-events: none;
 }
 
+body.menu-open #ui-wrapper #map-controls {
+    z-index: 120;
+}
+
 #map-controls>* {
     pointer-events: auto;
 }

@@ -2706,10 +2706,26 @@ id,name_en,name_en_override,name_ka,name_ka_override,name_ru_override,lat,lat_ov
 1:gondola_4,Turtle Lake,Turtle Lake Cable Car Station,კუს ტბა,,,41.701247,,44.751546,,0,,,,,,
 1:gondola_5,University,,უნივერსიტეტი,,,41.717004,,44.717915,,0,,,,,,
 1:gondola_6,Bagebi,,ბაგები,,,41.713714,,44.717711,,0,,,,,,
-1:GONDOLA_MANUAL_1,,Funicular Lower Station,,,,,41.69532,,44.79194,0,,,,GONDOLA,manual-gondola,
-1:GONDOLA_MANUAL_2,,Mtatsminda Park Funicular Upper Station,,,,,41.69492,,44.78694,0,,,,GONDOLA,manual-gondola,
-1:GONDOLA_MANUAL_3,,Mtatsminda Park Cable Car,,,,,41.69578,,44.78643,0,,,,GONDOLA,manual-gondola,
-1:GONDOLA_MANUAL_4,,Rustaveli Cable Car,,,,,41.70297,,44.79057,0,,,,GONDOLA,manual-gondola,"Sunday–Friday: 10–22:30
+1:GONDOLA_MANUAL_1,,Funicular Lower Station,,ფუნიკულიორის ქვედა სადგური,,,41.69532,,44.79194,0,,,,GONDOLA,manual-gondola,"Everyday: 9:45–22:30
+
+Separate ticket system!
+One-way ticket is 3₾ for residents (ID required) and 12₾ for other foreign citizens
+
+You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used for 2 people, maybe more)"
+1:GONDOLA_MANUAL_2,,Mtatsminda Park Funicular Upper Station,,მთაწმინდის პარკის ფუნიკულიორის ზედა სადგური,,,41.69492,,44.78694,0,,,,GONDOLA,manual-gondola,"Everyday: 9:45–22:30
+
+Separate ticket system!
+One-way ticket is 3₾ for residents (ID required) and 12₾ for other foreign citizens
+
+You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used for 2 people, maybe more)"
+1:GONDOLA_MANUAL_3,,Mtatsminda Park Cable Car,,მთაწმინდის პარკი საბაგირო სადგური,,,41.69578,,44.78643,0,,,,GONDOLA,manual-gondola,"Sunday–Friday: 10–22:30
+Saturday: 12–22:30
+
+Separate ticket system!
+One-way ticket is 3₾ for residents (ID required) and 12₾ for other foreign citizens
+
+You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used for 2 people, maybe more)"
+1:GONDOLA_MANUAL_4,,Rustaveli Cable Car,,რუსთაველი საბაგირო სადგური,,,41.70297,,44.79057,0,,,,GONDOLA,manual-gondola,"Sunday–Friday: 10–22:30
 Saturday: 12–22:30
 
 Separate ticket system!
@@ -3064,6 +3080,7 @@ You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used 
 ,,,,,,,,,,,,,,,,
 --- OTHER ---,,,,,,,,,,,,,,,,
 One-way ticket is 3₾ for residents (ID required) and 12₾ for other foreign citizens,,,,,,,,,,,,,,,,
+One-way ticket is 3₾ for residents (ID required) and 12₾ for other foreign citizens,,,,,,,,,,,,,,,,
 Saturday: 12–22:30,,,,,,,,,,,,,,,,
 Separate ticket system!,,,,,,,,,,,,,,,,
 You also need to buy a Mtatsminda Park card for 2₾,,,,,,,,,,,,,,,,

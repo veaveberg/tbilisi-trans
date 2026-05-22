@@ -726,8 +726,15 @@ function pauseAppActivity() {
 
 function resumeAppActivity() {
     if (document.hidden) return;
+    const hasOpenStop = !!window.currentStopId;
+    if (hasOpenStop) {
+        try { arrivals.markArrivalsLiveDataStale(); } catch (e) { }
+    }
     try { arrivals.startArrivalsCountdown(); } catch (e) { }
     try { arrivalsController.resume(); } catch (e) { }
+    if (hasOpenStop) {
+        try { arrivalsController.refresh(); } catch (e) { }
+    }
     if (wasTrackingBeforePause) {
         try { refreshLocationMarker(map, { preserveCurrentZoom: true, suppressCameraUpdate: true }); } catch (e) { }
         if (typeof trackingZoomBeforePause === 'number') {

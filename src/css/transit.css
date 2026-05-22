@@ -229,6 +229,11 @@ body.dark-mode .arrival-item .led-text.late-depot-time {
     text-shadow: 0 0 5px rgba(251, 191, 36, 0.28) !important;
 }
 
+.arrival-item .led-text.stale-live-time,
+body.dark-mode .arrival-item .led-text.stale-live-time {
+    opacity: 0.4;
+}
+
 .arrival-item .arrival-time-primary.late-depot-time,
 body.dark-mode .arrival-item .arrival-time-primary.late-depot-time {
     color: #fbbf24 !important;

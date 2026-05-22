@@ -299,7 +299,7 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         scheduledTripsCount: '{0} рейсов',
         scheduledTripsBetween: '{0} рейсов между {1} – {2}',
         variesDuringDay: 'меняется в течение дня',
-        lateArrivalWarning: 'По расписанию, в жёлтое время автобусы уже не ходят. Не рссчитывайте на эти автобусы',
+        lateArrivalWarning: 'По расписанию в жёлтое время автобусы уже не ходят. Не рассчитывайте на эти автобусы',
         recentlySearched: 'НЕДАВНИЕ ПОИСКИ',
         clearAll: 'ОЧИСТИТЬ ВСЁ',
         clearSearchHistoryPrompt: 'Очистить историю поиска?',
