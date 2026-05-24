@@ -88,8 +88,8 @@
       display: none !important;
     }
   </style>
-  <script type="module" crossorigin src="/tbilisi-trans/assets/index-Djx25XgJ.js"></script>
-  <link rel="stylesheet" crossorigin href="/tbilisi-trans/assets/index-D_zCxSjb.css">
+  <script type="module" crossorigin src="/tbilisi-trans/assets/index-CyOtn6hR.js"></script>
+  <link rel="stylesheet" crossorigin href="/tbilisi-trans/assets/index-P0kT5-8R.css">
 <link rel="manifest" href="/tbilisi-trans/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/tbilisi-trans/registerSW.js"></script></head>
 
 <body class="loading">
@@ -148,6 +148,10 @@
                     style="display: none;">Edit</button>
                   <button id="favorite-stop-btn" class="more-menu-item" title="Favorite">Favorite</button>
                   <button id="copy-link-btn" class="more-menu-item" title="Copy Link">Copy link</button>
+                  <button id="open-street-screen-btn" class="more-menu-item more-menu-item-with-icon" title="Street screen">
+                    <img src="/tbilisi-trans/arrow.down.left.and.arrow.up.right.svg" alt="" width="16" height="16" aria-hidden="true">
+                    <span id="open-street-screen-label">Street screen</span>
+                  </button>
                 </div>
               </div>
 
@@ -204,6 +208,36 @@
         <!-- stop-id-display removed -->
 
       </div> <!-- Close info-panel -->
+
+      <div id="street-screen-overlay" class="street-screen-overlay hidden" aria-hidden="true">
+        <div id="street-screen-controls" class="street-screen-controls">
+          <div id="street-screen-palette" class="street-screen-palette" aria-label="Screen colors">
+            <button class="street-screen-swatch is-active" type="button" data-scheme="yellow" aria-label="Yellow"></button>
+            <button class="street-screen-swatch" type="button" data-scheme="red" aria-label="Red"></button>
+            <button class="street-screen-swatch" type="button" data-scheme="green" aria-label="Green"></button>
+            <button class="street-screen-swatch" type="button" data-scheme="blue" aria-label="Blue"></button>
+            <button class="street-screen-swatch" type="button" data-scheme="cyan" aria-label="Cyan"></button>
+            <button class="street-screen-swatch" type="button" data-scheme="magenta" aria-label="Magenta"></button>
+            <button class="street-screen-swatch" type="button" data-scheme="white" aria-label="White"></button>
+          </div>
+          <button id="street-screen-fit-toggle" class="street-screen-toggle" title="Fill height" aria-pressed="false">
+            <img class="street-screen-toggle-expand" src="/tbilisi-trans/rectangle.arrowtriangle.2.outward.svg" alt="Fill height" width="22" height="22">
+            <img class="street-screen-toggle-collapse" src="/tbilisi-trans/rectangle.arrowtriangle.2.inward.svg" alt="Fit screen" width="22" height="22">
+          </button>
+          <button id="street-screen-close" class="street-screen-close" title="Close">
+            <img src="/tbilisi-trans/xmark.circle.fill.svg" alt="Close" width="28" height="28">
+          </button>
+        </div>
+        <div class="street-screen-stage">
+          <div id="street-screen-board" class="street-screen-board">
+            <div class="street-screen-surface">
+              <div class="street-screen-main" id="street-screen-main"></div>
+              <div class="street-screen-scroll" id="street-screen-scroll"></div>
+              <div class="street-screen-status" id="street-screen-status"></div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- Route Info Panel (Bottom Sheet) -->
       <div id="route-info" class="panel hidden route-panel">

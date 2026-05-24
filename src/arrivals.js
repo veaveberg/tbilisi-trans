@@ -122,6 +122,35 @@ function resolveRouteByShortName(shortName, options = {}) {
     return best || candidates[0];
 }
 
+function getHeadsignVariants(route, directionIndex, fallbackHeadsign = '') {
+    const fallback = String(fallbackHeadsign || '').trim();
+    const routeId = String(route?.id || '').trim();
+    const shortName = String(route?.shortName || '').trim();
+    const matchedRoute = Array.isArray(deps.allRoutes?.())
+        ? (
+            deps.allRoutes().find(r => String(r.id) === routeId) ||
+            deps.allRoutes().find(r => normalizeRouteId(r.id) === normalizeRouteId(routeId)) ||
+            (shortName ? resolveRouteByShortName(shortName, {
+                preferredSource: route?._source,
+                preferredId: route?.id,
+                preferBus: !isRailLikeMode(route?.mode)
+            }) : null)
+        )
+        : null;
+    const overrides = matchedRoute?._overrides || route?._overrides;
+    const destObj = overrides?.destinations?.[directionIndex];
+    if (!destObj?.headsign) {
+        return { en: fallback, ka: fallback };
+    }
+    if (typeof destObj.headsign === 'string') {
+        return { en: destObj.headsign || fallback, ka: destObj.headsign || fallback };
+    }
+    return {
+        en: String(destObj.headsign.en || destObj.headsign.ka || fallback),
+        ka: String(destObj.headsign.ka || destObj.headsign.en || fallback)
+    };
+}
+
 /**
  * Initialize the arrivals module with dependencies from main.js
  */
@@ -2152,13 +2181,14 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         }
 
         // -- Data Prep --
-        let routeShortName, headsign, timeDisplay, isScheduled, needsDisclaimer, routeIdForClick;
+        let routeShortName, headsign, timeDisplay, isScheduled, needsDisclaimer, routeIdForClick, displayRoute;
         let displayArrivals = Array.isArray(item.displayArrivals) ? item.displayArrivals.slice(0, 3) : [];
         let lateWarningIndices = [];
         let routeColor = item.color;
 
         if (item.type === 'live') {
             const a = item.data;
+            displayRoute = a;
             routeShortName = a.displayShortName || a.shortName;
             headsign = item.headsign;
             isScheduled = !a.realtime;
@@ -2193,6 +2223,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 String(route.id) === `1:${r.id}` ||
                 `1:${route.id}` === String(r.id)
             ) || r;
+            displayRoute = freshRoute;
 
             headsign = item.headsign;
             isScheduled = true;
@@ -2215,6 +2246,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         if (!headsign || headsign === 'undefined') {
             headsign = t('destinationUnknown');
         }
+        const headsignVariants = getHeadsignVariants(displayRoute, dirIdx, headsign);
 
         const timeElId = `time-${stableId}`;
         const bottomBarId = `bottom-${stableId}`;
@@ -2257,7 +2289,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             <div class="arrival-card-left">
                 <div class="arrival-card-top">
                     <div class="route-number" style="color: ${routeColor}">${simplifyNumber(routeShortName)}</div>
-                    <div class="destination" title="${headsign}">${headsign}</div>
+                    <div class="destination" title="${escapeHtmlAttribute(headsign)}" data-destination-en="${escapeHtmlAttribute(headsignVariants.en)}" data-destination-ka="${escapeHtmlAttribute(headsignVariants.ka)}">${headsign}</div>
                 </div>
                 <div class="arrival-card-bottom" id="${bottomBarId}" ${bottomBarDataAttrs}>
                     ${bottomContent}

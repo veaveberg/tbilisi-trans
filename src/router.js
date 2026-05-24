@@ -138,6 +138,7 @@ export const Router = {
         const state = {
             type: 'stop',
             stopId: null,
+            board: false,
             filterActive: false,
             targetIds: [],
             routeFilterShortNames: []
@@ -160,10 +161,13 @@ export const Router = {
             state.stopId = rawId;
         }
 
+        state.board = parts.includes('board');
+
         if (parts.length > 1 && parts[1] === 'filtered') {
             for (let i = 2; i < parts.length; i++) {
                 const segment = parts[i];
                 if (!segment) continue;
+                if (segment === 'board') continue;
 
                 if (segment.startsWith('destinations')) {
                     let rawTargets = segment.substring(12);
@@ -193,14 +197,14 @@ export const Router = {
     /**
      * Update URL based on state
      */
-    update(stopId, filterActive, targetIds, mapHash = '', routeFilterShortNames = []) {
+    update(stopId, filterActive, targetIds, mapHash = '', routeFilterShortNames = [], options = {}) {
         // Legacy Support for update(stopId...) calls
         // We really should use dedicated methods, but keeping this for backward compat if needed.
         // Or better: Redirect to updateStop logic.
-        this.updateStop(stopId, filterActive, targetIds, mapHash, routeFilterShortNames);
+        this.updateStop(stopId, filterActive, targetIds, mapHash, routeFilterShortNames, options);
     },
 
-    updateStop(stopId, filterActive, targetIds, mapHash = '', routeFilterShortNames = []) {
+    updateStop(stopId, filterActive, targetIds, mapHash = '', routeFilterShortNames = [], options = {}) {
         if (!stopId) {
             // Reset to Home (with optional hash)
             const url = this.base + mapHash;
@@ -231,8 +235,12 @@ export const Router = {
             }
         }
 
+        if (options.board) {
+            url += '/board';
+        }
+
         console.log('[Router] Push State (Stop):', url);
-        history.pushState({ type: 'stop', stopId, filterActive, targetIds, routeFilterShortNames: sortedRouteShortNames }, '', url);
+        history.pushState({ type: 'stop', stopId, filterActive, targetIds, routeFilterShortNames: sortedRouteShortNames, board: !!options.board }, '', url);
     },
 
     updateRoute(shortName, direction = 0) {

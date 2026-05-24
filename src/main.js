@@ -6,6 +6,7 @@ import './css/transit.css';
 import './css/metro.css';
 import './css/editor.css';
 import './css/components.css';
+import './css/street-screen.css';
 import mapboxgl from 'mapbox-gl';
 
 import { Router } from './router.js';
@@ -27,6 +28,7 @@ import * as arrivals from './arrivals.js';
 import { arrivalsController } from './arrivals-controller.js';
 import { getIntervalDescription } from './intervals.js';
 import { initMinibusSegmentsEditor, loadMinibusSegmentEditsFromFile } from './minibus-segments-editor.js';
+import { StreetScreenController } from './street-screen.js';
 
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
@@ -107,6 +109,7 @@ const filterBusThrottle = new Map(); // routeId -> { lastTs, failCount, cooldown
 let liveBusRequestGateTs = 0;
 const LIVE_BUS_REQUEST_INTERVAL_MS = 1000;
 const IOS_NATIVE_CACHE_VERSION_KEY = 'iosNativeCacheVersion';
+let streetScreenController = null;
 // State declarations
 
 async function maybeRunNativeUpgradeCleanup() {
@@ -295,6 +298,7 @@ function onRoutesLoaded(data) {
     }
 
     allRoutes = data; // Always update global data
+    window.__streetScreenAllRoutes = allRoutes;
     applyRouteOverrides(); // Apply overrides immediately after loading
 
     if (isRouterLogicExecuted) return; // Only run initial routing once
@@ -425,7 +429,8 @@ function updateCurrentStopDeepLink() {
         !!filterManager?.state?.active,
         Array.from(filterManager?.state?.targetIds || []),
         '',
-        getSelectedRouteFilterShortNamesForStop(window.currentStopId)
+        getSelectedRouteFilterShortNamesForStop(window.currentStopId),
+        { board: !!streetScreenController?.isOpen }
     );
 }
 
@@ -795,6 +800,7 @@ async function initializeMapData(stopsData, routesData) {
     // 1. Update Globals
     rawStops = stopsData;
     allRoutes = routesData;
+    window.__streetScreenAllRoutes = allRoutes;
     window.allStops = allStops; // Debug support
     applyRouteOverrides(); // Ensure overrides are applied to fresh data
 
@@ -1966,6 +1972,10 @@ async function handleDeepLinks() {
                 // updateURL=false: Deep link URL is already set, don't overwrite yet
                 // suppressPanel: If we have a nested route, don't show stop panel - only set up state
                 await showStopInfo(stop, true, !state.shortName, false, { suppressPanel: !!state.shortName });
+            }
+
+            if (state.board && !state.shortName) {
+                await streetScreenController?.open({ syncUrl: false });
             }
 
             // Handle Nested Route (Bus) found in URL
@@ -4172,7 +4182,7 @@ if (filterBtn) {
 ['mousedown', 'click'].forEach(evt => {
     document.getElementById('close-panel').addEventListener(evt, e => e.stopPropagation(), { passive: false });
     document.getElementById('close-route-info').addEventListener(evt, e => e.stopPropagation(), { passive: false });
-    ['stop-more-btn', 'route-more-btn', 'copy-link-btn', 'copy-route-link-btn', 'btn-edit-stop', 'btn-edit-route', 'favorite-stop-btn', 'favorite-route-btn'].forEach((id) => {
+    ['stop-more-btn', 'route-more-btn', 'copy-link-btn', 'copy-route-link-btn', 'btn-edit-stop', 'btn-edit-route', 'favorite-stop-btn', 'favorite-route-btn', 'open-street-screen-btn', 'street-screen-close'].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.addEventListener(evt, e => e.stopPropagation(), { passive: false });
     });
@@ -4205,6 +4215,9 @@ const initMoreMenu = (triggerId, menuId) => {
                 }
                 if (btn.id === 'favorite-stop-btn' || btn.id === 'favorite-route-btn') {
                     symbol = text === 'Unfavorite' ? 'star.fill' : 'star';
+                }
+                if (btn.id === 'open-street-screen-btn') {
+                    symbol = 'arrow.down.left.and.arrow.up.right';
                 }
                 return {
                     id: btn.id,
@@ -4309,6 +4322,20 @@ const initMoreMenu = (triggerId, menuId) => {
 
 initMoreMenu('stop-more-btn', 'stop-more-menu');
 initMoreMenu('route-more-btn', 'route-more-menu');
+
+streetScreenController = new StreetScreenController({
+    getCurrentStop: () => allStops.find((stop) => String(stop.id) === String(window.currentStopId)) || null,
+    onOpen: (options = {}) => {
+        if (!options.syncUrl || !window.currentStopId) return;
+        updateCurrentStopDeepLink();
+    },
+    onClose: (options = {}) => {
+        if (!options.syncUrl || !window.currentStopId) return;
+        updateCurrentStopDeepLink();
+    }
+});
+window.__streetScreenAllRoutes = allRoutes;
+streetScreenController.init();
 
 function closeAllMoreMenus() {
     ['stop-more-menu', 'route-more-menu'].forEach((id) => {
@@ -4591,6 +4618,14 @@ const handleCopyLink = (btnId) => {
 
 handleCopyLink('copy-link-btn');
 handleCopyLink('copy-route-link-btn');
+
+const openStreetScreenBtn = document.getElementById('open-street-screen-btn');
+if (openStreetScreenBtn) {
+    openStreetScreenBtn.addEventListener('click', () => {
+        closeAllMoreMenus();
+        streetScreenController?.open({ syncUrl: true });
+    });
+}
 
 // Helper to block map clicks briefly
 function triggerMapClickLock() {

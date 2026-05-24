@@ -36,6 +36,7 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         favorite: 'Favorite',
         unfavorite: 'Unfavorite',
         copyLink: 'Copy link',
+        streetScreen: 'Show board',
         close: 'Close',
         location: 'Location',
         rotation: 'Rotation',
@@ -136,6 +137,7 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         favorite: 'რჩეულებში დამატება',
         unfavorite: 'რჩეულებიდან ამოღება',
         copyLink: 'ბმულის კოპირება',
+        streetScreen: 'ტაბლოს ჩვენება',
         close: 'დახურვა',
         location: 'მდებარეობა',
         rotation: 'ბრუნვა',
@@ -236,6 +238,7 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         favorite: 'В избранное',
         unfavorite: 'Убрать из избранного',
         copyLink: 'Копировать ссылку',
+        streetScreen: 'Показать табло',
         close: 'Закрыть',
         location: 'Позиция',
         rotation: 'Поворот',
@@ -614,6 +617,8 @@ export function applyStaticText() {
     setTitle('favorite-stop-btn', t('favorite'));
     setText('copy-link-btn', t('copyLink'));
     setTitle('copy-link-btn', t('copyLink'));
+    setText('open-street-screen-label', t('streetScreen'));
+    setTitle('open-street-screen-btn', t('streetScreen'));
     setTitle('close-panel', t('close'));
     setText('edit-toggle-loc', t('location'));
     setText('edit-toggle-rot', t('rotation'));
@@ -634,6 +639,7 @@ export function applyStaticText() {
     setText('copy-route-link-btn', t('copyLink'));
     setTitle('copy-route-link-btn', t('copyLink'));
     setTitle('close-route-info', t('close'));
+    setTitle('street-screen-close', t('close'));
     setAriaLabel('menu-btn', t('more'));
     setText('menu-ui-language-label', t('uiLanguage'));
     setText('menu-stop-names-label', t('stopNamesLanguage'));
