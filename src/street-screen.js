@@ -12,7 +12,7 @@ const LED_GRID_STEP_PX = 2;
 const TICKER_COPY_GAP_PX = 10;
 const CONTROLS_IDLE_MS = 2200;
 const DEFAULT_SCHEME = 'yellow';
-const SCHEMES = new Set(['yellow', 'red', 'green', 'blue', 'cyan', 'magenta', 'white']);
+const SCHEMES = new Set(['yellow', 'red', 'green', 'blue', 'cyan', 'magenta', 'white', 'wgy']);
 const ROW_HEIGHT_PX = 14;
 const ROW_GAP_PX = 4;
 const STATIC_SECTION_HEIGHT_PX = 14;
@@ -30,6 +30,25 @@ function formatMinutes(minutes) {
     if (!Number.isFinite(minutes)) return '--';
     const safe = Math.max(0, Math.round(minutes));
     return safe < 100 ? String(safe).padStart(2, '0') : String(safe);
+}
+
+function formatTickerMinutes(minutes, language) {
+    const text = formatMinutes(minutes);
+    if (text === '--') return text;
+    if (language === 'ka') return `${text}ᲬᲗ`;
+    if (language === 'ru') return `${text}мин`;
+    return `${text}min`;
+}
+
+function buildTickerMinutesMarkup(minutes, language) {
+    const text = formatMinutes(minutes);
+    if (text === '--') {
+        return `<span class="street-screen-ticker-minutes-value">${escapeHtml(text)}</span>`;
+    }
+    if (language === 'ka') {
+        return `<span class="street-screen-ticker-minutes-value">${escapeHtml(text)}</span><span class="street-screen-ticker-minutes-suffix">${escapeHtml('ᲬᲗ')}</span>`;
+    }
+    return `<span class="street-screen-ticker-minutes-value">${escapeHtml(formatTickerMinutes(minutes, language))}</span>`;
 }
 
 function formatTbilisiTime() {
@@ -118,7 +137,7 @@ function buildTickerItems(arrivals, language) {
         return `
             <span class="street-screen-ticker-route">${escapeHtml(arrival.routeNumber)}</span>
             <span class="street-screen-ticker-name">${escapeHtml(label)}</span>
-            <span class="street-screen-ticker-minutes">${escapeHtml(formatMinutes(arrival.minutes))}</span>
+            <span class="street-screen-ticker-minutes">${buildTickerMinutesMarkup(arrival.minutes, language)}</span>
             <span class="street-screen-ticker-separator">*</span>
         `;
     }).join('');
@@ -421,6 +440,10 @@ export class StreetScreenController {
             return;
         }
 
+        if (this.surfaceEl) {
+            this.surfaceEl.dataset.language = this.language;
+        }
+
         const { stop, arrivals } = this.currentModel;
         if (!stop || arrivals.length === 0) {
             this.surfaceEl?.classList.remove('is-scroll-hidden');
@@ -470,7 +493,7 @@ export class StreetScreenController {
             const tickerHtml = buildTickerItems(tickerRows, this.language);
             const tickerLength = tickerRows.reduce((total, arrival) => {
                 const label = this.language === 'ka' ? arrival.destinationKa : arrival.destinationEn;
-                return total + String(arrival.routeNumber).length + String(label).length + 5;
+                return total + String(arrival.routeNumber).length + String(label).length + formatTickerMinutes(arrival.minutes, this.language).length + 2;
             }, 0);
             const duration = `${Math.max(18, Math.ceil(tickerLength / 2.25))}s`;
             const steps = Math.max(40, Math.ceil((tickerLength * 12) / LED_GRID_STEP_PX));
@@ -497,12 +520,12 @@ export class StreetScreenController {
         const stop = this.currentModel.stop;
         const stopCode = String(stop.code || stop.id || '').replace(/^1:/, '');
         const rightValue = this.statusMode === 'temp'
-            ? `${Math.round(this.temperatureC)}°C`
-            : formatTbilisiTime();
+            ? `<span class="street-screen-status-value">${escapeHtml(Math.round(this.temperatureC))}</span><span class="street-screen-status-degree">${escapeHtml('°')}</span><span class="street-screen-status-value">${escapeHtml('C')}</span>`
+            : escapeHtml(formatTbilisiTime());
         this.statusEl.innerHTML = `
             <div class="street-screen-status-item street-screen-status-item--id">ID:${escapeHtml(stopCode)}</div>
-            <div class="street-screen-status-item street-screen-status-item--center">SMS:9334</div>
-            <div class="street-screen-status-item street-screen-status-item--right">${escapeHtml(rightValue)}</div>
+            <div class="street-screen-status-item street-screen-status-item--center">SMS:93344</div>
+            <div class="street-screen-status-item street-screen-status-item--right">${rightValue}</div>
         `;
     }
 

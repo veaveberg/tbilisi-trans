@@ -13,6 +13,13 @@
     font-style: normal;
 }
 
+@font-face {
+    font-family: '5x7 Matrix';
+    src: url('../assets/fonts/5x7-matrix.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
 :root {
     /* Brand */
     --primary: #2563eb;
