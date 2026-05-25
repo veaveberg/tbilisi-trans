@@ -23,6 +23,13 @@ const DEFAULT_MAIN_ROWS = 6;
 const TICKER_PIXELS_PER_SECOND = 36;
 const MIN_FILL_HEIGHT_ROWS = 1;
 const MAX_VISIBLE_ARRIVAL_MINUTES = 90;
+const EMPTY_CLOCK_HEIGHT_PX = DEFAULT_MAIN_HEIGHT_PX + ROW_GAP_PX + STATIC_SECTION_HEIGHT_PX;
+const EMPTY_CLOCK_CANVAS_SCALE = LED_GRID_STEP_PX;
+const EMPTY_CLOCK_PADDING_PX = 10;
+const EMPTY_CLOCK_ALPHA_THRESHOLD = 48;
+const NUMBER_SWAP_DURATION_MS = 320;
+const EMPTY_CLOCK_DIGIT_WIDTH_PX = 42;
+const EMPTY_CLOCK_COLON_WIDTH_PX = 18;
 const STREET_SCREEN_COLOR_KEY = 'streetScreenColorScheme';
 const STREET_SCREEN_FILL_MODE_KEY = 'streetScreenFillHeightMode';
 
@@ -40,21 +47,52 @@ function formatTickerMinutes(minutes, language) {
     return `${text}min`;
 }
 
-function buildTickerMinutesMarkup(minutes, language) {
+function buildAnimatedNumberMarkup({ key, value, className = '', html = null, block = false, ariaLabel = '' }) {
+    const classes = ['street-screen-number'];
+    if (className) classes.push(className);
+    if (block) classes.push('street-screen-number--block');
+    const content = html ?? escapeHtml(value);
+    const aria = ariaLabel ? ` aria-label="${escapeHtml(ariaLabel)}"` : '';
+    return `<span class="${classes.join(' ')}" data-number-key="${escapeHtml(key)}" data-number-value="${escapeHtml(value)}"${aria}><span class="street-screen-number-current">${content}</span></span>`;
+}
+
+function buildTickerMinutesMarkup(minutes, language, key) {
     const text = formatMinutes(minutes);
     if (text === '--') {
-        return `<span class="street-screen-ticker-minutes-value">${escapeHtml(text)}</span>`;
+        return buildAnimatedNumberMarkup({
+            key,
+            value: text,
+            className: 'street-screen-ticker-minutes-value'
+        });
     }
     if (language === 'ka') {
-        return `<span class="street-screen-ticker-minutes-value">${escapeHtml(text)}</span><span class="street-screen-ticker-minutes-suffix">${escapeHtml('ᲬᲗ')}</span>`;
+        return `${buildAnimatedNumberMarkup({
+            key,
+            value: text,
+            className: 'street-screen-ticker-minutes-value'
+        })}<span class="street-screen-ticker-minutes-suffix">${escapeHtml('ᲬᲗ')}</span>`;
     }
-    return `<span class="street-screen-ticker-minutes-value">${escapeHtml(formatTickerMinutes(minutes, language))}</span>`;
+    return buildAnimatedNumberMarkup({
+        key,
+        value: formatTickerMinutes(minutes, language),
+        className: 'street-screen-ticker-minutes-value'
+    });
 }
 
 function formatTbilisiTime() {
     return new Intl.DateTimeFormat('en-GB', {
         hour: '2-digit',
         minute: '2-digit',
+        hour12: false,
+        timeZone: TBILISI_TIMEZONE
+    }).format(new Date());
+}
+
+function formatTbilisiTimeWithSeconds() {
+    return new Intl.DateTimeFormat('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
         hour12: false,
         timeZone: TBILISI_TIMEZONE
     }).format(new Date());
@@ -69,12 +107,117 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
-function buildMinutesCellMarkup(minutes) {
+function buildMinutesCellMarkup(minutes, key) {
     const text = formatMinutes(minutes);
-    const chars = Array.from(text).map((char) => (
-        `<span class="street-screen-minutes-char">${escapeHtml(char)}</span>`
-    )).join('');
-    return `<span class="street-screen-minutes-text" aria-label="${escapeHtml(text)}">${chars}</span>`;
+    return `<span class="street-screen-minutes-text" aria-label="${escapeHtml(text)}">${buildAnimatedNumberMarkup({
+        key,
+        value: text,
+        className: 'street-screen-minutes-value'
+    })}</span>`;
+}
+
+function createRasterCanvas(width, height) {
+    if (typeof document === 'undefined') return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+}
+
+function measureClockFontSize(ctx, text, maxWidth, maxHeight) {
+    let size = Math.max(8, Math.floor(maxHeight));
+    while (size > 8) {
+        ctx.font = `${size}px "Sinhala MN Placeholder", "Matrix Sans Print", "Matrix Sans", monospace`;
+        const metrics = ctx.measureText(text);
+        const width = Math.ceil(metrics.width);
+        const ascent = Math.ceil(metrics.actualBoundingBoxAscent || size * 0.8);
+        const descent = Math.ceil(metrics.actualBoundingBoxDescent || size * 0.2);
+        const height = ascent + descent;
+        if (width <= maxWidth && height <= maxHeight) {
+            return { size, ascent, descent };
+        }
+        size -= 1;
+    }
+    return {
+        size: 8,
+        ascent: 7,
+        descent: 2
+    };
+}
+
+function buildEmptyClockSvgMarkup(text, width = BOARD_WIDTH, height = EMPTY_CLOCK_HEIGHT_PX, paddingPx = EMPTY_CLOCK_PADDING_PX) {
+    const rasterWidth = Math.max(1, Math.floor(width / EMPTY_CLOCK_CANVAS_SCALE));
+    const rasterHeight = Math.max(1, Math.floor(height / EMPTY_CLOCK_CANVAS_SCALE));
+    const rasterPadding = Math.max(1, Math.floor(paddingPx / EMPTY_CLOCK_CANVAS_SCALE));
+    const canvas = createRasterCanvas(rasterWidth, rasterHeight);
+    const ctx = canvas?.getContext?.('2d', { willReadFrequently: true });
+    if (!canvas || !ctx) {
+        return escapeHtml(text);
+    }
+
+    ctx.clearRect(0, 0, rasterWidth, rasterHeight);
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.imageSmoothingEnabled = false;
+
+    const { size } = measureClockFontSize(
+        ctx,
+        text,
+        rasterWidth - rasterPadding * 2,
+        rasterHeight - rasterPadding * 2
+    );
+    ctx.font = `${size}px "Sinhala MN Placeholder", "Matrix Sans Print", "Matrix Sans", monospace`;
+    ctx.fillText(text, rasterWidth / 2, rasterHeight / 2);
+
+    const { data } = ctx.getImageData(0, 0, rasterWidth, rasterHeight);
+    const dots = [];
+    for (let y = 0; y < rasterHeight; y += 1) {
+        for (let x = 0; x < rasterWidth; x += 1) {
+            const alpha = data[((y * rasterWidth) + x) * 4 + 3];
+            if (alpha < EMPTY_CLOCK_ALPHA_THRESHOLD) continue;
+            const cx = (x * EMPTY_CLOCK_CANVAS_SCALE) + (EMPTY_CLOCK_CANVAS_SCALE / 2);
+            const cy = (y * EMPTY_CLOCK_CANVAS_SCALE) + (EMPTY_CLOCK_CANVAS_SCALE / 2);
+            dots.push(`<circle class="street-screen-empty-clock-dot" cx="${cx}" cy="${cy}" r="0.82" />`);
+        }
+    }
+
+    return `
+        <svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" aria-hidden="true" focusable="false">
+            ${dots.join('')}
+        </svg>
+    `;
+}
+
+function buildEmptyClockMarkup(text) {
+    const cells = Array.from(text).map((char, index) => {
+        if (char === ':') {
+            return `<span class="street-screen-empty-clock-colon" aria-hidden="true">${buildEmptyClockSvgMarkup(char, EMPTY_CLOCK_COLON_WIDTH_PX, EMPTY_CLOCK_HEIGHT_PX, 4)}</span>`;
+        }
+        return buildAnimatedNumberMarkup({
+            key: `empty-clock-digit-${index}`,
+            value: char,
+            html: buildEmptyClockSvgMarkup(char, EMPTY_CLOCK_DIGIT_WIDTH_PX, EMPTY_CLOCK_HEIGHT_PX, 6),
+            className: 'street-screen-empty-clock-number',
+            block: true,
+            ariaLabel: char
+        });
+    }).join('');
+
+    return `<div class="street-screen-empty-clock" role="img" aria-label="${escapeHtml(text)}">${cells}</div>`;
+}
+
+function buildStatusTimeMarkup(text) {
+    const [hours = '--', minutes = '--'] = String(text || '').split(':');
+    return `${buildAnimatedNumberMarkup({
+        key: 'status-time-hours',
+        value: hours,
+        className: 'street-screen-status-value street-screen-status-value--time'
+    })}<span class="street-screen-status-time-separator" aria-hidden="true">:</span>${buildAnimatedNumberMarkup({
+        key: 'status-time-minutes',
+        value: minutes,
+        className: 'street-screen-status-value street-screen-status-value--time'
+    })}`;
 }
 
 function normalizeLedLabel(text, locale) {
@@ -132,12 +275,17 @@ function parseArrivalItemsFromDom() {
 }
 
 function buildTickerItems(arrivals, language) {
-    return arrivals.map((arrival) => {
+    return arrivals.map((arrival, index) => {
         const label = normalizeLedLabel(language === 'ka' ? arrival.destinationKa : arrival.destinationEn, language);
+        const itemKey = `${arrival.routeId || arrival.routeNumber}-${arrival.directionIndex}-${index}`;
         return `
-            <span class="street-screen-ticker-route">${escapeHtml(arrival.routeNumber)}</span>
+            <span class="street-screen-ticker-route">${buildAnimatedNumberMarkup({
+                key: `ticker-route-${itemKey}`,
+                value: arrival.routeNumber,
+                className: 'street-screen-ticker-route-value'
+            })}</span>
             <span class="street-screen-ticker-name">${escapeHtml(label)}</span>
-            <span class="street-screen-ticker-minutes">${buildTickerMinutesMarkup(arrival.minutes, language)}</span>
+            <span class="street-screen-ticker-minutes">${buildTickerMinutesMarkup(arrival.minutes, language, `ticker-minutes-${itemKey}`)}</span>
             <span class="street-screen-ticker-separator">*</span>
         `;
     }).join('');
@@ -173,6 +321,8 @@ export class StreetScreenController {
         this.controlsIdleTimer = null;
         this.colorScheme = DEFAULT_SCHEME;
         this.fillHeightMode = false;
+        this.numberTransitionMap = new Map();
+        this.numberTransitionTimers = [];
         this.layoutMetrics = {
             boardHeight: BOARD_HEIGHT,
             mainHeight: DEFAULT_MAIN_HEIGHT_PX,
@@ -320,7 +470,12 @@ export class StreetScreenController {
             this.fetchTemperature();
         }, MODEL_SYNC_MS);
         this.clockTimer = window.setInterval(() => {
-            if (!this.isOpen || this.statusMode !== 'time') return;
+            if (!this.isOpen) return;
+            if (this.currentModel?.stop && (!this.currentModel.arrivals || this.currentModel.arrivals.length === 0)) {
+                this.render();
+                return;
+            }
+            if (this.statusMode !== 'time') return;
             this.renderStatus();
         }, 1000);
     }
@@ -337,6 +492,8 @@ export class StreetScreenController {
         this.syncRetryTimer = null;
         this.syncScheduleTimer = null;
         this.clearNameMarqueeTimers();
+        this.numberTransitionTimers.forEach((timerId) => window.clearTimeout(timerId));
+        this.numberTransitionTimers = [];
     }
 
     setColorScheme(scheme) {
@@ -446,10 +603,11 @@ export class StreetScreenController {
 
         const { stop, arrivals } = this.currentModel;
         if (!stop || arrivals.length === 0) {
-            this.surfaceEl?.classList.remove('is-scroll-hidden');
-            this.mainEl.innerHTML = '<div class="street-screen-empty">No arrivals</div>';
+            this.surfaceEl?.classList.add('is-scroll-hidden');
+            this.mainEl.innerHTML = `<div class="street-screen-empty street-screen-empty--clock">${buildEmptyClockMarkup(formatTbilisiTimeWithSeconds())}</div>`;
             this.scrollEl.innerHTML = '';
-            this.renderStatus();
+            this.renderStatus({ tempOnly: true });
+            this.applyNumberTransitions();
             return;
         }
 
@@ -462,18 +620,23 @@ export class StreetScreenController {
         const tickerRows = singleOverflowRow ? [] : extraRows;
         this.surfaceEl?.classList.toggle('is-scroll-hidden', canHideScrollRow);
 
-        this.mainEl.innerHTML = mainRows.map((arrival) => {
+        this.mainEl.innerHTML = mainRows.map((arrival, index) => {
             const currentName = this.language === 'ka' ? arrival.destinationKa : arrival.destinationEn;
             const nextName = this.language === 'ka' ? arrival.destinationEn : arrival.destinationKa;
+            const itemKey = `${arrival.routeId || arrival.routeNumber}-${arrival.directionIndex}-${index}`;
             return `
                 <div class="street-screen-row">
-                    <div class="street-screen-route">${escapeHtml(arrival.routeNumber)}</div>
+                    <div class="street-screen-route">${buildAnimatedNumberMarkup({
+                        key: `main-route-${itemKey}`,
+                        value: arrival.routeNumber,
+                        className: 'street-screen-route-value'
+                    })}</div>
                     ${buildNameCell(currentName, nextName, {
                         marquee: currentName.length > 16,
                         switching: false,
                         locale: this.language
                     })}
-                    <div class="street-screen-minutes${arrival.minutes !== null && arrival.minutes <= 2 && !arrival.isScheduled ? ' is-urgent' : ''}">${buildMinutesCellMarkup(arrival.minutes)}</div>
+                    <div class="street-screen-minutes${arrival.minutes !== null && arrival.minutes <= 2 && !arrival.isScheduled ? ' is-urgent' : ''}">${buildMinutesCellMarkup(arrival.minutes, `main-minutes-${itemKey}`)}</div>
                 </div>
             `;
         }).join('');
@@ -484,9 +647,13 @@ export class StreetScreenController {
             const label = this.language === 'ka' ? singleOverflowRow.destinationKa : singleOverflowRow.destinationEn;
             this.scrollEl.innerHTML = `
                 <div class="street-screen-row street-screen-row--scroll-static">
-                    <div class="street-screen-route">${escapeHtml(singleOverflowRow.routeNumber)}</div>
+                    <div class="street-screen-route">${buildAnimatedNumberMarkup({
+                        key: 'overflow-route',
+                        value: singleOverflowRow.routeNumber,
+                        className: 'street-screen-route-value'
+                    })}</div>
                     <div class="street-screen-name-line street-screen-name-line--static">${escapeHtml(label)}</div>
-                    <div class="street-screen-minutes${singleOverflowRow.minutes !== null && singleOverflowRow.minutes <= 2 && !singleOverflowRow.isScheduled ? ' is-urgent' : ''}">${buildMinutesCellMarkup(singleOverflowRow.minutes)}</div>
+                    <div class="street-screen-minutes${singleOverflowRow.minutes !== null && singleOverflowRow.minutes <= 2 && !singleOverflowRow.isScheduled ? ' is-urgent' : ''}">${buildMinutesCellMarkup(singleOverflowRow.minutes, 'overflow-minutes')}</div>
                 </div>
             `;
         } else if (tickerRows.length > 0) {
@@ -511,22 +678,79 @@ export class StreetScreenController {
         }
 
         this.renderStatus();
+        this.applyNumberTransitions();
         this.applyMarqueeDurations();
         this.updateScale();
     }
 
-    renderStatus() {
+    renderStatus(options = {}) {
         if (!this.statusEl || !this.currentModel?.stop) return;
         const stop = this.currentModel.stop;
         const stopCode = String(stop.code || stop.id || '').replace(/^1:/, '');
+        if (options.tempOnly === true) {
+            this.statusEl.innerHTML = `
+                <div class="street-screen-status-item street-screen-status-item--id"></div>
+                <div class="street-screen-status-item street-screen-status-item--right">${buildAnimatedNumberMarkup({
+                    key: 'status-temp',
+                    value: String(Math.round(this.temperatureC)),
+                    className: 'street-screen-status-value'
+                })}<span class="street-screen-status-degree">${escapeHtml('°')}</span><span class="street-screen-status-value street-screen-status-value--unit">${escapeHtml('C')}</span></div>
+            `;
+            return;
+        }
         const rightValue = this.statusMode === 'temp'
-            ? `<span class="street-screen-status-value">${escapeHtml(Math.round(this.temperatureC))}</span><span class="street-screen-status-degree">${escapeHtml('°')}</span><span class="street-screen-status-value">${escapeHtml('C')}</span>`
-            : escapeHtml(formatTbilisiTime());
+            ? `${buildAnimatedNumberMarkup({
+                key: 'status-temp',
+                value: String(Math.round(this.temperatureC)),
+                className: 'street-screen-status-value'
+            })}<span class="street-screen-status-degree">${escapeHtml('°')}</span><span class="street-screen-status-value street-screen-status-value--unit">${escapeHtml('C')}</span>`
+            : buildStatusTimeMarkup(formatTbilisiTime());
         this.statusEl.innerHTML = `
-            <div class="street-screen-status-item street-screen-status-item--id">ID:${escapeHtml(stopCode)}</div>
-            <div class="street-screen-status-item street-screen-status-item--center">SMS:93344</div>
+            <div class="street-screen-status-item street-screen-status-item--id">ID:${escapeHtml(stopCode)} SMS:93344</div>
             <div class="street-screen-status-item street-screen-status-item--right">${rightValue}</div>
         `;
+    }
+
+    applyNumberTransitions() {
+        const elements = Array.from(this.surfaceEl?.querySelectorAll?.('.street-screen-number[data-number-key]') || []);
+        const seenKeys = new Set();
+        this.numberTransitionTimers.forEach((timerId) => window.clearTimeout(timerId));
+        this.numberTransitionTimers = [];
+
+        elements.forEach((element) => {
+            const key = element.getAttribute('data-number-key') || '';
+            const value = element.getAttribute('data-number-value') || '';
+            if (!key) return;
+            seenKeys.add(key);
+
+            const currentNode = element.querySelector('.street-screen-number-current');
+            const markup = currentNode?.innerHTML || '';
+            const previous = this.numberTransitionMap.get(key);
+            if (!previous || previous.value === value) {
+                this.numberTransitionMap.set(key, { value, markup });
+                return;
+            }
+
+            element.innerHTML = `
+                <span class="street-screen-number-layer street-screen-number-layer--old" aria-hidden="true">${previous.markup}</span>
+                <span class="street-screen-number-layer street-screen-number-layer--new" aria-hidden="true">${markup}</span>
+            `;
+            element.classList.add('is-animating');
+            window.requestAnimationFrame(() => {
+                element.classList.add('is-active');
+            });
+
+            const cleanupTimer = window.setTimeout(() => {
+                element.innerHTML = `<span class="street-screen-number-current">${markup}</span>`;
+                element.classList.remove('is-animating', 'is-active');
+            }, NUMBER_SWAP_DURATION_MS + 40);
+            this.numberTransitionTimers.push(cleanupTimer);
+            this.numberTransitionMap.set(key, { value, markup });
+        });
+
+        Array.from(this.numberTransitionMap.keys()).forEach((key) => {
+            if (!seenKeys.has(key)) this.numberTransitionMap.delete(key);
+        });
     }
 
     applyMarqueeDurations() {
