@@ -23,13 +23,7 @@ const DEFAULT_MAIN_ROWS = 6;
 const TICKER_PIXELS_PER_SECOND = 36;
 const MIN_FILL_HEIGHT_ROWS = 1;
 const MAX_VISIBLE_ARRIVAL_MINUTES = 90;
-const EMPTY_CLOCK_HEIGHT_PX = DEFAULT_MAIN_HEIGHT_PX + ROW_GAP_PX + STATIC_SECTION_HEIGHT_PX;
-const EMPTY_CLOCK_CANVAS_SCALE = LED_GRID_STEP_PX;
-const EMPTY_CLOCK_PADDING_PX = 10;
-const EMPTY_CLOCK_ALPHA_THRESHOLD = 48;
 const NUMBER_SWAP_DURATION_MS = 320;
-const EMPTY_CLOCK_DIGIT_WIDTH_PX = 42;
-const EMPTY_CLOCK_COLON_WIDTH_PX = 18;
 const STREET_SCREEN_COLOR_KEY = 'streetScreenColorScheme';
 const STREET_SCREEN_FILL_MODE_KEY = 'streetScreenFillHeightMode';
 
@@ -116,90 +110,15 @@ function buildMinutesCellMarkup(minutes, key) {
     })}</span>`;
 }
 
-function createRasterCanvas(width, height) {
-    if (typeof document === 'undefined') return null;
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    return canvas;
-}
-
-function measureClockFontSize(ctx, text, maxWidth, maxHeight) {
-    let size = Math.max(8, Math.floor(maxHeight));
-    while (size > 8) {
-        ctx.font = `${size}px "Sinhala MN Placeholder", "Matrix Sans Print", "Matrix Sans", monospace`;
-        const metrics = ctx.measureText(text);
-        const width = Math.ceil(metrics.width);
-        const ascent = Math.ceil(metrics.actualBoundingBoxAscent || size * 0.8);
-        const descent = Math.ceil(metrics.actualBoundingBoxDescent || size * 0.2);
-        const height = ascent + descent;
-        if (width <= maxWidth && height <= maxHeight) {
-            return { size, ascent, descent };
-        }
-        size -= 1;
-    }
-    return {
-        size: 8,
-        ascent: 7,
-        descent: 2
-    };
-}
-
-function buildEmptyClockSvgMarkup(text, width = BOARD_WIDTH, height = EMPTY_CLOCK_HEIGHT_PX, paddingPx = EMPTY_CLOCK_PADDING_PX) {
-    const rasterWidth = Math.max(1, Math.floor(width / EMPTY_CLOCK_CANVAS_SCALE));
-    const rasterHeight = Math.max(1, Math.floor(height / EMPTY_CLOCK_CANVAS_SCALE));
-    const rasterPadding = Math.max(1, Math.floor(paddingPx / EMPTY_CLOCK_CANVAS_SCALE));
-    const canvas = createRasterCanvas(rasterWidth, rasterHeight);
-    const ctx = canvas?.getContext?.('2d', { willReadFrequently: true });
-    if (!canvas || !ctx) {
-        return escapeHtml(text);
-    }
-
-    ctx.clearRect(0, 0, rasterWidth, rasterHeight);
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.imageSmoothingEnabled = false;
-
-    const { size } = measureClockFontSize(
-        ctx,
-        text,
-        rasterWidth - rasterPadding * 2,
-        rasterHeight - rasterPadding * 2
-    );
-    ctx.font = `${size}px "Sinhala MN Placeholder", "Matrix Sans Print", "Matrix Sans", monospace`;
-    ctx.fillText(text, rasterWidth / 2, rasterHeight / 2);
-
-    const { data } = ctx.getImageData(0, 0, rasterWidth, rasterHeight);
-    const dots = [];
-    for (let y = 0; y < rasterHeight; y += 1) {
-        for (let x = 0; x < rasterWidth; x += 1) {
-            const alpha = data[((y * rasterWidth) + x) * 4 + 3];
-            if (alpha < EMPTY_CLOCK_ALPHA_THRESHOLD) continue;
-            const cx = (x * EMPTY_CLOCK_CANVAS_SCALE) + (EMPTY_CLOCK_CANVAS_SCALE / 2);
-            const cy = (y * EMPTY_CLOCK_CANVAS_SCALE) + (EMPTY_CLOCK_CANVAS_SCALE / 2);
-            dots.push(`<circle class="street-screen-empty-clock-dot" cx="${cx}" cy="${cy}" r="0.82" />`);
-        }
-    }
-
-    return `
-        <svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" aria-hidden="true" focusable="false">
-            ${dots.join('')}
-        </svg>
-    `;
-}
-
 function buildEmptyClockMarkup(text) {
     const cells = Array.from(text).map((char, index) => {
         if (char === ':') {
-            return `<span class="street-screen-empty-clock-colon" aria-hidden="true">${buildEmptyClockSvgMarkup(char, EMPTY_CLOCK_COLON_WIDTH_PX, EMPTY_CLOCK_HEIGHT_PX, 4)}</span>`;
+            return `<span class="street-screen-empty-clock-colon" aria-hidden="true">${escapeHtml(char)}</span>`;
         }
         return buildAnimatedNumberMarkup({
             key: `empty-clock-digit-${index}`,
             value: char,
-            html: buildEmptyClockSvgMarkup(char, EMPTY_CLOCK_DIGIT_WIDTH_PX, EMPTY_CLOCK_HEIGHT_PX, 6),
             className: 'street-screen-empty-clock-number',
-            block: true,
             ariaLabel: char
         });
     }).join('');
@@ -209,24 +128,32 @@ function buildEmptyClockMarkup(text) {
 
 function buildStatusTimeMarkup(text) {
     const [hours = '--', minutes = '--'] = String(text || '').split(':');
-    return `${buildAnimatedNumberMarkup({
-        key: 'status-time-hours',
-        value: hours,
-        className: 'street-screen-status-value street-screen-status-value--time'
-    })}<span class="street-screen-status-time-separator" aria-hidden="true">:</span>${buildAnimatedNumberMarkup({
-        key: 'status-time-minutes',
-        value: minutes,
-        className: 'street-screen-status-value street-screen-status-value--time'
-    })}`;
+    return `
+        <span class="street-screen-status-time" data-status-time>
+            <span class="street-screen-status-value street-screen-status-value--time" data-status-time-hours>${escapeHtml(hours)}</span>
+            <span class="street-screen-status-time-separator" aria-hidden="true">:</span>
+            <span class="street-screen-status-value street-screen-status-value--time" data-status-time-minutes>${escapeHtml(minutes)}</span>
+        </span>
+    `;
 }
 
 function normalizeLedLabel(text, locale) {
     const value = String(text || '').trim();
     if (!value) return value;
-    if (locale === 'ka' || /[\u10A0-\u10FF]/.test(value)) {
+    if (/[\u10A0-\u10FF]/.test(value)) {
         return value.toLocaleUpperCase('ka-GE');
     }
     return value;
+}
+
+function formatLedLabelMarkup(text) {
+    return Array.from(String(text || '').matchAll(/[A-Za-z]+|[^A-Za-z]+/g)).map((match) => {
+        const part = match[0];
+        if (/^[A-Za-z]+$/.test(part)) {
+            return `<span class="street-screen-latin-run">${escapeHtml(part)}</span>`;
+        }
+        return escapeHtml(part);
+    }).join('');
 }
 
 function buildNameCell(currentText, nextText, options = {}) {
@@ -235,9 +162,9 @@ function buildNameCell(currentText, nextText, options = {}) {
     const next = normalizeLedLabel(nextText, locale) || current;
     const shouldMarquee = options.marquee === true;
     const currentContent = shouldMarquee
-        ? `<div class="street-screen-name-line street-screen-name-line--marquee" data-marquee-text="${escapeHtml(current)}"><div class="street-screen-name-marquee-viewport"><div class="street-screen-name-marquee"><span>${escapeHtml(current)}</span></div></div></div>`
-        : `<div class="street-screen-name-line street-screen-name-line--static">${escapeHtml(current)}</div>`;
-    const nextContent = `<div class="street-screen-name-line street-screen-name-line--static">${escapeHtml(next)}</div>`;
+        ? `<div class="street-screen-name-line street-screen-name-line--marquee" data-marquee-text="${escapeHtml(current)}"><div class="street-screen-name-marquee-viewport"><div class="street-screen-name-marquee"><span>${formatLedLabelMarkup(current)}</span></div></div></div>`
+        : `<div class="street-screen-name-line street-screen-name-line--static">${formatLedLabelMarkup(current)}</div>`;
+    const nextContent = `<div class="street-screen-name-line street-screen-name-line--static">${formatLedLabelMarkup(next)}</div>`;
     return `
         <div class="street-screen-name-switch${options.switching ? ' is-switching' : ''}">
             <div class="street-screen-name-track">
@@ -284,7 +211,7 @@ function buildTickerItems(arrivals, language) {
                 value: arrival.routeNumber,
                 className: 'street-screen-ticker-route-value'
             })}</span>
-            <span class="street-screen-ticker-name">${escapeHtml(label)}</span>
+            <span class="street-screen-ticker-name">${formatLedLabelMarkup(label)}</span>
             <span class="street-screen-ticker-minutes">${buildTickerMinutesMarkup(arrival.minutes, language, `ticker-minutes-${itemKey}`)}</span>
             <span class="street-screen-ticker-separator">*</span>
         `;
@@ -476,7 +403,7 @@ export class StreetScreenController {
                 return;
             }
             if (this.statusMode !== 'time') return;
-            this.renderStatus();
+            this.updateStatusTime();
         }, 1000);
     }
 
@@ -603,6 +530,7 @@ export class StreetScreenController {
 
         const { stop, arrivals } = this.currentModel;
         if (!stop || arrivals.length === 0) {
+            this.updateScale();
             this.surfaceEl?.classList.add('is-scroll-hidden');
             this.mainEl.innerHTML = `<div class="street-screen-empty street-screen-empty--clock">${buildEmptyClockMarkup(formatTbilisiTimeWithSeconds())}</div>`;
             this.scrollEl.innerHTML = '';
@@ -652,7 +580,7 @@ export class StreetScreenController {
                         value: singleOverflowRow.routeNumber,
                         className: 'street-screen-route-value'
                     })}</div>
-                    <div class="street-screen-name-line street-screen-name-line--static">${escapeHtml(label)}</div>
+                    <div class="street-screen-name-line street-screen-name-line--static">${formatLedLabelMarkup(label)}</div>
                     <div class="street-screen-minutes${singleOverflowRow.minutes !== null && singleOverflowRow.minutes <= 2 && !singleOverflowRow.isScheduled ? ' is-urgent' : ''}">${buildMinutesCellMarkup(singleOverflowRow.minutes, 'overflow-minutes')}</div>
                 </div>
             `;
@@ -709,6 +637,20 @@ export class StreetScreenController {
             <div class="street-screen-status-item street-screen-status-item--id">ID:${escapeHtml(stopCode)} SMS:93344</div>
             <div class="street-screen-status-item street-screen-status-item--right">${rightValue}</div>
         `;
+    }
+
+    updateStatusTime() {
+        if (!this.statusEl || this.statusMode !== 'time') return;
+        const timeText = formatTbilisiTime();
+        const [hours = '--', minutes = '--'] = timeText.split(':');
+        const hoursEl = this.statusEl.querySelector('[data-status-time-hours]');
+        const minutesEl = this.statusEl.querySelector('[data-status-time-minutes]');
+        if (!hoursEl || !minutesEl) {
+            this.renderStatus();
+            return;
+        }
+        if (hoursEl.textContent !== hours) hoursEl.textContent = hours;
+        if (minutesEl.textContent !== minutes) minutesEl.textContent = minutes;
     }
 
     applyNumberTransitions() {
@@ -772,10 +714,11 @@ export class StreetScreenController {
                 return;
             }
 
-            const snappedDistance = Math.max(overflow, LED_GRID_STEP_PX);
-            const fullSteps = Math.max(1, Math.floor(snappedDistance / LED_GRID_STEP_PX));
-            const remainder = snappedDistance - (fullSteps * LED_GRID_STEP_PX);
-            const totalSteps = remainder > 0.25 ? fullSteps + 1 : fullSteps;
+            const snappedDistance = Math.max(
+                LED_GRID_STEP_PX,
+                Math.ceil(overflow / LED_GRID_STEP_PX) * LED_GRID_STEP_PX
+            );
+            const totalSteps = Math.max(1, Math.round(snappedDistance / LED_GRID_STEP_PX));
             const scrollSeconds = Math.max(2.4, snappedDistance / 22);
             const stepMs = (scrollSeconds * 1000) / totalSteps;
 
@@ -821,6 +764,16 @@ export class StreetScreenController {
         track.style.animationTimingFunction = `steps(${steps}, end)`;
     }
 
+    snapBoardToDevicePixels(board, stageRect, boardWidth, boardHeight, scale) {
+        const dpr = window.devicePixelRatio || 1;
+        const renderedLeft = stageRect.left + ((stageRect.width - (boardWidth * scale)) / 2);
+        const renderedTop = stageRect.top + ((stageRect.height - (boardHeight * scale)) / 2);
+        const alignX = (Math.round(renderedLeft * dpr) - (renderedLeft * dpr)) / dpr;
+        const alignY = (Math.round(renderedTop * dpr) - (renderedTop * dpr)) / dpr;
+        board.style.setProperty('--street-screen-align-x', `${alignX}px`);
+        board.style.setProperty('--street-screen-align-y', `${alignY}px`);
+    }
+
     async animateLanguageSwitch() {
         if (!this.currentModel) return;
         this.language = this.language === 'ka' ? 'en' : 'ka';
@@ -840,7 +793,10 @@ export class StreetScreenController {
         const availableHeight = Math.max(1, rect.height - viewportPadding);
 
         if (this.fillHeightMode) {
-            const scale = Math.max(0.1, availableWidth / BOARD_WIDTH);
+            const rawScale = Math.max(0.1, availableWidth / BOARD_WIDTH);
+            const dpr = window.devicePixelRatio || 1;
+            const physicalStep = Math.max(1, Math.floor(rawScale * LED_GRID_STEP_PX * dpr));
+            const scale = Math.max(0.1, physicalStep / (LED_GRID_STEP_PX * dpr));
             const boardWidth = BOARD_WIDTH;
             const rawBoardHeight = availableHeight / scale;
             const boardHeight = Math.max(
@@ -852,6 +808,7 @@ export class StreetScreenController {
             board.style.setProperty('--street-screen-board-height', `${boardHeight}px`);
             board.style.setProperty('--street-screen-main-height', `${metrics.mainHeight}px`);
             board.style.setProperty('--street-screen-scale', String(scale));
+            this.snapBoardToDevicePixels(board, rect, boardWidth, boardHeight, scale);
             this.layoutMetrics = metrics;
             return;
         }
@@ -861,6 +818,7 @@ export class StreetScreenController {
         board.style.setProperty('--street-screen-board-height', `${BOARD_HEIGHT}px`);
         board.style.setProperty('--street-screen-main-height', `${DEFAULT_MAIN_HEIGHT_PX}px`);
         board.style.setProperty('--street-screen-scale', String(Math.max(0.1, scale)));
+        this.snapBoardToDevicePixels(board, rect, BOARD_WIDTH, BOARD_HEIGHT, Math.max(0.1, scale));
         this.layoutMetrics = {
             boardHeight: BOARD_HEIGHT,
             mainHeight: DEFAULT_MAIN_HEIGHT_PX,

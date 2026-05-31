@@ -20,13 +20,6 @@
     font-style: normal;
 }
 
-@font-face {
-    font-family: 'Sinhala MN Placeholder';
-    src: url('../assets/fonts/SinhalaMN.ttc') format('collection');
-    font-weight: normal;
-    font-style: normal;
-}
-
 :root {
     /* Brand */
     --primary: #2563eb;

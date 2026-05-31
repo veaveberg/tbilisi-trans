@@ -129,6 +129,11 @@
 
 .street-screen-board {
     --street-screen-scale: 1;
+    --street-screen-align-x: 0px;
+    --street-screen-align-y: 0px;
+    position: relative;
+    left: var(--street-screen-align-x);
+    top: var(--street-screen-align-y);
     width: var(--street-screen-board-width, 304px);
     height: var(--street-screen-board-height, 144px);
     display: flex;
@@ -144,6 +149,7 @@
     --street-led-background: #000000;
     --street-led-glow-rgb: 226, 192, 0;
     --street-led-dim-rgb: 255, 229, 125;
+    --street-led-backdrop-rgb: 126, 126, 126;
     --street-led-dot-size: 0.82px;
     --street-led-dot-step: 2px;
     --street-led-dot-pattern: radial-gradient(circle, rgba(var(--street-led-dim-rgb), 1) 0 var(--street-led-dot-size), transparent calc(var(--street-led-dot-size) + 0.34px));
@@ -174,7 +180,7 @@
     position: absolute;
     inset: 0;
     background:
-        radial-gradient(circle, rgba(var(--street-led-dim-rgb), 0.14) 0 var(--street-led-dot-size), rgba(var(--street-led-dim-rgb), 0.03) calc(var(--street-led-dot-size) + 0.12px), transparent calc(var(--street-led-dot-size) + 0.34px)) 0 0 / var(--street-led-dot-step) var(--street-led-dot-step);
+        radial-gradient(circle, rgba(var(--street-led-backdrop-rgb), 0.18) 0 var(--street-led-dot-size), rgba(var(--street-led-backdrop-rgb), 0.045) calc(var(--street-led-dot-size) + 0.12px), transparent calc(var(--street-led-dot-size) + 0.34px)) 0 0 / var(--street-led-dot-step) var(--street-led-dot-step);
     opacity: 0.72;
     pointer-events: none;
     mix-blend-mode: screen;
@@ -265,12 +271,12 @@
 .street-screen-name-switch {
     position: relative;
     min-width: 0;
-    overflow: visible;
-    clip-path: inset(-4px 0 -4px 0);
+    overflow: hidden;
     height: 14px;
     align-self: start;
     box-sizing: border-box;
     padding-inline: 0;
+    filter: drop-shadow(0 0 4px rgba(var(--street-led-glow-rgb), 0.55));
 }
 
 .street-screen-name-track {
@@ -279,7 +285,7 @@
     gap: 4px;
     transform: translateY(0);
     will-change: transform;
-    overflow: visible;
+    overflow: hidden;
 }
 
 .street-screen-name-switch.is-switching .street-screen-name-track {
@@ -291,8 +297,7 @@
     min-width: 0;
     height: 16px;
     line-height: 16px;
-    text-shadow: var(--street-led-text-glow);
-    overflow: visible;
+    overflow: hidden;
     margin-top: -1px;
     transform: translateX(var(--street-led-text-offset-x));
 }
@@ -302,15 +307,18 @@
     font-size: var(--street-led-numeric-font-size);
 }
 
+.street-screen-latin-run {
+    font-family: '5x7 Matrix', 'Matrix Sans Print', 'Matrix Sans', monospace;
+    font-size: var(--street-led-numeric-font-size);
+}
+
 .street-screen-name-line--marquee {
     position: relative;
-    overflow: visible;
-    clip-path: inset(-4px 0 -4px 0);
+    overflow: hidden;
 }
 
 .street-screen-name-marquee-viewport {
-    overflow: visible;
-    clip-path: inset(-4px 0 -4px 0);
+    overflow: hidden;
     width: 100%;
     height: 16px;
 }
@@ -327,8 +335,7 @@
 
 .street-screen-name-line--static {
     white-space: nowrap;
-    overflow: visible;
-    clip-path: inset(-4px 0 -4px 0);
+    overflow: hidden;
     text-overflow: clip;
 }
 
@@ -441,12 +448,13 @@
 }
 
 .street-screen-status-item {
-    height: 14px;
+    height: 18px;
+    line-height: 18px;
     text-align: right;
     font-family: '5x7 Matrix', 'Matrix Sans Print', 'Matrix Sans', monospace;
     font-size: var(--street-led-numeric-font-size);
     filter: var(--street-led-number-glow);
-    transform: translateX(var(--street-led-text-offset-x));
+    transform: translate(var(--street-led-text-offset-x), -2px);
 }
 
 .street-screen-status-item--id {
@@ -465,9 +473,16 @@
 
 .street-screen-status-time-separator {
     display: inline-flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     animation: street-screen-status-clock-blink 2s steps(1, end) infinite;
+}
+
+.street-screen-status-time {
+    display: inline-flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: 0;
 }
 
 .street-screen-loading,
@@ -485,44 +500,37 @@
 .street-screen-empty--clock {
     justify-content: center;
     opacity: 1;
+    text-shadow: none;
 }
 
 .street-screen-empty-clock {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     gap: 2px;
     width: 304px;
-    height: 122px;
+    height: 20px;
     color: var(--street-led-color);
+    font-family: '5x7 Matrix', 'Matrix Sans Print', 'Matrix Sans', monospace;
+    font-size: var(--street-led-numeric-font-size);
+    line-height: 20px;
+    filter: var(--street-led-number-glow);
+    transform: translateX(calc(var(--street-led-text-offset-x) - 1px));
 }
 
 .street-screen-empty-clock .street-screen-number {
-    width: 42px;
-    height: 122px;
+    height: 20px;
+    line-height: 20px;
     justify-items: center;
-    align-items: center;
-}
-
-.street-screen-empty-clock svg,
-.street-screen-empty-clock-colon svg {
-    display: block;
-    width: 100%;
-    height: 122px;
-    overflow: visible;
-    filter: var(--street-led-number-glow);
-}
-
-.street-screen-empty-clock-dot {
-    fill: currentColor;
+    align-items: flex-start;
 }
 
 .street-screen-empty-clock-colon {
     display: inline-flex;
-    width: 18px;
-    height: 122px;
-    align-items: center;
+    height: 20px;
+    align-items: flex-start;
     justify-content: center;
+    transform: translateY(0px);
     animation: street-screen-clock-colon-blink 1s steps(1, end) infinite;
 }
 
@@ -534,7 +542,6 @@
     justify-items: start;
     min-width: 0;
     line-height: inherit;
-    clip-path: inset(0);
 }
 
 .street-screen-number--block {
@@ -564,6 +571,7 @@
 
 .street-screen-number.is-animating {
     overflow: hidden;
+    clip-path: inset(0);
 }
 
 .street-screen-number-layer {
@@ -571,11 +579,11 @@
 }
 
 .street-screen-number.is-active .street-screen-number-layer--old {
-    animation: street-screen-number-swap-out 320ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    animation: street-screen-number-swap-out 320ms steps(1, end) forwards;
 }
 
 .street-screen-number.is-active .street-screen-number-layer--new {
-    animation: street-screen-number-swap-in 320ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    animation: street-screen-number-swap-in 320ms steps(1, end) forwards;
 }
 
 .street-screen-surface[data-scheme="yellow"] {
@@ -690,7 +698,7 @@
 
     50%,
     100% {
-        opacity: 0.16;
+        opacity: 0;
     }
 }
 
@@ -707,31 +715,95 @@
 }
 
 @keyframes street-screen-number-swap-out {
-    from {
+    0% {
         opacity: 1;
         transform: translateY(0);
     }
 
-    to {
-        opacity: 0.2;
-        transform: translateY(-70%);
+    12.5% {
+        opacity: 1;
+        transform: translateY(-2px);
+    }
+
+    25% {
+        opacity: 1;
+        transform: translateY(-4px);
+    }
+
+    37.5% {
+        opacity: 1;
+        transform: translateY(-6px);
+    }
+
+    50% {
+        opacity: 1;
+        transform: translateY(-8px);
+    }
+
+    62.5% {
+        opacity: 1;
+        transform: translateY(-10px);
+    }
+
+    75% {
+        opacity: 1;
+        transform: translateY(-12px);
+    }
+
+    87.5% {
+        opacity: 1;
+        transform: translateY(-14px);
+    }
+
+    100% {
+        opacity: 0;
+        transform: translateY(-16px);
     }
 }
 
 @keyframes street-screen-number-swap-in {
-    from {
+    0% {
         opacity: 0;
-        transform: translateY(70%);
+        transform: translateY(16px);
     }
 
-    to {
+    12.5% {
+        opacity: 1;
+        transform: translateY(14px);
+    }
+
+    25% {
+        opacity: 1;
+        transform: translateY(12px);
+    }
+
+    37.5% {
+        opacity: 1;
+        transform: translateY(10px);
+    }
+
+    50% {
+        opacity: 1;
+        transform: translateY(8px);
+    }
+
+    62.5% {
+        opacity: 1;
+        transform: translateY(6px);
+    }
+
+    75% {
+        opacity: 1;
+        transform: translateY(4px);
+    }
+
+    87.5% {
+        opacity: 1;
+        transform: translateY(2px);
+    }
+
+    100% {
         opacity: 1;
         transform: translateY(0);
-    }
-}
-
-@media (max-width: 720px) {
-    .street-screen-surface::before {
-        background-size: 5px 5px;
     }
 }
