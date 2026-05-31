@@ -29,6 +29,10 @@
     pointer-events: none;
 }
 
+.street-screen-overlay.is-idle {
+    cursor: none;
+}
+
 .street-screen-palette {
     display: flex;
     align-items: center;
@@ -148,11 +152,9 @@
     --street-led-color: #ffe57d;
     --street-led-background: #000000;
     --street-led-glow-rgb: 226, 192, 0;
-    --street-led-dim-rgb: 255, 229, 125;
     --street-led-backdrop-rgb: 126, 126, 126;
     --street-led-dot-size: 0.82px;
     --street-led-dot-step: 2px;
-    --street-led-dot-pattern: radial-gradient(circle, rgba(var(--street-led-dim-rgb), 1) 0 var(--street-led-dot-size), transparent calc(var(--street-led-dot-size) + 0.34px));
     --street-led-text-glow: 0 0 4px rgba(var(--street-led-glow-rgb), 0.55);
     --street-led-number-glow: drop-shadow(0 0 4px rgba(var(--street-led-glow-rgb), 0.58));
     --street-led-text-offset-x: 0px;
@@ -589,49 +591,41 @@
 .street-screen-surface[data-scheme="yellow"] {
     --street-led-color: #ffe57d;
     --street-led-glow-rgb: 226, 192, 0;
-    --street-led-dim-rgb: 255, 229, 125;
 }
 
 .street-screen-surface[data-scheme="red"] {
     --street-led-color: #ff6c57;
     --street-led-glow-rgb: 255, 75, 58;
-    --street-led-dim-rgb: 255, 108, 87;
 }
 
 .street-screen-surface[data-scheme="green"] {
     --street-led-color: #7dff85;
     --street-led-glow-rgb: 61, 238, 80;
-    --street-led-dim-rgb: 125, 255, 133;
 }
 
 .street-screen-surface[data-scheme="blue"] {
     --street-led-color: #78cfff;
     --street-led-glow-rgb: 68, 166, 255;
-    --street-led-dim-rgb: 120, 207, 255;
 }
 
 .street-screen-surface[data-scheme="cyan"] {
     --street-led-color: #75fff8;
     --street-led-glow-rgb: 49, 232, 221;
-    --street-led-dim-rgb: 117, 255, 248;
 }
 
 .street-screen-surface[data-scheme="magenta"] {
     --street-led-color: #ff86ef;
     --street-led-glow-rgb: 255, 76, 226;
-    --street-led-dim-rgb: 255, 134, 239;
 }
 
 .street-screen-surface[data-scheme="white"] {
     --street-led-color: #f0f0ea;
     --street-led-glow-rgb: 255, 255, 245;
-    --street-led-dim-rgb: 240, 240, 234;
 }
 
 .street-screen-surface[data-scheme="wgy"] {
     --street-led-color: #f0f0ea;
     --street-led-glow-rgb: 255, 255, 245;
-    --street-led-dim-rgb: 240, 240, 234;
 }
 
 .street-screen-surface[data-scheme="wgy"] .street-screen-minutes.is-urgent {

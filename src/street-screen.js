@@ -774,6 +774,21 @@ export class StreetScreenController {
         board.style.setProperty('--street-screen-align-y', `${alignY}px`);
     }
 
+    getStageContentRect(stage) {
+        const rect = stage.getBoundingClientRect();
+        const styles = window.getComputedStyle(stage);
+        const paddingLeft = Number.parseFloat(styles.paddingLeft) || 0;
+        const paddingRight = Number.parseFloat(styles.paddingRight) || 0;
+        const paddingTop = Number.parseFloat(styles.paddingTop) || 0;
+        const paddingBottom = Number.parseFloat(styles.paddingBottom) || 0;
+        return {
+            left: rect.left + paddingLeft,
+            top: rect.top + paddingTop,
+            width: Math.max(0, rect.width - paddingLeft - paddingRight),
+            height: Math.max(0, rect.height - paddingTop - paddingBottom)
+        };
+    }
+
     async animateLanguageSwitch() {
         if (!this.currentModel) return;
         this.language = this.language === 'ka' ? 'en' : 'ka';
@@ -786,7 +801,7 @@ export class StreetScreenController {
         const stage = this.overlayEl.querySelector('.street-screen-stage');
         const board = this.overlayEl.querySelector('.street-screen-board');
         if (!stage || !board) return;
-        const rect = stage.getBoundingClientRect();
+        const rect = this.getStageContentRect(stage);
         if (!rect.width || !rect.height) return;
         const viewportPadding = 2;
         const availableWidth = Math.max(1, rect.width - viewportPadding);
