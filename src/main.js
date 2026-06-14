@@ -422,14 +422,42 @@ function resolveRouteFilterIdsForStop(routeShortNames = [], stopId = window.curr
     return Array.from(new Set(resolvedIds));
 }
 
+function extractNumericStopIdValue(value) {
+    const match = String(value ?? '').match(/\d+/);
+    if (!match) return null;
+    const parsed = Number.parseInt(match[0], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getCanonicalMergedStopId(stopId) {
+    const currentId = String(stopId || '').trim();
+    if (!currentId) return currentId;
+    const equivalentIds = getEquivalentStops(currentId, false);
+    const ids = new Set([currentId, ...equivalentIds.map(id => String(id))]);
+    let best = null;
+
+    ids.forEach((id) => {
+        const stop = allStops.find(s => String(s.id) === String(id));
+        const raw = String(stop?.id || id).trim();
+        const numeric = extractNumericStopIdValue(stop?.code || raw);
+        if (numeric === null) return;
+        if (!best || numeric < best.numeric) {
+            best = { raw, numeric };
+        }
+    });
+
+    return best?.raw || currentId;
+}
+
 function updateCurrentStopDeepLink() {
     if (!window.currentStopId) return;
+    const canonicalStopId = getCanonicalMergedStopId(window.currentStopId);
     Router.updateStop(
-        window.currentStopId,
+        canonicalStopId,
         !!filterManager?.state?.active,
         Array.from(filterManager?.state?.targetIds || []),
         '',
-        getSelectedRouteFilterShortNamesForStop(window.currentStopId),
+        getSelectedRouteFilterShortNamesForStop(canonicalStopId),
         { board: !!streetScreenController?.isOpen }
     );
 }
@@ -2125,6 +2153,14 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     clearSelectedMinibusSegments();
     if (!stop) return;
 
+    const canonicalStopId = stop.id ? getCanonicalMergedStopId(stop.id) : null;
+    const canonicalStop = canonicalStopId
+        ? allStops.find((entry) => String(entry.id) === String(canonicalStopId)) || stop
+        : stop;
+    if (canonicalStop && canonicalStop.id) {
+        stop = canonicalStop;
+    }
+
     const prevStopId = window.currentStopId;
     if (stop.id) {
         window.currentStopId = String(stop.id);
@@ -2159,11 +2195,11 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     // Sync URL (Router)
     if (updateURL) {
         Router.updateStop(
-            stop.id,
+            canonicalStopId,
             filterManager.state.active,
             Array.from(filterManager.state.targetIds),
             '',
-            getSelectedRouteFilterShortNamesForStop(stop.id)
+            getSelectedRouteFilterShortNamesForStop(canonicalStopId)
         );
     }
 
@@ -4229,15 +4265,23 @@ const initMoreMenu = (triggerId, menuId) => {
             });
     };
 
+    const getBoardAction = () => ({
+        id: 'open-street-screen-btn',
+        title: t('streetScreen'),
+        style: 'default',
+        symbol: 'arrow.down.left.and.arrow.up.right'
+    });
+
     const showNativeMenu = async (event) => {
         const plugin = getNativeSettings();
         if (!plugin || typeof plugin.showActionSheet !== 'function') return false;
         syncFavoriteButtonState();
 
-        const actions = [
-            ...getVisibleActions(),
-            { id: 'native-share-current-url', title: t('share'), style: 'default', symbol: 'square.and.arrow.up' }
-        ];
+        const actions = getVisibleActions();
+        if (menuId === 'stop-more-menu' && !actions.some((action) => action.id === 'open-street-screen-btn')) {
+            actions.push(getBoardAction());
+        }
+        actions.push({ id: 'native-share-current-url', title: t('share'), style: 'default', symbol: 'square.and.arrow.up' });
         if (!actions.length) return true;
 
         let res;
@@ -4324,7 +4368,14 @@ initMoreMenu('stop-more-btn', 'stop-more-menu');
 initMoreMenu('route-more-btn', 'route-more-menu');
 
 streetScreenController = new StreetScreenController({
-    getCurrentStop: () => allStops.find((stop) => String(stop.id) === String(window.currentStopId)) || null,
+    getCurrentStop: () => {
+        const canonicalStopId = getCanonicalMergedStopId(window.currentStopId);
+        return allStops.find((stop) => String(stop.id) === String(canonicalStopId)) ||
+            allStops.find((stop) => String(stop.id) === String(window.currentStopId)) ||
+            null;
+    },
+    getEquivalentStops: (stopId) => getEquivalentStops(stopId, false),
+    getAllStops: () => allStops,
     onOpen: (options = {}) => {
         if (!options.syncUrl || !window.currentStopId) return;
         updateCurrentStopDeepLink();

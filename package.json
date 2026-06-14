@@ -8,6 +8,7 @@
     "prefetch": "npm run prefetch:tbilisi && npm run prefetch:rustavi",
     "prefetch:tbilisi": "node scripts/prefetch-tbilisi.js",
     "prefetch:rustavi": "node scripts/prefetch-rustavi.js",
+    "check:live-bus-fit": "node scripts/check-live-bus-polyline-fit.js",
     "build": "vite build",
     "build:all": "npm run prefetch && vite build",
     "build:cap": "VITE_BASE_URL=/ npm run build",

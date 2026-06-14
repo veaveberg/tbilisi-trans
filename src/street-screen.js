@@ -1,4 +1,5 @@
 import { getCurrentStopNamesLanguage } from './i18n.ts';
+import { getNativeSettingsPlugin } from './settings.js';
 
 const TBILISI_TIMEZONE = 'Asia/Tbilisi';
 const TBILISI_WEATHER_URL = 'https://api.open-meteo.com/v1/forecast?latitude=41.6938&longitude=44.8015&current=temperature_2m&timezone=Asia%2FTbilisi';
@@ -20,7 +21,7 @@ const SURFACE_PADDING_PX = 0;
 const SURFACE_GAP_COUNT = 3;
 const DEFAULT_MAIN_HEIGHT_PX = 104;
 const DEFAULT_MAIN_ROWS = 6;
-const TICKER_PIXELS_PER_SECOND = 36;
+const TICKER_PIXELS_PER_SECOND = 60;
 const MIN_FILL_HEIGHT_ROWS = 1;
 const MAX_VISIBLE_ARRIVAL_MINUTES = 90;
 const NUMBER_SWAP_DURATION_MS = 320;
@@ -101,6 +102,37 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+async function setNativeBoardStatusBarHidden(hidden) {
+    const cap = window.Capacitor;
+    if (!cap?.isNativePlatform?.() || cap?.getPlatform?.() !== 'ios') return;
+    const plugin = getNativeSettingsPlugin();
+    if (!plugin?.setStatusBarHidden) return;
+    try {
+        await plugin.setStatusBarHidden({ hidden: !!hidden, animated: true });
+    } catch (error) {
+        console.warn('[Street Screen] Failed to update iOS status bar visibility', error);
+    }
+}
+
+function getStopIdFromUrlPath() {
+    let path = String(window.location?.pathname || '');
+    const base = String(import.meta.env.BASE_URL || '/');
+    if (base && path.startsWith(base)) {
+        path = path.slice(base.length);
+    } else if (path.startsWith('/')) {
+        path = path.slice(1);
+    }
+    path = path.replace(/^\/+|\/+$/g, '');
+    const firstPart = path.split('/')[0] || '';
+    if (!firstPart || firstPart === 'privacy-policy' || firstPart === 'support' || firstPart === 'segment') {
+        return '';
+    }
+    if (firstPart.startsWith('bus')) {
+        return '';
+    }
+    return firstPart.startsWith('stop') ? firstPart.slice(4) : firstPart;
+}
+
 function buildMinutesCellMarkup(minutes, key) {
     const text = formatMinutes(minutes);
     return `<span class="street-screen-minutes-text" aria-label="${escapeHtml(text)}">${buildAnimatedNumberMarkup({
@@ -138,7 +170,7 @@ function buildStatusTimeMarkup(text) {
 }
 
 function normalizeLedLabel(text, locale) {
-    const value = String(text || '').trim();
+    const value = String(text || '').replace(/✈/g, '').trim();
     if (!value) return value;
     if (/[\u10A0-\u10FF]/.test(value)) {
         return value.toLocaleUpperCase('ka-GE');
@@ -147,7 +179,7 @@ function normalizeLedLabel(text, locale) {
 }
 
 function formatLedLabelMarkup(text) {
-    return Array.from(String(text || '').matchAll(/[A-Za-z]+|[^A-Za-z]+/g)).map((match) => {
+    return Array.from(String(text || '').replace(/✈/g, '').matchAll(/[A-Za-z]+|[^A-Za-z]+/g)).map((match) => {
         const part = match[0];
         if (/^[A-Za-z]+$/.test(part)) {
             return `<span class="street-screen-latin-run">${escapeHtml(part)}</span>`;
@@ -248,6 +280,7 @@ export class StreetScreenController {
         this.controlsIdleTimer = null;
         this.colorScheme = DEFAULT_SCHEME;
         this.fillHeightMode = false;
+        this.useNativeZoom = false;
         this.numberTransitionMap = new Map();
         this.numberTransitionTimers = [];
         this.layoutMetrics = {
@@ -300,6 +333,9 @@ export class StreetScreenController {
 
     init() {
         if (!this.overlayEl || !this.closeEl || !this.mainEl || !this.scrollEl || !this.statusEl || !this.surfaceEl) return;
+        const cap = window.Capacitor;
+        this.useNativeZoom = !!cap?.isNativePlatform?.() && cap?.getPlatform?.() === 'ios';
+        this.overlayEl.classList.toggle('is-ios-native', this.useNativeZoom);
         this.loadPreferences();
         this.closeEl.addEventListener('click', () => this.close());
         this.fitToggleEl?.addEventListener('click', () => {
@@ -366,6 +402,7 @@ export class StreetScreenController {
         this.options.onOpen?.(options);
         this.bumpControlsVisibility();
         this.updateScale();
+        setNativeBoardStatusBarHidden(true);
         this.renderLoading();
         this.startTimers();
         this.fetchTemperature();
@@ -382,6 +419,7 @@ export class StreetScreenController {
         if (this.controlsIdleTimer) window.clearTimeout(this.controlsIdleTimer);
         this.controlsIdleTimer = null;
         this.overlayEl.classList.remove('is-idle');
+        setNativeBoardStatusBarHidden(false);
         this.options.onClose?.(options);
     }
 
@@ -528,7 +566,14 @@ export class StreetScreenController {
             this.surfaceEl.dataset.language = this.language;
         }
 
-        const { stop, arrivals } = this.currentModel;
+        const stop = this.options.getCurrentStop?.() || this.currentModel.stop;
+        const arrivals = this.currentModel.arrivals;
+        if (this.currentModel.stop !== stop) {
+            this.currentModel = {
+                ...this.currentModel,
+                stop
+            };
+        }
         if (!stop || arrivals.length === 0) {
             this.updateScale();
             this.surfaceEl?.classList.add('is-scroll-hidden');
@@ -564,7 +609,7 @@ export class StreetScreenController {
                         switching: false,
                         locale: this.language
                     })}
-                    <div class="street-screen-minutes${arrival.minutes !== null && arrival.minutes <= 2 && !arrival.isScheduled ? ' is-urgent' : ''}">${buildMinutesCellMarkup(arrival.minutes, `main-minutes-${itemKey}`)}</div>
+                    <div class="street-screen-minutes${arrival.minutes !== null && arrival.minutes <= 1 && !arrival.isScheduled ? ' is-urgent' : ''}">${buildMinutesCellMarkup(arrival.minutes, `main-minutes-${itemKey}`)}</div>
                 </div>
             `;
         }).join('');
@@ -581,7 +626,7 @@ export class StreetScreenController {
                         className: 'street-screen-route-value'
                     })}</div>
                     <div class="street-screen-name-line street-screen-name-line--static">${formatLedLabelMarkup(label)}</div>
-                    <div class="street-screen-minutes${singleOverflowRow.minutes !== null && singleOverflowRow.minutes <= 2 && !singleOverflowRow.isScheduled ? ' is-urgent' : ''}">${buildMinutesCellMarkup(singleOverflowRow.minutes, 'overflow-minutes')}</div>
+                    <div class="street-screen-minutes${singleOverflowRow.minutes !== null && singleOverflowRow.minutes <= 1 && !singleOverflowRow.isScheduled ? ' is-urgent' : ''}">${buildMinutesCellMarkup(singleOverflowRow.minutes, 'overflow-minutes')}</div>
                 </div>
             `;
         } else if (tickerRows.length > 0) {
@@ -612,9 +657,8 @@ export class StreetScreenController {
     }
 
     renderStatus(options = {}) {
-        if (!this.statusEl || !this.currentModel?.stop) return;
-        const stop = this.currentModel.stop;
-        const stopCode = String(stop.code || stop.id || '').replace(/^1:/, '');
+        if (!this.statusEl) return;
+        const stopLabel = getStopIdFromUrlPath();
         if (options.tempOnly === true) {
             this.statusEl.innerHTML = `
                 <div class="street-screen-status-item street-screen-status-item--id"></div>
@@ -634,7 +678,7 @@ export class StreetScreenController {
             })}<span class="street-screen-status-degree">${escapeHtml('°')}</span><span class="street-screen-status-value street-screen-status-value--unit">${escapeHtml('C')}</span>`
             : buildStatusTimeMarkup(formatTbilisiTime());
         this.statusEl.innerHTML = `
-            <div class="street-screen-status-item street-screen-status-item--id">ID:${escapeHtml(stopCode)} SMS:93344</div>
+            <div class="street-screen-status-item street-screen-status-item--id">ID:${escapeHtml(stopLabel)} SMS:93344</div>
             <div class="street-screen-status-item street-screen-status-item--right">${rightValue}</div>
         `;
     }

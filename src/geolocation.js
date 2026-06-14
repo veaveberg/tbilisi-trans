@@ -31,6 +31,7 @@ let isReCentering = false;
 let isOrientationTrackingStarted = false;
 let nativeHeadingListenerPromise = null;
 let latestHeading = null;
+let latestWebRawHeading = null;
 let lastIndicatorRotation = null;
 let cumulativeIndicatorRotation = 0;
 let isHeadingSupported = false;
@@ -81,6 +82,11 @@ function normalizeGeolocationPosition(position) {
         },
         timestamp: position.timestamp
     };
+}
+
+function normalizeHeadingDegrees(value) {
+    if (!Number.isFinite(value)) return 0;
+    return ((value % 360) + 360) % 360;
 }
 
 function hasUserLocationMarker() {
@@ -211,7 +217,7 @@ function handleHeadingUpdate(map, heading) {
     if (!handleHeadingUpdate.lastUpdate || now - handleHeadingUpdate.lastUpdate > 50) {
         handleHeadingUpdate.lastUpdate = now;
         if (currentLocationState === LOCATION_STATES.HEADING && !isUserRotating && !isUserInteracting && !isDragging && !isPitching && !isReCentering) {
-            map.easeTo({ bearing: heading, duration: 150, easing: (t) => t });
+            map.easeTo({ bearing: latestHeading, duration: 150, easing: (t) => t });
         }
     }
 }
@@ -524,16 +530,19 @@ function startPersistentOrientationTracking(map) {
     }
 
     const onOrientation = (e) => {
-        // Prioritize webkitCompassHeading (iOS), then absolute alpha (standard)
-        let heading = e.webkitCompassHeading;
-        if (heading === undefined || heading === null) {
+        // Prioritize webkitCompassHeading (iOS), then absolute alpha (fallback).
+        let rawHeading = e.webkitCompassHeading;
+        if (rawHeading === undefined || rawHeading === null) {
             // Check if absolute or if it's a deviceorientationabsolute event
             if (e.absolute === true && e.alpha !== null) {
-                heading = 360 - e.alpha;
+                rawHeading = 360 - e.alpha;
             }
         }
 
-        if (heading === undefined || heading === null) return;
+        if (rawHeading === undefined || rawHeading === null) return;
+
+        latestWebRawHeading = rawHeading;
+        const heading = normalizeHeadingDegrees(rawHeading);
 
         // Force an immediate sync update when first showing
         if (!document.documentElement.classList.contains('show-heading-indicator')) {
@@ -778,6 +787,17 @@ export function setupGeolocation(map) {
     map.on('move', () => updateHeadingIndicator(map));
     map.on('rotate', () => updateHeadingIndicator(map));
     map.on('pitch', () => updateHeadingIndicator(map));
+    window.addEventListener('orientationchange', () => {
+        if (latestWebRawHeading !== null) {
+            latestHeading = normalizeHeadingDegrees(latestWebRawHeading);
+        }
+        if (latestHeading !== null) {
+            updateHeadingIndicator(map);
+            if (currentLocationState === LOCATION_STATES.HEADING && !isUserRotating && !isUserInteracting && !isDragging && !isPitching && !isReCentering) {
+                map.easeTo({ bearing: latestHeading, duration: 0, easing: (t) => t });
+            }
+        }
+    });
 
     // Initialize bearing immediately
     updateHeadingIndicator(map);

@@ -44,12 +44,18 @@
 }
 
 .street-screen-swatch {
+    display: block;
     width: 16px;
     height: 16px;
     padding: 0;
     border: 0;
     border-radius: 999px;
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
+    background: transparent;
+    appearance: none;
+    cursor: pointer;
+    line-height: 0;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .street-screen-swatch[data-scheme="yellow"] { background: #ffe57d; }
@@ -63,10 +69,34 @@
     background: linear-gradient(90deg, #f3f3ef 0 58%, #67ff75 58% 78%, #ffe57d 78% 100%);
 }
 
-.street-screen-swatch.is-active {
+.street-screen-swatch::after {
+    content: "";
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
+    pointer-events: none;
+}
+
+.street-screen-swatch.is-active::after {
     box-shadow:
         0 0 0 1px rgba(255, 255, 255, 0.92),
         0 0 0 4px rgba(255, 255, 255, 0.14);
+}
+
+@media (pointer: coarse) {
+    .street-screen-palette {
+        gap: 6px;
+    }
+
+    .street-screen-swatch {
+        width: 24px;
+        height: 24px;
+        padding: 4px;
+        box-sizing: border-box;
+        background-clip: content-box;
+    }
 }
 
 .street-screen-close {
@@ -131,6 +161,12 @@
         env(safe-area-inset-left, 0px);
 }
 
+@media (orientation: landscape) {
+    .street-screen-stage {
+        padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+    }
+}
+
 .street-screen-board {
     --street-screen-scale: 1;
     --street-screen-align-x: 0px;
@@ -146,6 +182,11 @@
     transform: scale(var(--street-screen-scale));
     transform-origin: center center;
     filter: drop-shadow(0 14px 38px rgba(0, 0, 0, 0.5));
+}
+
+.street-screen-overlay.is-ios-native .street-screen-board {
+    transform: none;
+    zoom: var(--street-screen-scale);
 }
 
 .street-screen-surface {
@@ -267,7 +308,7 @@
 }
 
 .street-screen-minutes.is-urgent {
-    animation: street-screen-blink 1s steps(1, end) infinite;
+    animation: street-screen-blink 0.4s steps(1, end) infinite;
 }
 
 .street-screen-name-switch {
@@ -404,7 +445,7 @@
     font-size: var(--street-led-numeric-font-size);
     padding-bottom: 2px;
     overflow: visible;
-    filter: var(--street-led-number-glow);
+    filter: none;
 }
 
 .street-screen-ticker-name {
