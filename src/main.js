@@ -91,6 +91,7 @@ const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/
 window.addEventListener('pageScaleChange', (e) => {
     const scale = e.detail;
     document.documentElement.style.setProperty('--ui-scale', scale);
+    document.documentElement.classList.toggle('ui-scaled-down', scale < 1);
 });
 const hubMap = new Map();
 const hubSourcesMap = new Map();

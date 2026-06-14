@@ -54,6 +54,12 @@ function isIOSAppOnMac() {
     return navigator.userAgent.includes('Macintosh') && navigator.maxTouchPoints > 1;
 }
 
+function isIOSNativePlatform() {
+    return typeof Capacitor !== 'undefined'
+        && typeof Capacitor.getPlatform === 'function'
+        && Capacitor.getPlatform() === 'ios';
+}
+
 function syncCheckbox(id, value) {
     const el = document.getElementById(id);
     if (el && typeof el.checked !== 'undefined') {
@@ -154,8 +160,6 @@ function applyNativeSetting(key, value) {
             if (!isNaN(scaleVal) && scaleVal >= 0.8 && scaleVal <= 1.5) {
                 settings.pageScale = scaleVal;
                 localStorage.setItem('pageScale', String(scaleVal));
-                // On iOS, the native side handles zoom via WKWebView.pageZoom
-                // Only dispatch for non-native (web) scaling
                 if (!isNativeSettingsAvailable()) {
                     window.dispatchEvent(new CustomEvent('pageScaleChange', { detail: scaleVal }));
                 }
@@ -258,31 +262,38 @@ async function applyInitialNativeZoom() {
 function applyZoomCSS(scale) {
     const html = document.documentElement;
     const body = document.body;
+    const app = document.getElementById('app');
     if (scale === 1) {
-        html.style.transform = '';
-        html.style.transformOrigin = '';
-        html.style.width = '';
-        html.style.height = '';
-        html.style.overflow = '';
+        if (app) {
+            app.style.transform = '';
+            app.style.transformOrigin = '';
+            app.style.width = '';
+            app.style.height = '';
+            app.style.overflow = '';
+        }
+        html.style.removeProperty('transform');
+        html.style.removeProperty('transform-origin');
+        html.style.removeProperty('--ui-scale');
         html.style.removeProperty('--page-scale');
         html.style.removeProperty('--inv-page-scale');
+        html.classList.remove('ui-scaled-down');
         if (body) {
-            body.style.width = '';
-            body.style.height = '';
             body.style.overflow = '';
         }
     } else {
         const inverseScale = 1.0 / scale;
-        html.style.transform = `scale(${scale})`;
-        html.style.transformOrigin = 'top left';
-        html.style.width = `${inverseScale * 100}%`;
-        html.style.height = `${inverseScale * 100}%`;
-        html.style.overflow = 'hidden';
+        if (app) {
+            app.style.transform = `scale(${scale})`;
+            app.style.transformOrigin = 'top left';
+            app.style.width = `${inverseScale * 100}%`;
+            app.style.height = `${inverseScale * 100}%`;
+            app.style.overflow = 'hidden';
+        }
+        html.style.setProperty('--ui-scale', String(scale));
         html.style.setProperty('--page-scale', String(scale));
         html.style.setProperty('--inv-page-scale', String(inverseScale));
+        html.classList.toggle('ui-scaled-down', scale < 1);
         if (body) {
-            body.style.width = '100%';
-            body.style.height = '100%';
             body.style.overflow = 'hidden';
         }
     }

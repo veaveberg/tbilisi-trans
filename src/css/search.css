@@ -10,7 +10,9 @@
     align-items: center;
     gap: 8px;
     pointer-events: none !important;
-    zoom: var(--ui-scale, 1);
+    transform: scale(var(--ui-scale, 1));
+    transform-origin: top center;
+    will-change: transform;
 }
 
 .search-container {
@@ -43,6 +45,10 @@
     outline: none;
     padding: 4px 0;
     color: var(--text-main);
+}
+
+html.ui-scaled-down #search-input {
+    font-size: calc(1rem / var(--ui-scale, 1));
 }
 
 .suggestions {
