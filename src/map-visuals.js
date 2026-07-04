@@ -712,6 +712,11 @@ export function updateMapTheme() {
         map.setPaintProperty('minibus-segments-layer', 'line-color', minibusColor);
         map.setPaintProperty('minibus-segments-layer', 'line-emissive-strength', emissive);
     }
+
+    // Update Directions Route Walk Line Color
+    if (map.getLayer('directions-route-walk-line')) {
+        map.setPaintProperty('directions-route-walk-line', 'line-color', isDark ? '#ffffff' : '#000000');
+    }
 }
 
 const STOP_STACK_SOURCE_IDS = [

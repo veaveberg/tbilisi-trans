@@ -60,6 +60,10 @@ function isIOSNativePlatform() {
         && Capacitor.getPlatform() === 'ios';
 }
 
+function shouldAvoidProgrammaticFocus() {
+    return isIOSNativePlatform();
+}
+
 function syncCheckbox(id, value) {
     const el = document.getElementById(id);
     if (el && typeof el.checked !== 'undefined') {
@@ -350,7 +354,9 @@ function openPrivacyPolicySheet() {
     document.body.classList.add('privacy-sheet-open');
 
     setTimeout(() => {
-        closeBtn?.focus();
+        if (!shouldAvoidProgrammaticFocus()) {
+            closeBtn?.focus();
+        }
     }, 0);
 }
 
@@ -373,7 +379,9 @@ function openSupportSheet() {
     document.body.classList.add('privacy-sheet-open');
 
     setTimeout(() => {
-        closeBtn?.focus();
+        if (!shouldAvoidProgrammaticFocus()) {
+            closeBtn?.focus();
+        }
     }, 0);
 }
 
@@ -391,7 +399,7 @@ function closePrivacyPolicySheet() {
         window.history.replaceState(null, '', getBasePath());
     }
 
-    if (lastFocusedBeforePrivacySheet && typeof lastFocusedBeforePrivacySheet.focus === 'function') {
+    if (!shouldAvoidProgrammaticFocus() && lastFocusedBeforePrivacySheet && typeof lastFocusedBeforePrivacySheet.focus === 'function') {
         lastFocusedBeforePrivacySheet.focus();
     }
 }
@@ -410,7 +418,7 @@ function closeSupportSheet() {
         window.history.replaceState(null, '', getBasePath());
     }
 
-    if (lastFocusedBeforeSupportSheet && typeof lastFocusedBeforeSupportSheet.focus === 'function') {
+    if (!shouldAvoidProgrammaticFocus() && lastFocusedBeforeSupportSheet && typeof lastFocusedBeforeSupportSheet.focus === 'function') {
         lastFocusedBeforeSupportSheet.focus();
     }
 }

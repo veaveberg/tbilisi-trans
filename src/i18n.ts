@@ -27,7 +27,7 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         uiLanguage: 'Interface',
         stopNamesLanguage: 'Stop names',
         mapLanguage: 'Map',
-        searchPlaceholder: 'Search stops or routes...',
+        searchPlaceholder: 'Search for places or routes...',
         clear: 'Clear',
         selectStop: 'Select a stop',
         back: 'Back',
@@ -38,7 +38,47 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         copyLink: 'Copy link',
         streetScreen: 'Show board',
         close: 'Close',
+        minimize: 'Minimize',
+        directionsTitle: 'Directions',
+        startingPoint: 'Starting point',
+        destinationPoint: 'Destination',
+        chooseStartingPoint: 'Choose a starting point',
+        chooseDestination: 'Choose a destination',
+        clearStartingPoint: 'Clear starting point',
+        clearDestination: 'Clear destination',
+        reverseDirections: 'Reverse directions',
+        options: 'Options',
+        bus: 'Bus',
+        metro: 'Metro',
+        cableCar: 'Cable car',
+        routePriority: 'Route priority',
+        faster: 'Faster',
+        lessWalking: 'Less walking',
+        lessTransfers: 'Less transfers',
+        timeAndDate: 'Time and date',
+        tripMode: 'Trip mode',
+        departAt: 'Departure',
+        arriveBy: 'Arrival',
+        leaveNow: 'Leave now',
+        now: 'Now',
+        tripTime: 'Trip time',
+        adjustTime: 'Adjust time',
+        earlierTime: 'Earlier time',
+        laterTime: 'Later time',
+        adjustDate: 'Adjust date',
+        previousDay: 'Previous day',
+        nextDay: 'Next day',
+        chooseDate: 'Choose date',
+        previousMonth: 'Previous month',
+        nextMonth: 'Next month',
+        today: 'today',
+        tomorrow: 'tomorrow',
+        routeOptionsReady: 'Route options will appear here after the planner is connected.',
+        routeOptionsEmpty: 'Select two points to preview route options.',
+        directionsFromHere: 'Directions from here',
+        directionsToHere: 'Directions to here',
         location: 'Location',
+        myLocation: 'My Location',
         rotation: 'Rotation',
         mergeInto: 'Merge into...',
         hubWith: 'Hub with...',
@@ -128,7 +168,7 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         uiLanguage: 'ინტერფეისი',
         stopNamesLanguage: 'გაჩერებების სახელები',
         mapLanguage: 'რუკა',
-        searchPlaceholder: 'მოძებნეთ გაჩერება ან მარშრუტი...',
+        searchPlaceholder: 'მოძებნეთ ადგილი ან მარშრუტი...',
         clear: 'გასუფთავება',
         selectStop: 'აირჩიეთ გაჩერება',
         back: 'უკან',
@@ -139,7 +179,47 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         copyLink: 'ბმულის კოპირება',
         streetScreen: 'ტაბლოს ჩვენება',
         close: 'დახურვა',
+        minimize: 'ჩაკეცვა',
+        directionsTitle: 'მიმართულებები',
+        startingPoint: 'საწყისი წერტილი',
+        destinationPoint: 'დანიშნულება',
+        chooseStartingPoint: 'აირჩიეთ საწყისი წერტილი',
+        chooseDestination: 'აირჩიეთ დანიშნულება',
+        clearStartingPoint: 'საწყისი წერტილის გასუფთავება',
+        clearDestination: 'დანიშნულების გასუფთავება',
+        reverseDirections: 'მიმართულებების გადაბრუნება',
+        options: 'პარამეტრები',
+        bus: 'ავტობუსი',
+        metro: 'მეტრო',
+        cableCar: 'გონდოლა',
+        routePriority: 'მარშრუტის პრიორიტეტი',
+        faster: 'სწრაფი',
+        lessWalking: 'ნაკლები სიარული',
+        lessTransfers: 'ნაკლები გადაჯდომა',
+        timeAndDate: 'დრო და თარიღი',
+        tripMode: 'მგზავრობის რეჟიმი',
+        departAt: 'გასვლა',
+        arriveBy: 'ჩამოსვლა',
+        leaveNow: 'ახლავე გასვლა',
+        now: 'ახლა',
+        tripTime: 'მგზავრობის დრო',
+        adjustTime: 'დროის შეცვლა',
+        earlierTime: 'ადრე',
+        laterTime: 'გვიან',
+        adjustDate: 'თარიღის შეცვლა',
+        previousDay: 'წინა დღე',
+        nextDay: 'შემდეგი დღე',
+        chooseDate: 'აირჩიეთ თარიღი',
+        previousMonth: 'წინა თვე',
+        nextMonth: 'შემდეგი თვე',
+        today: 'დღეს',
+        tomorrow: 'ხვალ',
+        routeOptionsReady: 'მარშრუტის ვარიანტები აქ გამოჩნდება, როგორც კი დამგეგმავი შეერთდება.',
+        routeOptionsEmpty: 'აირჩიეთ ორი წერტილი მარშრუტის ვარიანტების სანახავად.',
+        directionsFromHere: 'მიმართულებები აქედან',
+        directionsToHere: 'მიმართულებები აქამდე',
         location: 'მდებარეობა',
+        myLocation: 'ჩემი მდებარეობა',
         rotation: 'ბრუნვა',
         mergeInto: 'შერწყმა...',
         hubWith: 'ჰაბად გაერთიანება...',
@@ -229,7 +309,7 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         uiLanguage: 'Интерфейс',
         stopNamesLanguage: 'Названия остановок',
         mapLanguage: 'Карта',
-        searchPlaceholder: 'Поиск остановок или маршрутов...',
+        searchPlaceholder: 'Поиск мест или маршрутов...',
         clear: 'Очистить',
         selectStop: 'Выберите остановку',
         back: 'Назад',
@@ -240,7 +320,47 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         copyLink: 'Копировать ссылку',
         streetScreen: 'Показать табло',
         close: 'Закрыть',
+        minimize: 'Свернуть',
+        directionsTitle: 'Маршруты',
+        startingPoint: 'Точка отправления',
+        destinationPoint: 'Пункт назначения',
+        chooseStartingPoint: 'Выберите точку отправления',
+        chooseDestination: 'Выберите пункт назначения',
+        clearStartingPoint: 'Очистить точку отправления',
+        clearDestination: 'Очистить пункт назначения',
+        reverseDirections: 'Поменять местами',
+        options: 'Параметры',
+        bus: 'Автобус',
+        metro: 'Метро',
+        cableCar: 'Канатная дорога',
+        routePriority: 'Приоритет маршрута',
+        faster: 'Быстрее',
+        lessWalking: 'Меньше ходьбы',
+        lessTransfers: 'Меньше пересадок',
+        timeAndDate: 'Время и дата',
+        tripMode: 'Режим поездки',
+        departAt: 'Отправление',
+        arriveBy: 'Прибытие',
+        leaveNow: 'Выехать сейчас',
+        now: 'Сейчас',
+        tripTime: 'Время поездки',
+        adjustTime: 'Изменить время',
+        earlierTime: 'Раньше',
+        laterTime: 'Позже',
+        adjustDate: 'Изменить дату',
+        previousDay: 'Предыдущий день',
+        nextDay: 'Следующий день',
+        chooseDate: 'Выберите дату',
+        previousMonth: 'Предыдущий месяц',
+        nextMonth: 'Следующий месяц',
+        today: 'сегодня',
+        tomorrow: 'завтра',
+        routeOptionsReady: 'Варианты маршрута появятся здесь после подключения планировщика.',
+        routeOptionsEmpty: 'Выберите две точки, чтобы посмотреть варианты маршрута.',
+        directionsFromHere: 'Маршрут отсюда',
+        directionsToHere: 'Маршрут сюда',
         location: 'Позиция',
+        myLocation: 'Мое местоположение',
         rotation: 'Поворот',
         mergeInto: 'Объединить в...',
         hubWith: 'Сделать хабом с...',
@@ -640,6 +760,46 @@ export function applyStaticText() {
     setTitle('copy-route-link-btn', t('copyLink'));
     setTitle('close-route-info', t('close'));
     setTitle('street-screen-close', t('close'));
+    setText('directions-title', t('directionsTitle'));
+    setTitle('close-directions', t('minimize'));
+    setPlaceholder('directions-from-input', t('chooseStartingPoint'));
+    setPlaceholder('directions-to-input', t('chooseDestination'));
+    setTitle('directions-clear-from', t('clearStartingPoint'));
+    setTitle('directions-clear-to', t('clearDestination'));
+    setTitle('directions-reverse', t('reverseDirections'));
+    setText('directions-options-summary-label', t('options'));
+    setText('directions-mode-bus-label', t('bus'));
+    setText('directions-mode-subway-label', t('metro'));
+    setText('directions-mode-gondola-label', t('cableCar'));
+    setAriaLabel('directions-segmented', t('routePriority'));
+    setText('directions-optimize-quick-label', t('faster'));
+    setText('directions-optimize-less-walking-label', t('lessWalking'));
+    setText('directions-optimize-less-transfers-label', t('lessTransfers'));
+    setText('directions-time-and-date-label', t('timeAndDate'));
+    setAriaLabel('directions-time-mode-select', t('tripMode'));
+    setText('directions-time-mode-depart-option', t('departAt'));
+    setText('directions-time-mode-arrive-option', t('arriveBy'));
+    setText('directions-now-btn', t('now'));
+    setAriaLabel('directions-time-input', t('tripTime'));
+    setAriaLabel('directions-time-prev', t('earlierTime'));
+    setAriaLabel('directions-time-next', t('laterTime'));
+    setAriaLabel('directions-date-prev', t('previousDay'));
+    setAriaLabel('directions-date-next', t('nextDay'));
+    setAriaLabel('directions-calendar-popover', t('chooseDate'));
+    setAriaLabel('directions-calendar-prev', t('previousMonth'));
+    setAriaLabel('directions-calendar-next', t('nextMonth'));
+    setText('directions-weekday-mon', t('weekdayMon'));
+    setText('directions-weekday-tue', t('weekdayTue'));
+    setText('directions-weekday-wed', t('weekdayWed'));
+    setText('directions-weekday-thu', t('weekdayThu'));
+    setText('directions-weekday-fri', t('weekdayFri'));
+    setText('directions-weekday-sat', t('weekdaySat'));
+    setText('directions-weekday-sun', t('weekdaySun'));
+    setText('directions-placeholder', t('routeOptionsEmpty'));
+    setText('directions-context-from-text', t('directionsFromHere'));
+    setText('directions-context-to-text', t('directionsToHere'));
+    setText('place-dir-from-text', t('directionsFromHere'));
+    setText('place-dir-to-text', t('directionsToHere'));
     setAriaLabel('menu-btn', t('more'));
     setText('menu-ui-language-label', t('uiLanguage'));
     setText('menu-stop-names-label', t('stopNamesLanguage'));

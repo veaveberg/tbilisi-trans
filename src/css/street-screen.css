@@ -184,11 +184,6 @@
     filter: drop-shadow(0 14px 38px rgba(0, 0, 0, 0.5));
 }
 
-.street-screen-overlay.is-ios-native .street-screen-board {
-    transform: none;
-    zoom: var(--street-screen-scale);
-}
-
 .street-screen-surface {
     --street-led-color: #ffe57d;
     --street-led-background: #000000;
@@ -216,6 +211,10 @@
     grid-template-rows: var(--street-screen-main-height, 104px) minmax(0, 1fr) 14px 14px;
     gap: 4px;
     box-shadow: none;
+}
+
+.street-screen-overlay.is-fill-height .street-screen-surface {
+    grid-template-rows: var(--street-screen-main-height, 104px) 14px minmax(0, 1fr) 14px;
 }
 
 .street-screen-surface::before {
@@ -398,6 +397,10 @@
     position: relative;
     z-index: 2;
     margin-bottom: -2px;
+}
+
+.street-screen-overlay.is-fill-height .street-screen-scroll {
+    grid-row: 2;
 }
 
 .street-screen-surface.is-scroll-hidden .street-screen-scroll {

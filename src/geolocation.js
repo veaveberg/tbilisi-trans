@@ -285,6 +285,10 @@ export function isTrackingActive() {
     return currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING;
 }
 
+export function getLastUserCoords() {
+    return lastUserCoords;
+}
+
 export function isUserInteractingWithMap() {
     return isUserInteracting || isUserRotating;
 }

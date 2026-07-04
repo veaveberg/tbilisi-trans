@@ -1,3 +1,5 @@
+import { buildDirectionsPath, parseDirectionsPath } from './directions-url.js';
+
 export const Router = {
     // Detect base path from vite.config/document base or default
     base: import.meta.env.BASE_URL,
@@ -43,6 +45,15 @@ export const Router = {
         if (path.endsWith('/')) path = path.slice(0, -1);
 
         const parts = path.split('/');
+
+        if (parts[0] === 'directions') {
+            const state = parseDirectionsPath(path);
+            if (state) {
+                this._lastParsedPath = location.pathname;
+                this._lastParsedState = state;
+                return state;
+            }
+        }
 
         if (parts[0] === 'privacy-policy' || parts[0] === 'support') {
             const state = {
@@ -264,6 +275,16 @@ export const Router = {
         history.pushState({ type: 'segment', segmentIds: cleanIds }, '', url);
     },
 
+    updateDirections(state = {}) {
+        const path = buildDirectionsPath(state);
+        if (!path) return false;
+
+        const url = `${this.base}${path}`;
+        console.log('[Router] Replace State (Directions):', url);
+        history.replaceState({ type: 'directions', ...state }, '', url);
+        return true;
+    },
+
     updateNested(stopId, shortName, direction = 0) {
         if (!stopId || !shortName) return;
         // Clean ID
@@ -281,7 +302,16 @@ export const Router = {
      * Uses replaceState to avoid history pollution
      */
     updateMapLocation(hash) {
+        if (this.isDirectionsPath()) {
+            return;
+        }
         // Use replaceState to update hash without triggering popstate or adding history entries
         history.replaceState(null, '', location.pathname + hash);
+    },
+
+    isDirectionsPath(pathname = location.pathname) {
+        const path = String(pathname || '');
+        const normalized = path.startsWith(this.base) ? path.substring(this.base.length) : path.replace(/^\//, '');
+        return normalized.startsWith('directions/');
     }
 };

@@ -18,7 +18,7 @@ const { handleMetroStop } = metro;
 import { setupGeolocation, isTrackingActive, stopTracking, isUserInteractingWithMap, LOCATION_STATES, refreshLocationMarker } from './geolocation.js';
 import { map, getMapHash } from './map-setup.js';
 import { setupVisuals, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, renderLiveBuses, registerLiveBusLine, clearLiveBuses, holdLiveBuses, setMapLightPreset } from './map-visuals.js';
-import { setMapFocus, setupHoverHandlers, setupClickHandlers, addMetroHoverLogic, clearStopHoverState } from './map-interactions.js';
+import { setMapFocus, setupHoverHandlers, setupClickHandlers, addMetroHoverLogic, clearStopHoverState, runMapAction, resolvePlaceClickDetails } from './map-interactions.js';
 import stopRotations from './data/stop_bearings.json';
 import { db } from './db.js';
 import { historyManager, addToHistory, popHistory, clearHistory, updateBackButtons, peekHistory } from './history.js';
@@ -29,6 +29,7 @@ import { arrivalsController } from './arrivals-controller.js';
 import { getIntervalDescription } from './intervals.js';
 import { initMinibusSegmentsEditor, loadMinibusSegmentEditsFromFile } from './minibus-segments-editor.js';
 import { StreetScreenController } from './street-screen.js';
+import { applyDirectionsUrlState, initDirectionsUI, isDirectionsContextActive } from './directions.js';
 
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
@@ -265,10 +266,12 @@ document.addEventListener('sheet:closed', () => {
 
     const infoPanel = document.getElementById('info-panel');
     const routePanel = document.getElementById('route-info');
+    const directionsPanel = document.getElementById('directions-panel');
     const infoHidden = infoPanel ? infoPanel.classList.contains('hidden') : true;
     const routeHidden = routePanel ? routePanel.classList.contains('hidden') : true;
+    const directionsHidden = directionsPanel ? directionsPanel.classList.contains('hidden') : true;
 
-    if (infoHidden && routeHidden) {
+    if (infoHidden && routeHidden && directionsHidden) {
         window.currentStopId = null;
         window.currentStopMode = null;
         clearSelectedMinibusSegments();
@@ -279,6 +282,9 @@ document.addEventListener('sheet:closed', () => {
 // Initial Router State Handling
 Router.init();
 const initialState = Router.parse();
+Router.onPopState = () => {
+    handleDeepLinks();
+};
 
 // Metro Editor (Lazily loaded)
 window.startMetroEditor = async () => {
@@ -320,7 +326,16 @@ function onRoutesLoaded(data) {
         if (map.loaded()) execute(); else map.once('load', execute);
     }
 
-    // 3. Stop / Nested / Filter (Delegated to handleDeepLinks)
+    // 3. Compact Directions Link
+    else if (initialState.type === 'directions') {
+        const executeDirectionsDeepLink = async () => {
+            applyDirectionsUrlState(initialState, { syncUrl: false, openSheet: true });
+            isDeepLinkHandled = true;
+        };
+        if (map.loaded()) executeDirectionsDeepLink(); else map.once('load', executeDirectionsDeepLink);
+    }
+
+    // 4. Stop / Nested / Filter (Delegated to handleDeepLinks)
     // We delegate all stop-based logic to handleDeepLinks to ensure redirects (merged stops) are processed correctly.
     // Wait for map to be loaded AND stops to be available before processing
     else if (initialState.stopId) {
@@ -346,6 +361,9 @@ const updateURLHash = () => {
     // (the stop/route URL itself leads to the correct location)
     const infoPanel = document.getElementById('info-panel');
     const routePanel = document.getElementById('route-info');
+    if (isDirectionsContextActive()) {
+        return;
+    }
     if ((infoPanel && !infoPanel.classList.contains('hidden')) ||
         (routePanel && !routePanel.classList.contains('hidden'))) {
         return;
@@ -552,6 +570,7 @@ let filterManager;
 
 const dataProvider = {
     getAllStops: () => allStops,
+    getRawStops: () => rawStops,
     getAllRoutes: () => allRoutes,
     getRedirectMap: () => redirectMap,
     getHubMap: () => hubMap,
@@ -559,7 +578,9 @@ const dataProvider = {
     getMergeSourcesMap: () => mergeSourcesMap,
     getStopToRoutesMap: () => stopToRoutesMap,
     getHydratedStops: () => hydratedStops,
-    getEditState: getEditState
+    getEditState: getEditState,
+    getRouteDisplayColor: getRouteDisplayColor,
+    resolveRouteByShortName: resolveRouteByShortName
 };
 
 const ALL_STOP_LAYERS = [
@@ -573,7 +594,6 @@ const ALL_STOP_LAYERS = [
     'metro-transfer-layer',
     'metro-layer-overlay',
     'metro-exits-layer',
-    'metro-lines-layer',
     'metro-segment-center-label'
 ];
 
@@ -605,6 +625,7 @@ const uiCallbacks = {
 // Lazy Init to ensure Map is ready? Or just init immediately.
 // Map is imported. Router is imported.
 filterManager = new FilterManager({ map, router: Router, dataProvider, uiCallbacks });
+window.dataProvider = dataProvider;
 
 // Initialize Arrivals Module with dependencies
 arrivals.initArrivals({
@@ -696,9 +717,220 @@ window.getSelectedStopRouteFilterShortNames = (stopId = getActiveStopId()) => ge
 window.resetStopRouteFilter = (stopId = getActiveStopId()) => arrivals.resetStopRouteFilter(stopId);
 window.updateCurrentStopDeepLink = () => updateCurrentStopDeepLink();
 
+function shuffleInPlace(items) {
+    const out = Array.isArray(items) ? items.slice() : [];
+    for (let i = out.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+}
+
+function resolveRouteForArrival(arrival) {
+    if (!arrival) return null;
+    const arrivalId = String(arrival.id || '').trim();
+    const arrivalShortName = String(arrival.shortName || '').trim();
+    return allRoutes.find((route) => String(route.id) === arrivalId)
+        || allRoutes.find((route) => String(route.id) === String(arrival.routeId || '').trim())
+        || allRoutes.find((route) => String(route.shortName) === arrivalShortName)
+        || null;
+}
+
+function normalizeScheduleHourKey(hour) {
+    const parsed = Number.parseInt(hour, 10);
+    if (!Number.isFinite(parsed)) return '10';
+    return String(Math.max(0, Math.min(23, parsed))).padStart(2, '0');
+}
+
+function buildDemoArrivalFromSchedule(route, timeText, minuteValue, stopId) {
+    const routeLabel = route?.customShortName || route?.shortName || String(route?.id || '');
+    const headsign = route?.longName || route?.customLongName || route?.shortName || routeLabel;
+    const minuteNumber = Number.parseInt(minuteValue, 10);
+    const safeMinute = Number.isFinite(minuteNumber) ? Math.max(0, Math.min(59, minuteNumber)) : 0;
+
+    return {
+        shortName: route?.shortName || routeLabel,
+        id: route?.id || routeLabel,
+        displayShortName: routeLabel,
+        headsign,
+        realtime: true,
+        realtimeArrivalMinutes: safeMinute,
+        scheduledArrivalMinutes: safeMinute,
+        scheduledTime: timeText,
+        patternSuffix: null,
+        _source: route?._source,
+        _sourceStopId: stopId
+    };
+}
+
+async function collectScheduleDemoArrivals(stop, sampleHour = 10) {
+    const hourKey = normalizeScheduleHourKey(sampleHour);
+    const equivalentIds = getEquivalentStops(stop.id, false);
+    const routeIds = new Set();
+
+    equivalentIds.forEach((eqId) => {
+        api.getRoutesForStopStatic(eqId).forEach((routeId) => routeIds.add(routeId));
+    });
+
+    const allStopRoutes = Array.from(routeIds)
+        .map((routeId) => allRoutes.find((route) => String(route.id) === String(routeId)))
+        .filter(Boolean);
+
+    const perRouteSchedules = await Promise.allSettled(allStopRoutes.map(async (route) => {
+        const grouped = await arrivals.getFullScheduleGrouped(route.shortName, stop.id, route.id, null, { strategy: 'cache-only' });
+        if (!grouped?.grouped) return [];
+
+        const minutes = grouped.grouped[hourKey] || [];
+        return minutes.map((minuteValue) => {
+            const timeText = `${hourKey}:${String(minuteValue).padStart(2, '0')}`;
+            return buildDemoArrivalFromSchedule(route, timeText, minuteValue, stop.id);
+        });
+    }));
+
+    const pool = perRouteSchedules
+        .flatMap((result) => (result.status === 'fulfilled' && Array.isArray(result.value) ? result.value : []))
+        .filter(Boolean);
+
+    return pool;
+}
+
+async function showRandomArrivalsFromStop(stopId = 806, count = 15) {
+    const normalizedStopId = String(stopId || '').trim();
+    const sampleSize = Number.isFinite(Number(count)) ? Math.max(1, Math.floor(Number(count))) : 15;
+    const candidateStopIds = new Set([normalizedStopId, ...getEquivalentStops(normalizedStopId, false).map((id) => String(id))]);
+    const stop = allStops.find((entry) => candidateStopIds.has(String(entry.id)) || candidateStopIds.has(String(entry.code)));
+
+    if (!stop) {
+        console.warn(`[DemoArrivals] Stop ${normalizedStopId} was not found in loaded stop data.`);
+        return [];
+    }
+
+    const previousState = {
+        stopId: window.currentStopId,
+        mode: window.currentStopMode,
+        lastArrivals: Array.isArray(window.lastArrivals) ? window.lastArrivals.slice() : [],
+        lastRoutes: Array.isArray(window.lastRoutes) ? window.lastRoutes.slice() : [],
+        renderedStopId: window._lastRenderedStopId,
+        controllerStopId: arrivalsController?.stopId ?? null
+    };
+    window.__demoArrivalsBoardSnapshot = previousState;
+
+    try {
+        arrivalsController?.pause?.();
+        if (arrivalsController) {
+            arrivalsController.stopId = null;
+        }
+    } catch (err) { }
+
+    // Put the app into the requested stop context without changing history or URL state.
+    await showStopInfo(stop, false, false, false, { suppressPanel: true });
+
+    let fetchedArrivals = [];
+    try {
+        fetchedArrivals = await collectScheduleDemoArrivals(stop, 10);
+    } catch (err) {
+        console.error('[DemoArrivals] Failed to load scheduled arrivals for demo board.', err);
+        return [];
+    }
+
+    if (!Array.isArray(fetchedArrivals) || fetchedArrivals.length === 0) {
+        console.warn(`[DemoArrivals] No scheduled 10am arrivals returned for stop ${stop.id}.`);
+        window.lastArrivals = [];
+        window.lastRoutes = [];
+        arrivals.renderArrivals([], stop.id);
+        return [];
+    }
+
+    const tenAmPool = fetchedArrivals.filter((arrival) => {
+        const scheduledTime = String(arrival.scheduledTime || '').trim();
+        return scheduledTime.startsWith('10:');
+    });
+    const samplePool = tenAmPool.length > 0 ? tenAmPool : fetchedArrivals;
+
+    const sampled = shuffleInPlace(samplePool)
+        .slice(0, sampleSize)
+        .sort((a, b) => {
+            const timeA = a.realtimeArrivalMinutes !== undefined && a.realtimeArrivalMinutes !== null
+                ? a.realtimeArrivalMinutes
+                : a.scheduledArrivalMinutes;
+            const timeB = b.realtimeArrivalMinutes !== undefined && b.realtimeArrivalMinutes !== null
+                ? b.realtimeArrivalMinutes
+                : b.scheduledArrivalMinutes;
+            return (Number.isFinite(timeA) ? timeA : 9999) - (Number.isFinite(timeB) ? timeB : 9999);
+        });
+
+    const sampledRouteIds = new Set();
+    const sampledRoutes = [];
+    sampled.forEach((arrival) => {
+        const route = resolveRouteForArrival(arrival);
+        const routeId = String(route?.id || arrival?.id || '').trim();
+        if (!routeId || sampledRouteIds.has(routeId)) return;
+        sampledRouteIds.add(routeId);
+        if (route) sampledRoutes.push(route);
+    });
+
+    window.lastRoutes = sampledRoutes;
+    window.lastArrivals = sampled;
+    arrivals.resetStopRouteFilter(stop.id);
+    arrivals.renderArrivals(sampled, stop.id);
+
+    if (streetScreenController) {
+        if (!streetScreenController.isOpen) {
+            await streetScreenController.open({ syncUrl: false });
+        } else {
+            await streetScreenController.syncModel();
+        }
+    }
+
+    console.log(`[DemoArrivals] Showing ${sampled.length} random arrivals from stop ${stop.id}.`);
+    console.table(sampled.map((arrival) => ({
+        route: arrival.shortName || arrival.id,
+        headsign: arrival.headsign || '',
+        minutes: arrival.realtimeArrivalMinutes ?? arrival.scheduledArrivalMinutes ?? null,
+        realtime: !!arrival.realtime
+    })));
+
+    return sampled;
+}
+
+window.showRandomArrivalsFromStop = showRandomArrivalsFromStop;
+window.showDemoArrivalsFromStop = showRandomArrivalsFromStop;
+window.restoreArrivalsBoard = async () => {
+    const snapshot = window.__demoArrivalsBoardSnapshot;
+    if (!snapshot) {
+        console.warn('[DemoArrivals] No demo board snapshot is available to restore.');
+        return false;
+    }
+
+    window.currentStopId = snapshot.stopId ?? null;
+    window.currentStopMode = snapshot.mode ?? null;
+    window._lastRenderedStopId = snapshot.renderedStopId ?? null;
+    window.lastArrivals = Array.isArray(snapshot.lastArrivals) ? snapshot.lastArrivals.slice() : [];
+    window.lastRoutes = Array.isArray(snapshot.lastRoutes) ? snapshot.lastRoutes.slice() : [];
+    arrivals.resetStopRouteFilter(window.currentStopId);
+    arrivals.renderArrivals(window.lastArrivals, window.currentStopId);
+
+    if (streetScreenController?.isOpen) {
+        await streetScreenController.syncModel();
+    }
+
+    try {
+        if (snapshot.controllerStopId) {
+            arrivalsController.stopId = snapshot.controllerStopId;
+            arrivalsController.arrivals = Array.isArray(snapshot.lastArrivals) ? snapshot.lastArrivals.slice() : [];
+            arrivalsController.timestamp = Date.now();
+            arrivalsController.resume?.();
+            arrivalsController.refresh?.();
+        }
+    } catch (err) { }
+
+    console.log('[DemoArrivals] Restored the previous arrivals board state.');
+    return true;
+};
+
 import { RouteFilterColorManager } from './color-manager.js';
 
-import { setupSearch } from './search.js';
+import { setupSearch, showPlaceInfoSheet } from './search.js';
 import { ThemeManager } from './theme.js';
 
 // Global Theme Manager
@@ -862,6 +1094,71 @@ async function initializeMapData(stopsData, routesData) {
             getAllRoutes: () => allRoutes
         });
         isSearchInitialized = true;
+
+        // 4b. Map POI clicks — reuse the exact same place info sheet
+        const POI_FEATURESET = { featuresetId: 'poi', importId: 'basemap' };
+
+        map.on('click', POI_FEATURESET, (e) => {
+            // Stops take priority — if a stop is under the cursor, ignore the POI click
+            const validStopLayers = ALL_STOP_LAYERS.filter(id => map.getLayer(id));
+            if (map.queryRenderedFeatures(e.point, { layers: validStopLayers }).length > 0) return;
+
+            if (e.originalEvent) e.originalEvent._clickHandled = true;
+
+            const feature = e.features?.[0];
+            if (!feature) return;
+
+            // Retrieve coordinates from geometry to snap exactly, fallback to click point
+            let lng = e.lngLat.lng;
+            let lat = e.lngLat.lat;
+            if (feature.geometry && feature.geometry.type === 'Point' && Array.isArray(feature.geometry.coordinates)) {
+                lng = feature.geometry.coordinates[0];
+                lat = feature.geometry.coordinates[1];
+            }
+
+            runMapAction(e, () => {
+                // Fly to the exact POI coordinates
+                map.flyTo({ center: [lng, lat], zoom: 17 });
+
+                // Drop a highlighted red marker directly at the snapped coordinates
+                if (window._searchPlaceMarker) {
+                    window._searchPlaceMarker.remove();
+                    window._searchPlaceMarker = null;
+                }
+                window._searchPlaceMarker = new mapboxgl.Marker({ color: '#e74c3c' })
+                    .setLngLat([lng, lat])
+                    .addTo(map);
+
+                void (async () => {
+                    const place = await resolvePlaceClickDetails({
+                        feature,
+                        center: [lng, lat],
+                        name: feature.properties?.name || feature.properties?.name_en || feature.properties?.name_primary || 'Point of Interest',
+                        assumePoi: true
+                    });
+
+                    showPlaceInfoSheet({
+                        text: place.text,
+                        place_name: place.description,
+                        center: place.center,
+                        extent: null,
+                        placeType: place.placeType
+                    });
+                })().catch((err) => {
+                    console.error('[Map] Failed to resolve POI click details:', err);
+                });
+            });
+        });
+
+        map.on('mouseenter', POI_FEATURESET, (e) => {
+            // Don't override the stop pointer cursor
+            const validStopLayers = ALL_STOP_LAYERS.filter(id => map.getLayer(id));
+            if (map.queryRenderedFeatures(e.point, { layers: validStopLayers }).length > 0) return;
+            map.getCanvas().style.cursor = 'pointer';
+        });
+        map.on('mouseleave', POI_FEATURESET, () => {
+            map.getCanvas().style.cursor = '';
+        });
     }
 
     // 5. Map Visuals
@@ -870,6 +1167,7 @@ async function initializeMapData(stopsData, routesData) {
         areImagesLoaded = true;
     }
     addStopsToMap(allStops, { redirectMap, filterManager, updateConnectionLine });
+    window.dispatchEvent(new CustomEvent('map-data-initialized'));
 
     // 6. Final UI
     document.body.classList.remove('loading');
@@ -903,11 +1201,8 @@ async function initializeMapData(stopsData, routesData) {
         if (success) {
             isDeepLinkHandled = true;
 
-            Router.onPopState = (state) => {
-                if (state.stopId) {
-                    // ... (Router logic handled by handleDeepLinks essentially or showStopInfo)
-                    // Actually handleDeepLinks is one-off. Router listeners handle subsequent.
-                }
+            Router.onPopState = () => {
+                handleDeepLinks();
             };
         }
     } else {
@@ -1326,6 +1621,8 @@ async function loadMinibusSegments() {
                 // This check is now handled by the central hover handler in map-interactions.js
                 // which sets window.hoveredMinibusSegmentId
                 if (window.hoveredMinibusSegmentId === null) return;
+
+                if (e.originalEvent) e.originalEvent._clickHandled = true;
 
                 console.log('[Map Click] at', e.point);
                 // Radius in pixels (approx 25m at zoom 15 is ~10px, zoom 16 ~20px)
@@ -1901,6 +2198,10 @@ async function handleDeepLinks() {
     if (state.type === 'special') {
         return openSheetForCurrentPath();
     }
+    if (state.type === 'directions') {
+        applyDirectionsUrlState(state, { syncUrl: false, openSheet: true });
+        return true;
+    }
     if (state.type === 'segment' && Array.isArray(state.segmentIds) && state.segmentIds.length > 0) {
         const tryOpen = () => {
             if (typeof window.openSegmentCardForIds === 'function') {
@@ -2078,6 +2379,8 @@ window.addEventListener('manualThemeChange', () => {
 // Handle touch/drag logic for panels
 setupPanelDrag('info-panel');
 setupPanelDrag('route-info');
+setupPanelDrag('directions-panel');
+initDirectionsUI();
 
 
 // Zoom Logic for Reset Button
@@ -2241,7 +2544,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                 map.easeTo = window._originalMapMethods.easeTo;
             }
 
-            const offsetY = -(window.innerHeight * 0.1);
+            const offsetY = window.innerWidth <= 600 ? -(window.innerHeight * 0.05) : 0;
             const currentZoom = map.getZoom();
             // Zoom in closer for metro (to see segment labels)
             let targetZoom = stop.savedZoom || (currentZoom > 16 ? currentZoom : 16);
@@ -2353,6 +2656,21 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     }
 
     const panel = document.getElementById('info-panel');
+    
+    // Restore Stop UI elements and hide Place details
+    const placeDetails = document.getElementById('place-details');
+    if (placeDetails) placeDetails.classList.add('hidden');
+
+    const arrivalsList = document.getElementById('arrivals-list');
+    const filterBtn = document.getElementById('filter-routes-toggle');
+    const stopMoreBtn = document.getElementById('stop-more-btn');
+    const headerExtension = document.getElementById('header-extension');
+
+    if (arrivalsList) arrivalsList.classList.remove('hidden');
+    if (filterBtn) filterBtn.classList.remove('hidden');
+    if (stopMoreBtn) stopMoreBtn.classList.remove('hidden');
+    if (headerExtension) headerExtension.classList.remove('hidden');
+
     const nameEl = document.getElementById('stop-name');
     const listEl = document.getElementById('arrivals-list');
     const isDifferentStop = String(prevStopId) !== String(stop.id);
@@ -2377,7 +2695,6 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     const existingHeader = panel.querySelector('.metro-header');
     if (existingHeader) existingHeader.remove();
 
-    const headerExtension = document.getElementById('header-extension');
     if (headerExtension) headerExtension.innerHTML = '';
 
     const isMetro = stop.mode === 'SUBWAY' || (stop.id && (stop.id.startsWith('1:metro') || stop.id.includes('metro') || stop.id.includes('Metro')));
@@ -2392,7 +2709,6 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     }
 
     const editBtn = document.getElementById('btn-edit-stop');
-    const filterBtn = document.getElementById('filter-routes-toggle');
 
     if (isMetro) {
         if (editBtn) editBtn.classList.add('hidden');
@@ -4031,7 +4347,7 @@ async function updateRouteView(route, options = {}) {
                         if (origMethods) { map.flyTo = () => map; map.jumpTo = () => map; map.easeTo = () => map; }
                         window._routeBoundsFit = true;
                     } else if (options.centerOnStop && options.centerOnStop.lat && options.centerOnStop.lon && !options.preserveBounds) {
-                        const offsetY = -(window.innerHeight * 0.1);
+                        const offsetY = window.innerWidth <= 600 ? -(window.innerHeight * 0.05) : 0;
                         map.flyTo({ center: [options.centerOnStop.lon, options.centerOnStop.lat], zoom: 14, offset: [0, offsetY], duration: 1500 });
                         window._routeBoundsFit = true;
                     } else if (map.getZoom() > 14.5 && !options.preserveBounds) {
@@ -4624,6 +4940,10 @@ const handleCopyLink = (btnId) => {
         } catch (err) {
             // Context Two: Fallback (Non-secure / Older Mobile Safari)
             console.warn('[UI] Clipboard API failed, trying fallback:', err);
+            if (window.Capacitor?.isNativePlatform?.() && window.Capacitor?.getPlatform?.() === 'ios') {
+                console.warn('[UI] Skipping textarea copy fallback on iOS native');
+                return;
+            }
             try {
                 const textArea = document.createElement("textarea");
                 textArea.value = url;

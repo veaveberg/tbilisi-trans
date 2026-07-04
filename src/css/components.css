@@ -149,6 +149,122 @@ body.dark-mode .menu-language-option.active {
     font-size: 0.95rem;
 }
 
+.directions-context-menu {
+    position: fixed;
+    z-index: 2300;
+    width: 210px;
+    padding: 6px;
+    border-radius: 12px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-glass);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.directions-context-menu.hidden {
+    display: none;
+}
+
+.directions-context-menu button {
+    border: 0;
+    background: transparent;
+    color: var(--text-main);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.directions-context-menu button svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+@media (hover: hover) {
+    .directions-context-menu button:hover {
+        background: color-mix(in srgb, var(--primary), transparent 90%);
+    }
+}
+
+.directions-pin {
+    width: 0;
+    height: 0;
+    position: relative;
+    display: block;
+    cursor: grab;
+    touch-action: none;
+}
+
+.directions-pin-visual {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 34px;
+    height: 44px;
+    transform: translate(-50%, -42px);
+    pointer-events: auto;
+}
+
+.directions-pin-svg {
+    display: block;
+    width: 34px;
+    height: 44px;
+    overflow: visible;
+}
+
+.directions-pin-shadow {
+    fill: none;
+    stroke: rgba(0, 0, 0, 0.24);
+    stroke-width: 4;
+    transform: translateY(2px);
+}
+
+.directions-pin-body {
+    fill: var(--directions-pin-color);
+    stroke: #fff;
+    stroke-width: 3;
+}
+
+.directions-pin:active {
+    cursor: grabbing;
+}
+
+.directions-pin span {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 26px;
+    height: 26px;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.directions-pin-from {
+    --directions-pin-color: #0a84ff;
+}
+
+.directions-pin-to {
+    --directions-pin-color: #ff3b30;
+}
+
 .menu-item-dependent {
     position: relative;
     padding-left: 52px;

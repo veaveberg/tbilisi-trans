@@ -280,7 +280,6 @@ export class StreetScreenController {
         this.controlsIdleTimer = null;
         this.colorScheme = DEFAULT_SCHEME;
         this.fillHeightMode = false;
-        this.useNativeZoom = false;
         this.numberTransitionMap = new Map();
         this.numberTransitionTimers = [];
         this.layoutMetrics = {
@@ -333,9 +332,6 @@ export class StreetScreenController {
 
     init() {
         if (!this.overlayEl || !this.closeEl || !this.mainEl || !this.scrollEl || !this.statusEl || !this.surfaceEl) return;
-        const cap = window.Capacitor;
-        this.useNativeZoom = !!cap?.isNativePlatform?.() && cap?.getPlatform?.() === 'ios';
-        this.overlayEl.classList.toggle('is-ios-native', this.useNativeZoom);
         this.loadPreferences();
         this.closeEl.addEventListener('click', () => this.close());
         this.fitToggleEl?.addEventListener('click', () => {
@@ -592,6 +588,10 @@ export class StreetScreenController {
         const singleOverflowRow = !canHideScrollRow && extraRows.length === 1 && arrivals.length <= totalVisibleCapacity ? extraRows[0] : null;
         const tickerRows = singleOverflowRow ? [] : extraRows;
         this.surfaceEl?.classList.toggle('is-scroll-hidden', canHideScrollRow);
+        if (this.fillHeightMode && mainRows.length > 0) {
+            const board = this.overlayEl?.querySelector('.street-screen-board');
+            board?.style.setProperty('--street-screen-main-height', `${this.getRowBlockHeight(mainRows.length)}px`);
+        }
 
         this.mainEl.innerHTML = mainRows.map((arrival, index) => {
             const currentName = this.language === 'ka' ? arrival.destinationKa : arrival.destinationEn;
@@ -851,16 +851,22 @@ export class StreetScreenController {
         const availableWidth = Math.max(1, rect.width - viewportPadding);
         const availableHeight = Math.max(1, rect.height - viewportPadding);
 
-        if (this.fillHeightMode) {
+        const useFillHeight = this.fillHeightMode;
+        this.overlayEl?.classList.toggle('is-fill-height', useFillHeight);
+        this.fitToggleEl?.setAttribute('aria-pressed', useFillHeight ? 'true' : 'false');
+        this.fitToggleEl?.setAttribute('title', useFillHeight ? 'Fit screen' : 'Fill height');
+
+        if (useFillHeight) {
             const rawScale = Math.max(0.1, availableWidth / BOARD_WIDTH);
-            const dpr = window.devicePixelRatio || 1;
-            const physicalStep = Math.max(1, Math.floor(rawScale * LED_GRID_STEP_PX * dpr));
-            const scale = Math.max(0.1, physicalStep / (LED_GRID_STEP_PX * dpr));
+            const widthStep = LED_GRID_STEP_PX / BOARD_WIDTH;
+            const scale = Math.max(0.1, Math.floor(rawScale / widthStep) * widthStep);
             const boardWidth = BOARD_WIDTH;
             const rawBoardHeight = availableHeight / scale;
+            const hasArrivals = (this.currentModel?.arrivals?.length || 0) > 0;
+            const boardHeightStep = hasArrivals ? LED_GRID_STEP_PX : LED_GRID_STEP_PX * 2;
             const boardHeight = Math.max(
-                LED_GRID_STEP_PX,
-                Math.floor(rawBoardHeight / LED_GRID_STEP_PX) * LED_GRID_STEP_PX
+                boardHeightStep,
+                Math.floor(rawBoardHeight / boardHeightStep) * boardHeightStep
             );
             const metrics = this.computeFillHeightMetrics(boardHeight);
             board.style.setProperty('--street-screen-board-width', `${boardWidth}px`);
@@ -902,6 +908,12 @@ export class StreetScreenController {
             dynamicRows,
             totalVisibleCapacity: dynamicRows + 1
         };
+    }
+
+    getRowBlockHeight(rowCount) {
+        const rows = Math.max(0, Math.floor(rowCount || 0));
+        if (rows === 0) return 0;
+        return (rows * ROW_HEIGHT_PX) + (Math.max(0, rows - 1) * ROW_GAP_PX);
     }
 
     getVisibleCapacity(totalArrivals = 0) {

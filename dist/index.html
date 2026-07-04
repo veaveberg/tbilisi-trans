@@ -83,13 +83,13 @@
 
     /* Hide UI overlays while loading to prevent unstyled flash */
     body.loading .search-wrapper,
-    body.loading #map-controls,
+    body.loading #ui-wrapper #map-controls,
     body.loading .reset-view-btn {
       display: none !important;
     }
   </style>
-  <script type="module" crossorigin src="/tbilisi-trans/assets/index-C3febmWr.js"></script>
-  <link rel="stylesheet" crossorigin href="/tbilisi-trans/assets/index-CGpodfhH.css">
+  <script type="module" crossorigin src="/tbilisi-trans/assets/index-Bt_dheYO.js"></script>
+  <link rel="stylesheet" crossorigin href="/tbilisi-trans/assets/index-Do7FkXpa.css">
 <link rel="manifest" href="/tbilisi-trans/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/tbilisi-trans/registerSW.js"></script></head>
 
 <body class="loading">
@@ -105,6 +105,15 @@
       <!-- Search Bar -->
       <div class="search-wrapper">
         <div class="search-container">
+          <input type="text" id="search-input" placeholder="Search for places or routes..." autocomplete="off"
+            autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" inputmode="search" />
+          <button id="search-clear" class="clear-input-btn hidden" title="Clear">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
           <div class="search-icon">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -112,13 +121,25 @@
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
           </div>
-          <input type="text" id="search-input" placeholder="Search stops or routes..." autocomplete="off"
-            autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" inputmode="search" />
-          <button id="search-clear" class="clear-input-btn hidden" title="Clear">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
+          <div class="search-divider"></div>
+          <button id="search-directions" class="search-directions-btn" title="Directions">
+            <svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 26.3 30.6">
+              <defs>
+                <style>
+                  .st0 {
+                    fill: currentColor;
+                    fill-opacity: .9;
+                  }
+                  .st1 {
+                    fill-opacity: 0;
+                  }
+                </style>
+              </defs>
+              <g>
+                <rect class="st1" x="2.1" y=".6" width="22.4" height="27.6" transform="translate(-5.9 10.4) rotate(-35.4)"/>
+                <path class="st0" d="M15.4,29.9c1.8-1.3,2.2-3.7.9-5.5s-3.7-2.2-5.5-.9-2.2,3.7-.9,5.5,3.7,2.2,5.5.9Z"/>
+              </g>
+              <path class="st0" d="M25.3,12.5c-1.9-2.7-5.2-3-9.3-.7l-6.5,3.7c-3.3,1.8-5.8,1.8-7.1,0-1.3-1.8-.6-4,1.8-5.7l7.8-5.5,1.2,1.7c.5.6,1,.5,1.3-.2l1.6-4.6C16.3.4,16,0,15.3,0h-4.9c-.8,0-1.1.5-.6,1.1l1.2,1.6-7.8,5.5C0,10.6-.9,13.8,1,16.4c1.9,2.7,5.2,3,9.3.7l6.5-3.7c3.3-1.8,5.8-1.8,7.1,0,1.3,1.8.6,4-1.8,5.7l-4.9,3.5c-.4.3-.5.8-.2,1.2.3.4.8.5,1.2.2,0,0,0,0,0,0h0s0,0,0,0,0,0,0,0l4.9-3.5c3.2-2.3,4.1-5.4,2.2-8.1Z"/>
             </svg>
           </button>
           <div id="search-suggestions" class="suggestions hidden"></div>
@@ -205,7 +226,24 @@
         <div id="arrivals-list" class="arrivals-list panel-body">
           <!-- Arrivals will be injected here -->
         </div>
-        <!-- stop-id-display removed -->
+
+        <div id="place-details" class="panel-body hidden" style="padding: 16px; display: flex; flex-direction: column; gap: 16px;">
+          <div id="place-address" style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.4;"></div>
+          <div style="display: flex; gap: 12px; margin-top: 8px; width: 100%;">
+            <button id="place-dir-from" class="place-detail-btn btn-secondary">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 19.3 25.6" class="context-icon" fill="currentColor">
+                <path d="M18.9,24.7c0-.6-.4-1-.9-1H.9c-.6,0-.9.4-.9,1s.4.9.9.9h17c.5,0,.9-.4.9-.9ZM18,10.4c.5,0,.9-.4.9-.9s0-.5-.3-.7L10.2.4c-.2-.2-.4-.3-.7-.3s-.5.1-.7.3L.3,8.8c-.2.2-.3.4-.3.7,0,.5.4.9.9.9s.5,0,.7-.3l3.5-3.4L9.5,2l4.4,4.8,3.5,3.4c.2.2.4.3.7.3ZM8.6,1.9v3.8c-.1,0-.1,17.2-.1,17.2,0,.5.4.9.9.9s.9-.4.9-.9V1.9c-.1-.4-.5-.8-.9-.8s-.8.4-.8.8Z" fill="currentColor"/>
+              </svg>
+              <span id="place-dir-from-text">Directions from here</span>
+            </button>
+            <button id="place-dir-to" class="place-detail-btn btn-primary">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 19.2676 25.6348" class="context-icon" fill="currentColor">
+                <path d="M18.9062 24.6875C18.9062 24.1309 18.5254 23.7305 17.9785 23.7305L0.947266 23.7305C0.390625 23.7305 0 24.1309 0 24.6875C0 25.2344 0.390625 25.6348 0.947266 25.6348L17.9785 25.6348C18.5254 25.6348 18.9062 25.2344 18.9062 24.6875ZM0.917969 13.3496C0.390625 13.3496 0 13.7598 0 14.2871C0 14.541 0.0878906 14.7656 0.292969 14.9707L8.74023 23.418C8.94531 23.6328 9.18945 23.7402 9.45312 23.7402C9.7168 23.7402 9.96094 23.6328 10.166 23.418L18.6133 14.9707C18.8184 14.7656 18.9062 14.541 18.9062 14.2871C18.9062 13.7598 18.5156 13.3496 17.9883 13.3496C17.7344 13.3496 17.4707 13.4473 17.3145 13.6133L13.8477 17.0312L9.45312 21.8066L5.05859 17.0312L1.5918 13.6133C1.43555 13.4473 1.17188 13.3496 0.917969 13.3496ZM10.2832 21.9336L10.4004 18.1738L10.4004 0.986328C10.4004 0.439453 10.0098 0.0488281 9.45312 0.0488281C8.89648 0.0488281 8.50586 0.439453 8.50586 0.986328L8.50586 18.1738L8.62305 21.9336C8.64258 22.3828 9.00391 22.7539 9.45312 22.7539C9.90234 22.7539 10.2637 22.3828 10.2832 21.9336Z" fill="currentColor"/>
+              </svg>
+              <span id="place-dir-to-text">Directions to here</span>
+            </button>
+          </div>
+        </div>
 
       </div> <!-- Close info-panel -->
 
@@ -419,6 +457,218 @@
       </div>
 
 
+      <!-- Directions Panel (Bottom Sheet) -->
+      <div id="directions-panel" class="panel hidden directions-panel">
+        <div class="drag-handle"></div>
+        <div class="panel-header">
+          <div class="header-top-row">
+            <div class="header-title-container">
+              <h2 id="directions-title">Directions</h2>
+            </div>
+            <div class="panel-controls">
+              <button id="close-directions" class="icon-btn" title="Minimize">
+                <img src="/tbilisi-trans/minus.circle.fill.svg" alt="Minimize" width="28" height="28">
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="directions-body" class="panel-body directions-body">
+          <div class="directions-fields">
+            <div class="directions-field-stack">
+              <div class="directions-field-row">
+                <span class="directions-field-pin from" aria-hidden="true">A</span>
+                <label class="directions-field">
+                  <input id="directions-from-input" class="directions-input" type="text"
+                    placeholder="Choose a starting point">
+                  <button id="directions-clear-from" class="directions-clear-point hidden" type="button"
+                    aria-label="Clear starting point">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                  </button>
+                </label>
+
+              </div>
+              <div class="directions-field-row">
+                <span class="directions-field-pin to" aria-hidden="true">B</span>
+                <label class="directions-field">
+                  <input id="directions-to-input" class="directions-input" type="text"
+                    placeholder="Choose a destination">
+                  <button id="directions-clear-to" class="directions-clear-point hidden" type="button"
+                    aria-label="Clear destination">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                  </button>
+                </label>
+
+              </div>
+            </div>
+            <button id="directions-reverse" class="directions-reverse-btn" type="button"
+              title="Reverse directions">
+              <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 29.7168 23.96" width="34" height="34" fill="currentColor">
+                <g>
+                  <path d="M22.7051 21.9947L22.9102 18.1763L22.9102 0.959515C22.9102 0.41264 22.5098 0.00248398 21.9531 0.00248398C21.3965 0.00248398 20.9961 0.41264 20.9961 0.959515L20.9961 18.1763L21.2207 21.9947C21.2598 22.4732 21.6016 22.7369 21.9629 22.7369C22.334 22.7369 22.6758 22.4732 22.7051 21.9947ZM16.1719 15.774C15.9863 15.5787 15.7715 15.4908 15.498 15.4908C14.9414 15.4908 14.5508 15.8716 14.5508 16.438C14.5508 16.6822 14.668 16.9556 14.8633 17.1509L21.2402 23.6353C21.6309 24.0455 22.2559 24.065 22.666 23.6353L29.043 17.1509C29.2383 16.9556 29.3555 16.6822 29.3555 16.438C29.3555 15.8716 28.9648 15.4908 28.418 15.4908C28.1445 15.4908 27.9297 15.5787 27.7344 15.774L24.9609 18.6158L21.9531 22.0435L18.9551 18.6158Z" fill="currentColor"/>
+                  <path d="M8.1543 1.94584C8.125 1.47709 7.7832 1.20366 7.41211 1.20366C7.06055 1.20366 6.70898 1.47709 6.66992 1.94584L6.45508 5.7642L6.45508 22.9908C6.45508 23.5376 6.8457 23.9478 7.40234 23.9478C7.95898 23.9478 8.35938 23.5376 8.35938 22.9908L8.35938 5.7642ZM1.62109 8.17631L4.4043 5.33452L7.40234 1.90678L10.4102 5.33452L13.1836 8.17631C13.3789 8.37162 13.5938 8.45952 13.8672 8.45952C14.4141 8.45952 14.8145 8.07866 14.8145 7.51225C14.8145 7.25834 14.6973 6.98491 14.502 6.78959L8.125 0.314984C7.70508-0.114704 7.08984-0.0951723 6.68945 0.314984L0.3125 6.78959C0.117188 6.98491 0 7.25834 0 7.51225C0 8.07866 0.390625 8.45952 0.947266 8.45952C1.2207 8.45952 1.43555 8.37162 1.62109 8.17631Z" fill="currentColor"/>
+                </g>
+              </svg>
+            </button>
+          </div>
+          <details class="directions-options-details">
+            <summary class="directions-options-summary">
+              <span id="directions-options-summary-label">Options</span>
+              <img src="/tbilisi-trans/chevron.right.svg" alt="" aria-hidden="true">
+            </summary>
+            <div class="directions-options">
+              <div class="menu-item directions-menu-row">
+                <span id="directions-mode-bus-label" class="menu-label">Bus</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="directions-mode-bus" value="BUS" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div class="menu-item directions-menu-row">
+                <span id="directions-mode-subway-label" class="menu-label">Metro</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="directions-mode-subway" value="SUBWAY" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div class="menu-item directions-menu-row">
+                <span id="directions-mode-gondola-label" class="menu-label">Cable car</span>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="directions-mode-gondola" value="GONDOLA" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div id="directions-segmented" class="theme-segmented-control directions-segmented" role="radiogroup" aria-label="Route priority">
+                <label class="theme-option active">
+                  <input type="radio" name="directions-optimize" value="quick" checked>
+                  <span id="directions-optimize-quick-label">Faster</span>
+                </label>
+                <label class="theme-option">
+                  <input type="radio" name="directions-optimize" value="lessWalking">
+                  <span id="directions-optimize-less-walking-label">Less walking</span>
+                </label>
+                <label class="theme-option">
+                  <input type="radio" name="directions-optimize" value="lessTransfers">
+                  <span id="directions-optimize-less-transfers-label">Less transfers</span>
+                </label>
+              </div>
+
+              <div class="directions-time-card" id="directions-time-card">
+                <div class="directions-time-mode-radios" aria-hidden="true">
+                  <input type="radio" name="directions-time-mode" value="leaveNow" checked>
+                  <input type="radio" name="directions-time-mode" value="departAt">
+                  <input type="radio" name="directions-time-mode" value="arriveBy">
+                </div>
+                <div class="directions-time-header">
+                  <div>
+                    <span id="directions-time-and-date-label">time and date</span>
+                    <label class="directions-time-mode-select-shell" for="directions-time-mode-select">
+                      <select id="directions-time-mode-select" class="directions-time-mode-select" aria-label="Trip mode">
+                        <option id="directions-time-mode-depart-option" value="departAt">departure</option>
+                        <option id="directions-time-mode-arrive-option" value="arriveBy">arrival</option>
+                      </select>
+                      <img src="/tbilisi-trans/chevron.right.svg" alt="" aria-hidden="true">
+                    </label>
+                  </div>
+                  <button id="directions-now-btn" class="directions-now-btn" type="button">Now</button>
+                </div>
+                <div class="directions-time-controls">
+                  <div class="directions-pill-group">
+                    <div id="directions-time-pill" class="directions-time-pill">
+                      <span class="directions-pill-icon directions-clock-icon" aria-hidden="true">
+                        <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
+                          <circle cx="8.5" cy="8.5" r="8.5" fill="currentColor" />
+                          <path d="M8.5 4.25V9L11.65 10.75" stroke="white" stroke-width="1.7"
+                            stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </span>
+                      <input id="directions-time-input" class="directions-time-input" type="text" inputmode="numeric"
+                        autocomplete="off" spellcheck="false" aria-label="Trip time" value="--:--">
+                    </div>
+                    <div class="directions-pill-nav" aria-label="Adjust time">
+                      <button id="directions-time-prev" type="button" aria-label="Earlier time">
+                        <img src="/tbilisi-trans/chevron.left.svg" alt="">
+                      </button>
+                      <button id="directions-time-next" type="button" aria-label="Later time">
+                        <img src="/tbilisi-trans/chevron.right.svg" alt="">
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="directions-pill-group directions-date-group">
+                    <button id="directions-date-pill" class="directions-time-pill directions-date-pill" type="button"
+                      aria-expanded="false" aria-controls="directions-calendar-popover">
+                      <span class="directions-pill-icon directions-calendar-icon" aria-hidden="true">
+                        <img src="/tbilisi-trans/calendar.badge.clock.svg" alt="">
+                      </span>
+                      <span id="directions-date-display">today</span>
+                    </button>
+                    <div class="directions-pill-nav" aria-label="Adjust date">
+                      <button id="directions-date-prev" type="button" aria-label="Previous day">
+                        <img src="/tbilisi-trans/chevron.left.svg" alt="">
+                      </button>
+                      <button id="directions-date-next" type="button" aria-label="Next day">
+                        <img src="/tbilisi-trans/chevron.right.svg" alt="">
+                      </button>
+                    </div>
+                    <div id="directions-calendar-popover" class="directions-calendar-popover hidden" role="dialog"
+                      aria-label="Choose date">
+                      <div class="directions-calendar-header">
+                        <button id="directions-calendar-prev" type="button" aria-label="Previous month">
+                          <img src="/tbilisi-trans/chevron.left.svg" alt="">
+                        </button>
+                        <span id="directions-calendar-month">Month</span>
+                        <button id="directions-calendar-next" type="button" aria-label="Next month">
+                          <img src="/tbilisi-trans/chevron.right.svg" alt="">
+                        </button>
+                      </div>
+                      <div class="directions-calendar-weekdays" aria-hidden="true">
+                        <span id="directions-weekday-mon">mon</span>
+                        <span id="directions-weekday-tue">tue</span>
+                        <span id="directions-weekday-wed">wed</span>
+                        <span id="directions-weekday-thu">thu</span>
+                        <span id="directions-weekday-fri">fri</span>
+                        <span id="directions-weekday-sat">sat</span>
+                        <span id="directions-weekday-sun">sun</span>
+                      </div>
+                      <div id="directions-calendar-grid" class="directions-calendar-grid"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <div id="directions-placeholder" class="directions-placeholder">
+            Select two points to preview route options.
+          </div>
+          <div id="directions-results" class="directions-results hidden"></div>
+        </div>
+      </div>
+
+      <div id="directions-context-menu" class="directions-context-menu hidden" role="menu">
+        <button id="directions-context-from" type="button" role="menuitem">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 19.3 25.6" class="context-icon" fill="currentColor">
+            <path d="M18.9,24.7c0-.6-.4-1-.9-1H.9c-.6,0-.9.4-.9,1s.4.9.9.9h17c.5,0,.9-.4.9-.9ZM18,10.4c.5,0,.9-.4.9-.9s0-.5-.3-.7L10.2.4c-.2-.2-.4-.3-.7-.3s-.5.1-.7.3L.3,8.8c-.2.2-.3.4-.3.7,0,.5.4.9.9.9s.5,0,.7-.3l3.5-3.4L9.5,2l4.4,4.8,3.5,3.4c.2.2.4.3.7.3ZM8.6,1.9v3.8c-.1,0-.1,17.2-.1,17.2,0,.5.4.9.9.9s.9-.4.9-.9V1.9c-.1-.4-.5-.8-.9-.8s-.8.4-.8.8Z" fill="currentColor"/>
+          </svg>
+          <span id="directions-context-from-text">Directions from here</span>
+        </button>
+        <button id="directions-context-to" type="button" role="menuitem">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 19.2676 25.6348" class="context-icon" fill="currentColor">
+            <path d="M18.9062 24.6875C18.9062 24.1309 18.5254 23.7305 17.9785 23.7305L0.947266 23.7305C0.390625 23.7305 0 24.1309 0 24.6875C0 25.2344 0.390625 25.6348 0.947266 25.6348L17.9785 25.6348C18.5254 25.6348 18.9062 25.2344 18.9062 24.6875ZM0.917969 13.3496C0.390625 13.3496 0 13.7598 0 14.2871C0 14.541 0.0878906 14.7656 0.292969 14.9707L8.74023 23.418C8.94531 23.6328 9.18945 23.7402 9.45312 23.7402C9.7168 23.7402 9.96094 23.6328 10.166 23.418L18.6133 14.9707C18.8184 14.7656 18.9062 14.541 18.9062 14.2871C18.9062 13.7598 18.5156 13.3496 17.9883 13.3496C17.7344 13.3496 17.4707 13.4473 17.3145 13.6133L13.8477 17.0312L9.45312 21.8066L5.05859 17.0312L1.5918 13.6133C1.43555 13.4473 1.17188 13.3496 0.917969 13.3496ZM10.2832 21.9336L10.4004 18.1738L10.4004 0.986328C10.4004 0.439453 10.0098 0.0488281 9.45312 0.0488281C8.89648 0.0488281 8.50586 0.439453 8.50586 0.986328L8.50586 18.1738L8.62305 21.9336C8.64258 22.3828 9.00391 22.7539 9.45312 22.7539C9.90234 22.7539 10.2637 22.3828 10.2832 21.9336Z" fill="currentColor"/>
+          </svg>
+          <span id="directions-context-to-text">Directions to here</span>
+        </button>
+      </div>
+
       <button id="reset-view" class="reset-view-btn hidden">
         <span>📍</span> Return to Tbilisi
       </button>
@@ -623,6 +873,8 @@
 
     </div><!-- Close ui-wrapper -->
   </div> <!-- Close app -->
+  <div id="directions-from-suggestions" class="directions-suggestions hidden"></div>
+  <div id="directions-to-suggestions" class="directions-suggestions hidden"></div>
 </body>
 
 </html>

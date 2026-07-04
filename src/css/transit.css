@@ -100,6 +100,7 @@
     color: var(--warning-yellow, #b45309);
     font-weight: 500;
     line-height: 1.3;
+    font-size: 0.85rem;
 }
 
 .panel.metro-mode .arrival-item {

@@ -4,6 +4,30 @@ import { map } from './map-setup.js';
 export function setSheetState(panel, state) {
     if (!panel) return;
 
+    // Handle directions sheet auto-collapse/restore when other sheets open/close
+    if (panel.id !== 'directions-panel') {
+        const directionsPanel = document.getElementById('directions-panel');
+        if (directionsPanel) {
+            if (state !== 'hidden') {
+                if (!directionsPanel.classList.contains('hidden') && !directionsPanel.classList.contains('sheet-collapsed')) {
+                    let currentState = 'half';
+                    if (directionsPanel.classList.contains('sheet-full')) currentState = 'full';
+                    else if (directionsPanel.classList.contains('sheet-peek')) currentState = 'peek';
+                    
+                    directionsPanel._prevSheetState = currentState;
+                    setSheetState(directionsPanel, 'collapsed');
+                }
+            } else {
+                if (!directionsPanel.classList.contains('hidden') && directionsPanel.classList.contains('sheet-collapsed') && directionsPanel._prevSheetState) {
+                    setSheetState(directionsPanel, directionsPanel._prevSheetState);
+                }
+                delete directionsPanel._prevSheetState;
+            }
+        }
+    } else if (state === 'hidden') {
+        delete panel._prevSheetState;
+    }
+
     const wasHidden = panel.classList.contains('hidden');
 
     // states: hidden, collapsed, peek, half, full
@@ -18,14 +42,16 @@ export function setSheetState(panel, state) {
         }
 
         // Only clear stop highlight when explicitly closing info-panel (not when switching to route)
-        if (panel.id === 'info-panel' && map.getSource('selected-stop')) {
-            // Preserve highlight if route-info is about to open (fromStopId case)
-            // But checking 'route-info' visibility here might be race-condition prone?
-            // Relying on caller to handle stop highlight clearing usually safer.
-            // But let's keep original logic:
-            const routePanel = document.getElementById('route-info');
-            if (routePanel && routePanel.classList.contains('hidden')) {
-                map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
+        if (panel.id === 'info-panel') {
+            if (window._searchPlaceMarker) {
+                window._searchPlaceMarker.remove();
+                window._searchPlaceMarker = null;
+            }
+            if (map.getSource('selected-stop')) {
+                const routePanel = document.getElementById('route-info');
+                if (routePanel && routePanel.classList.contains('hidden')) {
+                    map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
+                }
             }
         }
     } else if (state === 'collapsed') {
@@ -76,10 +102,12 @@ export function setPanelState(isOpen) {
         // Only remove if BOTH panels are hidden
         const info = document.getElementById('info-panel');
         const route = document.getElementById('route-info');
+        const directions = document.getElementById('directions-panel');
         const infoHidden = info ? info.classList.contains('hidden') : true;
         const routeHidden = route ? route.classList.contains('hidden') : true;
+        const directionsHidden = directions ? directions.classList.contains('hidden') : true;
 
-        if (infoHidden && routeHidden) {
+        if (infoHidden && routeHidden && directionsHidden) {
             document.body.classList.remove('panel-open');
         }
     }
@@ -88,9 +116,11 @@ export function setPanelState(isOpen) {
 export function closeAllPanels() {
     const infoPanel = document.getElementById('info-panel');
     const routePanel = document.getElementById('route-info');
+    const directionsPanel = document.getElementById('directions-panel');
 
     if (infoPanel) setSheetState(infoPanel, 'hidden');
     if (routePanel) setSheetState(routePanel, 'hidden');
+    if (directionsPanel) setSheetState(directionsPanel, 'hidden');
 
     setPanelState(false);
 }
@@ -159,7 +189,7 @@ export function setupPanelDrag(panelId) {
         const target = e.target;
 
         // Explicitly ignore Close Buttons and Icon Buttons
-        if (target.closest('#close-panel') || target.closest('#close-route-info') || target.closest('.icon-btn')) {
+        if (target.closest('#close-panel') || target.closest('#close-route-info') || target.closest('#close-directions') || target.closest('.icon-btn')) {
             return;
         }
 

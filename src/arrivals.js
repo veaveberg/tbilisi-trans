@@ -688,7 +688,7 @@ function getCurrentTbilisiMinutes() {
     return h * 60 + m;
 }
 
-function shouldShowLateDepotWarning(etaMinutes, lastScheduledMinutes, firstScheduledMinutes) {
+export function shouldShowLateDepotWarning(etaMinutes, lastScheduledMinutes, firstScheduledMinutes) {
     const eta = Number(etaMinutes);
     const lastScheduled = Number(lastScheduledMinutes);
     const firstScheduled = Number(firstScheduledMinutes);
@@ -1477,7 +1477,7 @@ export async function fetchArrivals(stopId) {
     return unique;
 }
 
-function getArrivalMinutesValue(arrival) {
+export function getArrivalMinutesValue(arrival) {
     if (!arrival) return 999;
     if (arrival.realtime) {
         return (arrival.realtimeArrivalMinutes !== undefined && arrival.realtimeArrivalMinutes !== null)
@@ -1489,7 +1489,7 @@ function getArrivalMinutesValue(arrival) {
         : 999;
 }
 
-function formatArrivalDisplayValue(minutes, isScheduled) {
+export function formatArrivalDisplayValue(minutes, isScheduled) {
     if (minutes === 999 || minutes === null || minutes === undefined) return '--:--';
     if (isScheduled) {
         const scheduled = formatScheduledTime(minutes);
@@ -1612,7 +1612,7 @@ function updateCardDisplayArrivals(cardEl, timeElId, displayEntries, primaryMinu
     }
 }
 
-function isArrivalsLiveDataStale() {
+export function isArrivalsLiveDataStale() {
     return window.arrivalsLiveDataStale === true;
 }
 
