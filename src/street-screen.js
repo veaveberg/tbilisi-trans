@@ -338,6 +338,7 @@ export class StreetScreenController {
             this.setFillHeightMode(!this.fillHeightMode);
             this.persistPreferences();
             this.bumpControlsVisibility();
+            this.updateScale();
             this.render();
         });
         this.overlayEl.addEventListener('click', (event) => {

@@ -3,7 +3,8 @@ import * as turf from '@turf/turf';
 import { getSegmentForStop, generateSegmentGeometry, generateConnectionGeometry, getConnectionKey, LINE_1_IDS, LINE_2_IDS } from './metro-utils.js';
 import { getIntervalDescription } from './intervals.js';
 import { simplifyNumber } from './settings.js';
-import { getCurrentStopNamesLanguage } from './i18n.ts';
+import { getCurrentStopNamesLanguage, t } from './i18n.ts';
+import { setPoint } from './directions.js';
 
 let metroTicker = null;
 let _cachedSegments = null;
@@ -287,11 +288,81 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
         <div class="metro-hours-badge">
             <span class="icon">🕒</span> Entrance open 6:00 – 0:00
         </div>
+        <div class="metro-directions-buttons" style="display: flex; gap: 12px; margin-top: 12px; width: 100%;">
+            <button class="place-detail-btn btn-secondary metro-dir-from" style="flex: 1;">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 8" class="context-icon" fill="currentColor" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+                <g id="Artboard1_metro" transform="matrix(0.58749,0,0,0.259037,0,0)">
+                  <rect x="0" y="0" width="26.3" height="30.6" style="fill:none;"/>
+                  <clipPath id="_clip1_metro">
+                    <rect x="0" y="0" width="26.3" height="30.6"/>
+                  </clipPath>
+                  <g clip-path="url(#_clip1_metro)">
+                    <g transform="matrix(1.702158,0,0,3.86045,-6.955498,-49.139011)">
+                      <g transform="matrix(1.224181,0.7659,-0.386971,0.77265,-29.173692,-35.216935)">
+                        <path d="M42.037,24.229L43.572,22.71L42.414,22.609C42.034,22.575 41.771,22.028 41.827,21.387C41.883,20.747 42.237,20.254 42.617,20.287L45.946,20.578C46.171,20.598 46.365,20.801 46.467,21.123C46.568,21.444 46.564,21.843 46.457,22.193L44.856,27.371C44.674,27.961 44.251,28.238 43.913,27.987C43.576,27.737 43.45,27.054 43.632,26.464L44.178,24.698L42.664,26.197C42.545,25.468 42.334,24.797 42.037,24.229Z"/>
+                      </g>
+                      <g transform="matrix(1,0,0,1,-5.049186,-10.007903)">
+                        <path d="M15.4,29.9C13.6,31.2 11.2,30.8 9.9,29C8.6,27.2 9,24.8 10.8,23.5C12.6,22.2 15,22.6 16.3,24.4C17.6,26.2 17.2,28.6 15.4,29.9ZM15.184,28.596L13.563,24.547C13.542,24.495 13.492,24.461 13.436,24.461L12.72,24.461C12.664,24.461 12.613,24.495 12.593,24.548L11.016,28.597C11.008,28.616 11.011,28.639 11.022,28.656C11.034,28.674 11.054,28.684 11.075,28.684L11.791,28.684C11.848,28.684 11.899,28.648 11.919,28.594L12.202,27.815C12.222,27.761 12.273,27.725 12.33,27.725L13.829,27.725C13.886,27.725 13.936,27.76 13.957,27.812L14.258,28.597C14.278,28.649 14.329,28.684 14.385,28.684L15.125,28.684C15.146,28.684 15.166,28.674 15.178,28.656C15.19,28.638 15.192,28.616 15.184,28.596ZM13.57,27.013L12.575,27.013C12.557,27.013 12.541,27.005 12.53,26.99C12.52,26.975 12.518,26.956 12.524,26.94L13.049,25.497C13.052,25.49 13.059,25.484 13.067,25.484C13.076,25.484 13.083,25.489 13.086,25.497L13.622,26.939C13.628,26.956 13.626,26.975 13.615,26.99C13.605,27.005 13.588,27.013 13.57,27.013Z"/>
+                      </g>
+                    </g>
+                  </g>
+                </g>
+              </svg>
+              <span>${t('directionsFromHere')}</span>
+            </button>
+            <button class="place-detail-btn btn-secondary metro-dir-to" style="flex: 1;">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 8" class="context-icon" fill="currentColor" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+                <g id="Artboard2_metro" transform="matrix(0.608365,0,0,0.259037,0,0)">
+                  <rect x="0" y="0" width="26.3" height="30.6" style="fill:none;"/>
+                  <g transform="matrix(1.642285,0,0,3.86045,-6.04509,-64.439011)">
+                    <g transform="matrix(1.224181,0.7659,-0.386971,0.77265,-35.498521,-31.253666)">
+                      <path d="M45.795,24.333L44.856,27.371C44.674,27.961 44.251,28.238 43.913,27.987C43.576,27.737 43.45,27.054 43.632,26.464L44.178,24.698L41.501,27.347C41.158,27.687 40.74,27.521 40.568,26.977C40.396,26.433 40.536,25.715 40.879,25.375L43.572,22.71L42.414,22.609C42.034,22.575 41.771,22.028 41.827,21.387C41.883,20.747 42.237,20.254 42.617,20.287L44.56,20.457C44.603,22.01 45.037,23.42 45.795,24.333Z"/>
+                    </g>
+                    <g transform="matrix(1,0,0,1,2.58804,-6.044634)">
+                      <path d="M15.4,29.9C13.6,31.2 11.2,30.8 9.9,29C8.6,27.2 9,24.8 10.8,23.5C12.6,22.2 15,22.6 16.3,24.4C17.6,26.2 17.2,28.6 15.4,29.9ZM11.49,24.759L11.49,28.641C11.49,28.687 11.508,28.73 11.54,28.762C11.572,28.794 11.615,28.812 11.66,28.812L12.928,28.812C13.471,28.808 13.814,28.798 13.956,28.783C14.183,28.758 14.373,28.691 14.528,28.583C14.682,28.474 14.804,28.329 14.894,28.148C14.983,27.966 15.028,27.779 15.028,27.587C15.028,27.343 14.959,27.131 14.82,26.951C14.708,26.804 14.556,26.692 14.365,26.614C14.342,26.605 14.326,26.584 14.324,26.56C14.322,26.535 14.334,26.512 14.355,26.499C14.478,26.421 14.58,26.32 14.66,26.196C14.767,26.031 14.82,25.849 14.82,25.651C14.82,25.469 14.777,25.304 14.691,25.157C14.604,25.01 14.496,24.893 14.367,24.804C14.237,24.716 14.09,24.658 13.926,24.63C13.762,24.602 13.512,24.588 13.178,24.588L11.66,24.588C11.615,24.588 11.572,24.606 11.54,24.638C11.508,24.67 11.49,24.713 11.49,24.759ZM12.513,26.971L13.031,26.971C13.419,26.971 13.671,26.991 13.787,27.031C13.904,27.072 13.992,27.136 14.054,27.224C14.115,27.313 14.146,27.42 14.146,27.547C14.146,27.697 14.106,27.816 14.027,27.906C13.947,27.995 13.844,28.051 13.717,28.074C13.634,28.091 13.439,28.1 13.132,28.1L12.513,28.1C12.468,28.1 12.424,28.082 12.393,28.05C12.361,28.018 12.343,27.975 12.343,27.93L12.343,27.141C12.343,27.096 12.361,27.053 12.393,27.021C12.424,26.989 12.468,26.971 12.513,26.971ZM12.513,25.291L12.832,25.291C13.234,25.291 13.477,25.296 13.561,25.306C13.703,25.323 13.81,25.372 13.883,25.454C13.955,25.536 13.991,25.642 13.991,25.772C13.991,25.909 13.949,26.019 13.865,26.102C13.782,26.186 13.667,26.236 13.521,26.253C13.44,26.263 13.234,26.268 12.902,26.268L12.513,26.268C12.419,26.268 12.343,26.192 12.343,26.098L12.343,25.461C12.343,25.367 12.419,25.291 12.513,25.291Z"/>
+                    </g>
+                  </g>
+                </g>
+              </svg>
+              <span>${t('directionsToHere')}</span>
+            </button>
+        </div>
     `;
-    // Insert after name
+
+    const fromBtn = headerContainer.querySelector('.metro-dir-from');
+    const toBtn = headerContainer.querySelector('.metro-dir-to');
+
+    if (fromBtn) {
+        fromBtn.addEventListener('click', () => {
+            setPoint('from', {
+                lat: stop.lat,
+                lng: stop.lon,
+                label: stop.name
+            });
+            setSheetState(panel, 'hidden');
+        });
+    }
+
+    if (toBtn) {
+        toBtn.addEventListener('click', () => {
+            setPoint('to', {
+                lat: stop.lat,
+                lng: stop.lon,
+                label: stop.name
+            });
+            setSheetState(panel, 'hidden');
+        });
+    }
+
+    // Insert after panel header to span full width
     const existingHeader = panel.querySelector('.metro-header');
     if (existingHeader) existingHeader.remove();
-    nameEl.parentNode.insertBefore(headerContainer, nameEl.nextSibling);
+    const panelHeader = panel.querySelector('.panel-header');
+    if (panelHeader) {
+        panelHeader.parentNode.insertBefore(headerContainer, panelHeader.nextSibling);
+    } else {
+        nameEl.parentNode.insertBefore(headerContainer, nameEl.nextSibling);
+    }
 
     listEl.innerHTML = '<div class="loading">Loading metro schedule...</div>';
 

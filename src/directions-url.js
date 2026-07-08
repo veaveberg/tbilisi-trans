@@ -7,7 +7,7 @@ const DIRECTIONS_PATH_RE = new RegExp(
     `^directions/(${POINT_PATTERN})-(${POINT_PATTERN})-to-(${POINT_PATTERN})-(${POINT_PATTERN})(?:/(.*))?$`,
     'i'
 );
-const SCHEDULE_RE = /^at(\d{2})(\d{2})-(\d{2})-(\d{2})$/i;
+const SCHEDULE_RE = /^(at|by)(\d{2})(\d{2})-(\d{2})-(\d{2})$/i;
 
 function stripDecorations(path = '') {
     return String(path || '')
@@ -36,10 +36,10 @@ function parseDateFromSegment(segment) {
     const match = String(segment || '').match(SCHEDULE_RE);
     if (!match) return null;
 
-    const hours = Number(match[1]);
-    const minutes = Number(match[2]);
-    const day = Number(match[3]);
-    const month = Number(match[4]);
+    const hours = Number(match[2]);
+    const minutes = Number(match[3]);
+    const day = Number(match[4]);
+    const month = Number(match[5]);
 
     if (!Number.isInteger(hours) || !Number.isInteger(minutes) || !Number.isInteger(day) || !Number.isInteger(month)) {
         return null;
@@ -63,7 +63,7 @@ function parseDateFromSegment(segment) {
     return date;
 }
 
-function formatScheduleSegment(date) {
+function formatScheduleSegment(date, timeMode = 'departAt') {
     if (!date) return null;
     const next = date instanceof Date ? date : new Date(date);
     if (Number.isNaN(next.getTime())) return null;
@@ -71,7 +71,8 @@ function formatScheduleSegment(date) {
     const minutes = String(next.getMinutes()).padStart(2, '0');
     const day = String(next.getDate()).padStart(2, '0');
     const month = String(next.getMonth() + 1).padStart(2, '0');
-    return `at${hours}${minutes}-${day}-${month}`;
+    const prefix = timeMode === 'arriveBy' ? 'by' : 'at';
+    return `${prefix}${hours}${minutes}-${day}-${month}`;
 }
 
 function normalizeModeSlugs(value) {
@@ -151,8 +152,10 @@ export function parseDirectionsPath(pathname = '') {
         if (SCHEDULE_RE.test(segment)) {
             const date = parseDateFromSegment(segment);
             if (date) {
+                const match = segment.match(SCHEDULE_RE);
+                const prefix = match ? match[1].toLowerCase() : 'at';
                 state.time = date;
-                state.timeMode = 'departAt';
+                state.timeMode = prefix === 'by' ? 'arriveBy' : 'departAt';
             }
             return;
         }
@@ -182,8 +185,8 @@ export function buildDirectionsPath(state = {}) {
     let path = `directions/${formatCoordinate(from.lat)}-${formatCoordinate(from.lng)}-to-${formatCoordinate(to.lat)}-${formatCoordinate(to.lng)}`;
 
     const timeSegment = state.time instanceof Date
-        ? formatScheduleSegment(state.time)
-        : formatScheduleSegment(state.time ? new Date(state.time) : null);
+        ? formatScheduleSegment(state.time, state.timeMode)
+        : formatScheduleSegment(state.time ? new Date(state.time) : null, state.timeMode);
     if (timeSegment) {
         path += `/${timeSegment}`;
     }

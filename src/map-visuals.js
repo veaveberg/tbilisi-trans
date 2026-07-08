@@ -87,7 +87,7 @@ function ensureTerrain() {
 let user3DBuildings = localStorage.getItem('show3DBuildings') !== 'false';
 let user3DTerrain = localStorage.getItem('show3DTerrain') !== 'false';
 let userExaggerate = localStorage.getItem('exaggerateTerrain') === 'true';
-let userPoiLabels = localStorage.getItem('showPoiLabels') === 'true';
+let userPoiLabels = localStorage.getItem('showPoiLabels') !== 'false';
 
 // Listen for settings changes
 window.addEventListener('map3DBuildingsChange', (e) => {

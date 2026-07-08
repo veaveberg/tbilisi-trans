@@ -1,11 +1,14 @@
 import mapboxgl from 'mapbox-gl';
 import { map } from './map-setup.js';
 import { historyManager } from './history.js';
+import { setMapFocus } from './map-interactions.js';
 
 import { getCurrentMapLanguage, onLanguageChange, t } from './i18n.ts';
 import { setSheetState, setPanelState } from './panel-manager.js';
 import { setPoint, openDirections, toggleDirections, clearPoint } from './directions.js';
 import { getLastUserCoords } from './geolocation.js';
+import { flyToPointInView, getBandPadding, invalidateMapCameraIntent } from './map-camera.js';
+import { arrivalsController } from './arrivals-controller.js';
 
 let suggestionMarkers = [];
 
@@ -94,6 +97,12 @@ export function setupSearch(callbacks, dataProviders) {
 
     input.addEventListener('focus', showSuggestionsOnFocus);
     input.addEventListener('click', showSuggestionsOnFocus);
+    input.addEventListener('blur', () => {
+        setTimeout(() => {
+            suggestions.classList.add('hidden');
+            clearSearchSuggestionMarkers();
+        }, 200);
+    });
 
     input.addEventListener('input', (e) => {
         const query = e.target.value.toLowerCase();
@@ -224,8 +233,25 @@ export function setupSearch(callbacks, dataProviders) {
             const isTouchDevice = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
             if (isTouchDevice) {
                 const panel = document.getElementById('directions-panel');
-                if (panel && !panel.classList.contains('sheet-full')) {
-                    setSheetState(panel, 'full');
+                if (panel) {
+                    if (panel.dataset.transitioning === 'true') {
+                        return;
+                    }
+                    if (!panel.classList.contains('sheet-full')) {
+                        panel.dataset.transitioning = 'true';
+                        setSheetState(panel, 'full');
+                        await new Promise((resolve) => {
+                            const onTransitionEnd = (e) => {
+                                if (e.target === panel && (e.propertyName === 'transform' || e.propertyName === 'top')) {
+                                    panel.removeEventListener('transitionend', onTransitionEnd);
+                                    resolve();
+                                }
+                            };
+                            panel.addEventListener('transitionend', onTransitionEnd);
+                            setTimeout(resolve, 350); // Fallback
+                        });
+                        delete panel.dataset.transitioning;
+                    }
                 }
             }
 
@@ -343,6 +369,11 @@ export function setupSearch(callbacks, dataProviders) {
 
         fromInput.addEventListener('focus', (e) => onFocus(e, 'from'));
         fromInput.addEventListener('click', (e) => onFocus(e, 'from'));
+        fromInput.addEventListener('blur', () => {
+            setTimeout(() => {
+                fromSuggestions.classList.add('hidden');
+            }, 200);
+        });
         fromInput.addEventListener('input', (e) => {
             const val = e.target.value.trim();
             if (val === '') {
@@ -355,6 +386,11 @@ export function setupSearch(callbacks, dataProviders) {
 
         toInput.addEventListener('focus', (e) => onFocus(e, 'to'));
         toInput.addEventListener('click', (e) => onFocus(e, 'to'));
+        toInput.addEventListener('blur', () => {
+            setTimeout(() => {
+                toSuggestions.classList.add('hidden');
+            }, 200);
+        });
         toInput.addEventListener('input', (e) => {
             const val = e.target.value.trim();
             if (val === '') {
@@ -636,17 +672,29 @@ function clearSearchSuggestionMarkers() {
 }
 
 function selectPlace(place) {
+    invalidateMapCameraIntent();
     const coords = place.center;
     // Remove any previous place marker
     if (window._searchPlaceMarker) {
         window._searchPlaceMarker.remove();
         window._searchPlaceMarker = null;
     }
+
     // Use fitBounds for streets (extent available), flyTo for point results
     if (place.extent) {
-        map.fitBounds(place.extent, { padding: 60, maxZoom: 17 });
+        map.fitBounds(place.extent, {
+            padding: getBandPadding({ bottomAnchorSelector: '#info-panel' }),
+            maxZoom: 17,
+            duration: 900,
+            retainPadding: false
+        });
     } else {
-        map.flyTo({ center: coords, zoom: 17 });
+        flyToPointInView(coords, {
+            zoom: 17,
+            bottomAnchorSelector: '#info-panel',
+            duration: 900,
+            radiusMeters: 10
+        });
     }
     window._searchPlaceMarker = new mapboxgl.Marker({ color: '#e74c3c' })
         .setLngLat(coords)
@@ -663,8 +711,26 @@ function selectPlace(place) {
 }
 
 export function showPlaceInfoSheet(place) {
+    // Clear any selected stop markers/states
+    window.currentStopId = null;
+    window.currentStopMode = null;
+    if (arrivalsController) {
+        arrivalsController.clear();
+    }
+    if (map && map.getSource('selected-stop')) {
+        map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
+    }
+    try {
+        setMapFocus(false);
+    } catch (err) {
+        console.error('Failed to reset map focus:', err);
+    }
+
     const panel = document.getElementById('info-panel');
     if (!panel) return;
+
+    const existingMetroHeader = panel.querySelector('.metro-header');
+    if (existingMetroHeader) existingMetroHeader.remove();
 
     // Hide stop-specific UI elements inside info-panel
     const arrivalsList = document.getElementById('arrivals-list');
@@ -673,6 +739,8 @@ export function showPlaceInfoSheet(place) {
     const stopMoreBtn = document.getElementById('stop-more-btn');
     const headerExtension = document.getElementById('header-extension');
 
+    const stopDirsContainer = document.getElementById('stop-directions-container');
+    if (stopDirsContainer) stopDirsContainer.classList.add('hidden');
     if (arrivalsList) arrivalsList.classList.add('hidden');
     if (filterBtn) filterBtn.classList.add('hidden');
     if (editBtn) editBtn.classList.add('hidden');
@@ -1025,4 +1093,3 @@ function createDirHistoryItem(type, data, fieldType, container, originalItem) {
 
     return div;
 }
-

@@ -1,8 +1,28 @@
 import { map } from './map-setup.js';
 
+function isPanelVisible(panel) {
+    if (!panel) return false;
+    if (panel.classList.contains('hidden')) return false;
+    const style = window.getComputedStyle(panel);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    return panel.getClientRects().length > 0;
+}
+
+function getVisibleSheetPanel() {
+    return ['info-panel', 'route-info', 'directions-panel']
+        .map((id) => document.getElementById(id))
+        .find((panel) => isPanelVisible(panel)) || null;
+}
+
+export function updateMapPadding() {
+    // No-op: fitBounds calls opt out of retained padding, so closing a sheet
+    // should not move the map just to clean up camera state.
+}
+
 // Helper for Sheet State (Mobile)
 export function setSheetState(panel, state) {
     if (!panel) return;
+    console.log(`[Viewport] setSheetState: panel="${panel.id}", state="${state}"`);
 
     // Handle directions sheet auto-collapse/restore when other sheets open/close
     if (panel.id !== 'directions-panel') {
@@ -92,10 +112,12 @@ export function setSheetState(panel, state) {
 
     panel.style.setProperty('--sheet-y', `${targetY}px`);
     panel.style.setProperty('--sheet-hidden-h', `${hiddenH}px`);
+    updateMapPadding();
 }
 
 // Helper to toggle panel open class on body
 export function setPanelState(isOpen) {
+    console.log(`[Viewport] setPanelState: isOpen=${isOpen}`);
     if (isOpen) {
         document.body.classList.add('panel-open');
     } else {
@@ -111,6 +133,7 @@ export function setPanelState(isOpen) {
             document.body.classList.remove('panel-open');
         }
     }
+    updateMapPadding();
 }
 
 export function closeAllPanels() {

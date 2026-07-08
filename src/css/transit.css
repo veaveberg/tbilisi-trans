@@ -496,7 +496,7 @@ body.dark-mode .route-info-number {
     width: 100%;
     background: none;
     border: none;
-    padding: 2px 20px 20px 20px;
+    padding: 16px 20px 8px 20px;
     cursor: pointer;
     text-align: left;
     transition: all 0.2s ease;

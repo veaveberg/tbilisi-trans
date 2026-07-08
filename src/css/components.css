@@ -186,7 +186,7 @@ body.dark-mode .menu-language-option.active {
 }
 
 .directions-context-menu button svg {
-    width: 14px;
+    width: 28px;
     height: 14px;
     flex-shrink: 0;
 }
@@ -204,6 +204,9 @@ body.dark-mode .menu-language-option.active {
     display: block;
     cursor: grab;
     touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
 }
 
 .directions-pin-visual {
@@ -214,6 +217,10 @@ body.dark-mode .menu-language-option.active {
     height: 44px;
     transform: translate(-50%, -42px);
     pointer-events: auto;
+    transition: transform 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275), filter 0.15s ease;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
 }
 
 .directions-pin-svg {
@@ -237,7 +244,16 @@ body.dark-mode .menu-language-option.active {
 }
 
 .directions-pin:active {
-    cursor: grabbing;
+    cursor: grab;
+}
+
+.directions-pin.grabbing-ready {
+    cursor: grabbing !important;
+}
+
+.directions-pin.grabbing-ready .directions-pin-visual {
+    transform: translate(-50%, -42px) scale(1.15);
+    filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.3));
 }
 
 .directions-pin span {

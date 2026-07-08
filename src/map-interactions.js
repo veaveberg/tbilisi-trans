@@ -3,6 +3,8 @@ import { map } from './map-setup.js';
 import { updateStopHoverEffects } from './map-visuals.js';
 import { getCurrentMapLanguage } from './i18n.ts';
 import { showPlaceInfoSheet } from './search.js';
+import { flyToPointInView, isCurrentMapCameraIntent, invalidateMapCameraIntent } from './map-camera.js';
+import { stopTracking } from './geolocation.js';
 
 let lastHoveredStopId = null;
 let hoverTimeout = null;
@@ -641,7 +643,10 @@ function isBuildingFeature(feature) {
 
 export async function resolvePlaceClickDetails({ feature = null, features = [], center, name, assumePoi = false, reverseGeocode = fetchReverseGeocode } = {}) {
     const resolvedCenter = Array.isArray(center) ? center : [0, 0];
-    const fallbackName = name || feature?.properties?.name || feature?.properties?.name_en || feature?.properties?.name_primary || 'Point of Interest';
+    const hasRealName = !!(name && name !== 'Point of Interest' || feature?.properties?.name || feature?.properties?.name_en || feature?.properties?.name_primary);
+    const fallbackName = hasRealName
+        ? (name && name !== 'Point of Interest' ? name : (feature?.properties?.name || feature?.properties?.name_en || feature?.properties?.name_primary))
+        : 'Point of Interest';
 
     const poiFeature = feature && (assumePoi || isPoiFeature(feature))
         ? feature
@@ -653,7 +658,7 @@ export async function resolvePlaceClickDetails({ feature = null, features = [], 
     let category = poiFeature ? extractCategory(poiFeature.properties) : null;
     let geocodeResult = null;
 
-    if ((!category && poiFeature) || (!poiFeature && !buildingFeature && reverseGeocode)) {
+    if ((!category && poiFeature) || (!poiFeature && !buildingFeature && reverseGeocode) || (!hasRealName && reverseGeocode)) {
         geocodeResult = await reverseGeocode(resolvedCenter[0], resolvedCenter[1]);
     }
 
@@ -677,7 +682,8 @@ export async function resolvePlaceClickDetails({ feature = null, features = [], 
         category: resolvedCategory,
         description,
         center: resolvedCenter,
-        placeType: poiFeature ? 'poi' : (buildingFeature ? 'building' : 'location')
+        placeType: poiFeature ? 'poi' : (buildingFeature ? 'building' : 'location'),
+        hasRealName
     };
 }
 
@@ -700,6 +706,7 @@ export function setupClickHandlers(context) {
 
     map.on('click', ALL_STOP_LAYERS, (e) => {
         if (window.ignoreMapClicks) return;
+        stopTracking();
         if (e.originalEvent) e.originalEvent._clickHandled = true;
 
         // Filter out unreachable stops if Filter is Active
@@ -796,6 +803,7 @@ export function setupClickHandlers(context) {
     map.on('click', (e) => {
         if (window.ignoreMapClicks) return;
         if (e.originalEvent && e.originalEvent._clickHandled) return;
+        stopTracking();
         if (window.hoveredMinibusSegmentId !== null && window.hoveredMinibusSegmentId !== undefined) return;
         if (window.minibusSegmentsEditor && window.minibusSegmentsEditor.isActive()) return;
 
@@ -817,20 +825,31 @@ export function setupClickHandlers(context) {
         if (isStop) return;
 
         // Click anywhere logic (falls through to reverse geocoding)
+        let cameraIntentId = invalidateMapCameraIntent();
         runMapAction(e, async () => {
-            const place = await resolvePlaceClickDetails({
-                features,
-                center: [e.lngLat.lng, e.lngLat.lat]
+            const clickCenter = (features[0]?.geometry?.type === 'Point' && Array.isArray(features[0].geometry.coordinates))
+                ? [features[0].geometry.coordinates[0], features[0].geometry.coordinates[1]]
+                : [e.lngLat.lng, e.lngLat.lat];
+
+            cameraIntentId = flyToPointInView(clickCenter, {
+                zoom: 17,
+                bottomAnchorSelector: '#info-panel',
+                duration: 900,
+                radiusMeters: 10
             });
 
-            // Immediate feedback: fly to and drop marker
-            map.flyTo({ center: place.center, zoom: 17 });
             if (window._searchPlaceMarker) {
                 window._searchPlaceMarker.remove();
             }
             window._searchPlaceMarker = new mapboxgl.Marker({ color: '#e74c3c' })
-                .setLngLat(place.center)
+                .setLngLat(clickCenter)
                 .addTo(map);
+
+            const place = await resolvePlaceClickDetails({
+                features,
+                center: clickCenter
+            });
+            if (!isCurrentMapCameraIntent(cameraIntentId)) return;
 
             showPlaceInfoSheet({
                 text: place.address,

@@ -48,11 +48,14 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         clearDestination: 'Clear destination',
         reverseDirections: 'Reverse directions',
         options: 'Options',
+        noBus: 'No bus',
+        noMetro: 'No metro',
+        noCableCar: 'No cable car',
         bus: 'Bus',
         metro: 'Metro',
         cableCar: 'Cable car',
         routePriority: 'Route priority',
-        faster: 'Faster',
+        faster: 'Default',
         lessWalking: 'Less walking',
         lessTransfers: 'Less transfers',
         timeAndDate: 'Time and date',
@@ -61,6 +64,8 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         arriveBy: 'Arrival',
         leaveNow: 'Leave now',
         now: 'Now',
+        reset: 'Reset',
+        leaveAt: 'Leave at',
         tripTime: 'Trip time',
         adjustTime: 'Adjust time',
         earlierTime: 'Earlier time',
@@ -71,12 +76,13 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         chooseDate: 'Choose date',
         previousMonth: 'Previous month',
         nextMonth: 'Next month',
-        today: 'today',
-        tomorrow: 'tomorrow',
-        routeOptionsReady: 'Route options will appear here after the planner is connected.',
+        today: 'Today',
+        tomorrow: 'Tomorrow',
+        cantGetRoutes: "Can't get the routes",
         routeOptionsEmpty: 'Select two points to preview route options.',
-        directionsFromHere: 'Directions from here',
-        directionsToHere: 'Directions to here',
+        directionsDisclaimer: 'Doesn’t support Rustavi buses and Mtatsminda Park cable-car and funicular yet',
+        directionsFromHere: 'From here',
+        directionsToHere: 'To here',
         location: 'Location',
         myLocation: 'My Location',
         rotation: 'Rotation',
@@ -189,11 +195,14 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         clearDestination: 'დანიშნულების გასუფთავება',
         reverseDirections: 'მიმართულებების გადაბრუნება',
         options: 'პარამეტრები',
+        noBus: 'ავტობუსის გარეშე',
+        noMetro: 'მეტროს გარეშე',
+        noCableCar: 'საბაგიროს გარეშე',
         bus: 'ავტობუსი',
         metro: 'მეტრო',
-        cableCar: 'გონდოლა',
+        cableCar: 'საბაგირო',
         routePriority: 'მარშრუტის პრიორიტეტი',
-        faster: 'სწრაფი',
+        faster: 'ნაგულისხმევი',
         lessWalking: 'ნაკლები სიარული',
         lessTransfers: 'ნაკლები გადაჯდომა',
         timeAndDate: 'დრო და თარიღი',
@@ -202,6 +211,8 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         arriveBy: 'ჩამოსვლა',
         leaveNow: 'ახლავე გასვლა',
         now: 'ახლა',
+        reset: 'განულება',
+        leaveAt: 'გასვლა',
         tripTime: 'მგზავრობის დრო',
         adjustTime: 'დროის შეცვლა',
         earlierTime: 'ადრე',
@@ -214,10 +225,11 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         nextMonth: 'შემდეგი თვე',
         today: 'დღეს',
         tomorrow: 'ხვალ',
-        routeOptionsReady: 'მარშრუტის ვარიანტები აქ გამოჩნდება, როგორც კი დამგეგმავი შეერთდება.',
+        cantGetRoutes: 'მარშრუტების აგება ვერ მოხერხდა',
         routeOptionsEmpty: 'აირჩიეთ ორი წერტილი მარშრუტის ვარიანტების სანახავად.',
-        directionsFromHere: 'მიმართულებები აქედან',
-        directionsToHere: 'მიმართულებები აქამდე',
+        directionsDisclaimer: 'რუსთავის ავტობუსები, მთაწმინდის საბაგირო და ფუნიკულიორი ჯერ არ არის მხარდაჭერილი',
+        directionsFromHere: 'აქედან',
+        directionsToHere: 'აქამდე',
         location: 'მდებარეობა',
         myLocation: 'ჩემი მდებარეობა',
         rotation: 'ბრუნვა',
@@ -330,11 +342,14 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         clearDestination: 'Очистить пункт назначения',
         reverseDirections: 'Поменять местами',
         options: 'Параметры',
+        noBus: 'Без автобуса',
+        noMetro: 'Без метро',
+        noCableCar: 'Без канатной дороги',
         bus: 'Автобус',
         metro: 'Метро',
         cableCar: 'Канатная дорога',
         routePriority: 'Приоритет маршрута',
-        faster: 'Быстрее',
+        faster: 'По умолчанию',
         lessWalking: 'Меньше ходьбы',
         lessTransfers: 'Меньше пересадок',
         timeAndDate: 'Время и дата',
@@ -343,6 +358,8 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         arriveBy: 'Прибытие',
         leaveNow: 'Выехать сейчас',
         now: 'Сейчас',
+        reset: 'Сбросить',
+        leaveAt: 'Выезд в',
         tripTime: 'Время поездки',
         adjustTime: 'Изменить время',
         earlierTime: 'Раньше',
@@ -353,12 +370,13 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         chooseDate: 'Выберите дату',
         previousMonth: 'Предыдущий месяц',
         nextMonth: 'Следующий месяц',
-        today: 'сегодня',
-        tomorrow: 'завтра',
-        routeOptionsReady: 'Варианты маршрута появятся здесь после подключения планировщика.',
+        today: 'Сегодня',
+        tomorrow: 'Завтра',
+        cantGetRoutes: 'Не удалось построить маршруты',
         routeOptionsEmpty: 'Выберите две точки, чтобы посмотреть варианты маршрута.',
-        directionsFromHere: 'Маршрут отсюда',
-        directionsToHere: 'Маршрут сюда',
+        directionsDisclaimer: 'Руставские автобусы, канатная дорога и фуникулер на Мтацминду пока не поддерживаются',
+        directionsFromHere: 'Отсюда',
+        directionsToHere: 'Сюда',
         location: 'Позиция',
         myLocation: 'Мое местоположение',
         rotation: 'Поворот',
@@ -779,7 +797,7 @@ export function applyStaticText() {
     setAriaLabel('directions-time-mode-select', t('tripMode'));
     setText('directions-time-mode-depart-option', t('departAt'));
     setText('directions-time-mode-arrive-option', t('arriveBy'));
-    setText('directions-now-btn', t('now'));
+    setText('directions-reset-btn', t('reset'));
     setAriaLabel('directions-time-input', t('tripTime'));
     setAriaLabel('directions-time-prev', t('earlierTime'));
     setAriaLabel('directions-time-next', t('laterTime'));
@@ -796,10 +814,13 @@ export function applyStaticText() {
     setText('directions-weekday-sat', t('weekdaySat'));
     setText('directions-weekday-sun', t('weekdaySun'));
     setText('directions-placeholder', t('routeOptionsEmpty'));
+    setText('directions-options-disclaimer', t('directionsDisclaimer'));
     setText('directions-context-from-text', t('directionsFromHere'));
     setText('directions-context-to-text', t('directionsToHere'));
     setText('place-dir-from-text', t('directionsFromHere'));
     setText('place-dir-to-text', t('directionsToHere'));
+    setText('stop-dir-from-text', t('directionsFromHere'));
+    setText('stop-dir-to-text', t('directionsToHere'));
     setAriaLabel('menu-btn', t('more'));
     setText('menu-ui-language-label', t('uiLanguage'));
     setText('menu-stop-names-label', t('stopNamesLanguage'));

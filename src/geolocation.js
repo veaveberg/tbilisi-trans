@@ -437,6 +437,63 @@ function getSmoothedFollowCoords(nextCoords) {
     return smoothedFollowCoords;
 }
 
+function getCenteringOffset() {
+    const panels = ['info-panel', 'route-info', 'directions-panel'];
+    let visiblePanel = null;
+    for (const id of panels) {
+        const p = document.getElementById(id);
+        if (!p || p.classList.contains('hidden')) continue;
+        const style = window.getComputedStyle(p);
+        if (style.display === 'none' || style.visibility === 'hidden' || p.getClientRects().length === 0) {
+            continue;
+        }
+        visiblePanel = p;
+        break;
+    }
+
+    if (!visiblePanel) {
+        console.log('[Viewport] getCenteringOffset: No visible panel. Offset is [0, 0]');
+        return [0, 0];
+    }
+
+    let bottomPadding = 0;
+    let method = '';
+    if (visiblePanel.classList.contains('sheet-collapsed')) {
+        bottomPadding = 80;
+        method = 'sheet-collapsed';
+    } else if (visiblePanel.classList.contains('sheet-peek')) {
+        bottomPadding = window.innerHeight * 0.25;
+        method = 'sheet-peek';
+    } else if (visiblePanel.classList.contains('sheet-half')) {
+        bottomPadding = window.innerHeight * 0.483;
+        method = 'sheet-half';
+    } else if (visiblePanel.classList.contains('sheet-full')) {
+        bottomPadding = window.innerHeight * 0.92;
+        method = 'sheet-full';
+    } else {
+        const rect = visiblePanel.getBoundingClientRect();
+        if (rect.height > 0 && rect.top > 0) {
+            bottomPadding = Math.max(0, window.innerHeight - rect.top);
+            method = `bounding-rect (height:${rect.height}, top:${rect.top})`;
+        } else {
+            bottomPadding = Math.min(visiblePanel.offsetHeight || 220, window.innerHeight * 0.42);
+            method = `fallback (offsetHeight:${visiblePanel.offsetHeight})`;
+        }
+    }
+
+    const offset = [0, -(bottomPadding / 2)];
+    console.log('[Viewport] getCenteringOffset:', {
+        visiblePanelId: visiblePanel.id,
+        visiblePanelClasses: Array.from(visiblePanel.classList),
+        innerHeight: window.innerHeight,
+        bottomPadding,
+        method,
+        offset
+    });
+
+    return offset;
+}
+
 // Helper to parse rotation from a transform string (matrix or rotate)
 function getRotationFromTransform(transform) {
     if (!transform || transform === 'none') return 0;
@@ -670,6 +727,7 @@ export function setupGeolocation(map) {
                 if (lastUserCoords) {
                     map.easeTo({
                         center: [lastUserCoords.lng, lastUserCoords.lat],
+                        offset: getCenteringOffset(),
                         duration: 500
                     });
                     if (isNative) {
@@ -722,7 +780,7 @@ export function setupGeolocation(map) {
                     let timeout = setTimeout(() => {
                         if (currentLocationState !== LOCATION_STATES.HEADING) {
                             isHeadingSupported = false;
-                            map.easeTo({ center: [lastUserCoords.lng, lastUserCoords.lat], duration: 500 });
+                            map.easeTo({ center: [lastUserCoords.lng, lastUserCoords.lat], offset: getCenteringOffset(), duration: 500 });
                         }
                     }, 1500);
 
@@ -745,11 +803,11 @@ export function setupGeolocation(map) {
                         attemptHeadingTransition();
                     }
                 } else {
-                    map.easeTo({ center: [lastUserCoords.lng, lastUserCoords.lat], duration: 500 });
+                    map.easeTo({ center: [lastUserCoords.lng, lastUserCoords.lat], offset: getCenteringOffset(), duration: 500 });
                 }
             } else if (currentLocationState === LOCATION_STATES.HEADING) {
                 currentLocationState = LOCATION_STATES.FOLLOW;
-                map.easeTo({ bearing: 0, duration: 500, center: [lastUserCoords.lng, lastUserCoords.lat] });
+                map.easeTo({ bearing: 0, duration: 500, center: [lastUserCoords.lng, lastUserCoords.lat], offset: getCenteringOffset() });
                 updateLocationIcon(locateBtn);
             }
         });
@@ -840,6 +898,7 @@ export function setupGeolocation(map) {
             if (lastUserCoords && wasManualInteraction && manualPixelDist > 1) {
                 const options = {
                     center: [lastUserCoords.lng, lastUserCoords.lat],
+                    offset: getCenteringOffset(),
                     duration: 500
                 };
                 if (currentLocationState === LOCATION_STATES.HEADING && latestHeading !== null) {
@@ -929,6 +988,7 @@ export function setupGeolocation(map) {
                 const targetZoom = 16;
                 map.jumpTo({
                     center: [coords.longitude, coords.latitude],
+                    offset: getCenteringOffset(),
                     zoom: targetZoom
                 });
                 smoothedFollowCoords = { lng: coords.longitude, lat: coords.latitude };
@@ -949,6 +1009,7 @@ export function setupGeolocation(map) {
             const smoothedCoords = getSmoothedFollowCoords({ lng: coords.longitude, lat: coords.latitude });
             map.easeTo({
                 center: [smoothedCoords.lng, smoothedCoords.lat],
+                offset: getCenteringOffset(),
                 duration: 500,
                 easing: (t) => t * (2 - t)
             });
@@ -992,6 +1053,7 @@ export function setupGeolocation(map) {
             path.includes('/bus') ||
             path.includes('/filtered') ||
             path.includes('/segment') ||
+            path.includes('/directions') ||
             hasMapHash ||
             !!window.currentStopId;
 

@@ -546,11 +546,45 @@ body.dark-mode .more-menu-dropdown {
     user-select: none;
 }
 
+.directions-options-summary-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.directions-options-icon {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    background-color: var(--text-main);
+    opacity: 0.58;
+    mask: url(/line.3.horizontal.decrease.circle.svg) no-repeat center / contain;
+    -webkit-mask: url(/line.3.horizontal.decrease.circle.svg) no-repeat center / contain;
+    flex-shrink: 0;
+    transition: background-color 0.2s ease, opacity 0.2s ease;
+}
+
+.directions-options-summary.directions-options-overridden {
+    color: var(--primary);
+}
+
+.directions-options-summary.directions-options-overridden .directions-options-icon {
+    background-color: var(--primary);
+    opacity: 1;
+    mask-image: url(/line.3.horizontal.decrease.circle.fill.svg);
+    -webkit-mask-image: url(/line.3.horizontal.decrease.circle.fill.svg);
+}
+
+.directions-options-overridden {
+    color: var(--primary);
+}
+
 .directions-options-summary::-webkit-details-marker {
     display: none;
 }
 
-.directions-options-summary img {
+.directions-options-chevron {
     width: 14px;
     height: 14px;
     opacity: 0.58;
@@ -558,7 +592,7 @@ body.dark-mode .more-menu-dropdown {
     filter: var(--icon-filter);
 }
 
-.directions-options-details[open] .directions-options-summary img {
+.directions-options-details[open] .directions-options-chevron {
     transform: rotate(90deg);
 }
 
@@ -582,7 +616,7 @@ body.dark-mode .more-menu-dropdown {
 }
 
 .directions-segmented {
-    margin: 0 12px 18px;
+    margin: 12px 12px 18px;
 }
 
 .directions-segmented .theme-option {
@@ -668,7 +702,7 @@ body.dark-mode .more-menu-dropdown {
     filter: var(--icon-filter);
 }
 
-.directions-now-btn {
+.directions-reset-btn {
     border: 0;
     background: transparent;
     color: var(--text-secondary);
@@ -678,13 +712,13 @@ body.dark-mode .more-menu-dropdown {
 }
 
 .directions-time-mode-select-shell,
-.directions-now-btn {
+.directions-reset-btn {
     padding: 0;
 }
 
 .directions-time-controls {
     display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.45fr);
+    grid-template-columns: 1fr 1fr;
     gap: 12px;
 }
 
@@ -743,6 +777,10 @@ body.dark-mode .more-menu-dropdown {
     color: var(--accent-color, #007aff);
 }
 
+.directions-clock-icon {
+    color: var(--text-secondary);
+}
+
 .directions-pill-nav {
     display: flex;
     align-items: center;
@@ -769,6 +807,13 @@ body.dark-mode .more-menu-dropdown {
     letter-spacing: -0.02em;
     padding: 0;
     text-align: left;
+}
+
+.directions-time-input::-webkit-calendar-picker-indicator,
+.directions-time-input::-webkit-clear-button,
+.directions-time-input::-webkit-inner-spin-button {
+    display: none;
+    -webkit-appearance: none;
 }
 
 .directions-time-input::selection {
@@ -839,7 +884,6 @@ body.dark-mode .more-menu-dropdown {
     font-size: 16px;
     font-weight: 600;
     text-align: center;
-    text-transform: lowercase;
 }
 
 .directions-calendar-weekdays,
@@ -854,7 +898,6 @@ body.dark-mode .more-menu-dropdown {
     color: var(--text-secondary);
     font-size: 13px;
     font-weight: 600;
-    text-transform: lowercase;
 }
 
 .directions-calendar-day {
@@ -1166,4 +1209,14 @@ body.dark-mode .directions-route-option .led-text.late-depot-time {
 
 .directions-suggestions.hidden {
     display: none;
+}
+
+.directions-options-disclaimer {
+    padding: 4px 0;
+    margin-top: 12px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+    text-align: left;
+    opacity: 0.75;
 }

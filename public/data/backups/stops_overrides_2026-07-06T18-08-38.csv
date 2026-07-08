@@ -3019,27 +3019,25 @@ id,name_en,name_en_override,name_ka,name_ka_override,name_ru_override,lat,lat_ov
 Separate ticket system!
 One-way ticket is 3₾ for residents (ID required) and 12₾ for other foreign citizens
 
-You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used for 2 people, maybe more)"
+You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used several people)"
 1:GONDOLA_MANUAL_2,,Mtatsminda Park Funicular Upper Station,,მთაწმინდის პარკის ფუნიკულიორის ზედა სადგური,,,41.69492,,44.78694,0,,,,GONDOLA,manual-gondola,"Everyday: 9:45–22:30
 
 Separate ticket system!
 One-way ticket is 3₾ for residents (ID required) and 12₾ for other foreign citizens
 
-You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used for 2 people, maybe more)"
-1:GONDOLA_MANUAL_3,,Mtatsminda Park Cable Car,,მთაწმინდის პარკი საბაგირო სადგური,,,41.69578,,44.78643,0,,,,GONDOLA,manual-gondola,"Sunday–Friday: 10–22:30
-Saturday: 12–22:30
+You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used several people)"
+1:GONDOLA_MANUAL_3,,Mtatsminda Park Cable Car,,მთაწმინდის პარკი საბაგირო სადგური,,,41.69578,,44.78643,0,,,,GONDOLA,manual-gondola,"11:00–22:30 (last checked in June 2026)
 
 Separate ticket system!
 One-way ticket is 3₾ for residents (ID required) and 12₾ for other foreign citizens
 
-You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used for 2 people, maybe more)"
-1:GONDOLA_MANUAL_4,,Rustaveli Cable Car,,რუსთაველი საბაგირო სადგური,,,41.70297,,44.79057,0,,,,GONDOLA,manual-gondola,"Sunday–Friday: 10–22:30
-Saturday: 12–22:30
+You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used several people)"
+1:GONDOLA_MANUAL_4,,Rustaveli Cable Car,,რუსთაველი საბაგირო სადგური,,,41.70297,,44.79057,0,,,,GONDOLA,manual-gondola,"11:00–22:30 (last checked in June 2026)
 
 Separate ticket system!
 One-way ticket is 3₾ for residents (ID required) and 12₾ for other foreign citizens
 
-You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used for 2 people, maybe more)"
+You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used several people)"
 1:metro_1_1,M/S Akhmeteli Theatre,,მ/ს ახმეტელის თეატრი,,,41.792064,,44.815908,,0,,,,,,
 1:metro_1_2,M/S Sarajisvhili,,მ/ს სარაჯიშვილი,,,41.783583,,44.799524,,0,,,,,,
 1:metro_1_3,M/S Guramishvili,,მ/ს გურამიშვილი,,,41.77509,,44.795235,,0,,,,,,
@@ -3111,6 +3109,7 @@ r82,21st microdistrict Nearby the building #12,,21-ე მკ/რნი №12 �
 r97,მესხიშვილის ქუჩა (მაღაზია „სპარის“ მიმდებარედ),,მესხიშვილის ქუჩა (მაღაზია „სპარის“ მიმდებარედ),,,41.564804,,44.983837,,204,204,,,,,
 r100,Todria Lane II nearby building #1,,თოდრიას II ჩიხი 1 კორპ მიმდებარედ,,,41.561395,,44.98558,,162,162,,,,,
 r103,Todria lane I,,თოდრიას I ჩიხი,,,41.55928,,44.986928,,155,155,,,,,
+r106,,,,,,,,,,,246,,,,,
 r109,People's Friendship Avenue #14,,ხალხთა მეგობრობის გამზირი №14,,,41.55374,,44.984489,,141,141,,,,,
 r113,People's Friendship Avenue (Heroes Square),,ხალხთა მეგობრობის გამზ. (გმირთა მოედანი),,,41.549886,,44.991716,,127,127,,,,,
 r116,Kostava Ave. N1,,კოსტავას გამზირი №1,,,41.545643,,45.004474,,106,106,,,,,
@@ -3128,6 +3127,7 @@ r171,Rustaveli Str. N44,,რუსთაველის ქუჩა №44,,,41.
 r174,Rustaveli Street (Chemist's House),,რუსთაველის ქუჩა (ქიმიკოსთა სახლი),,,41.550287,,45.015203,,206,206,,,,,
 r177,რუსთაველის ქუჩა (ბათუმის  სკვერის მოპირდაპირედ),,რუსთაველის ქუჩა (ბათუმის  სკვერის მოპირდაპირედ),,,41.546782,,45.012915,,206,206,,,,,
 r183,,,,,,,,,,,61,,,,,
+r186,,,,,,,,,,,63,,,,,
 r189,Todria Str. #5,,თოდრიას ქუჩა №5,,,41.558901,,44.987401,,331,331,,,,,
 r192,Todria Str. #15,,თოდრიას ქუჩა №15,,,41.561625,,44.985624,,336,336,,,,,
 r195,Todria Str. (Circle),,თოდრიის ქუჩა (წრე),,,41.564993,,44.984226,,304,304,,,,,

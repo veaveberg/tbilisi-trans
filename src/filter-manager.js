@@ -4,6 +4,7 @@ import { addToHistory } from './history.js';
 import * as api from './api.js';
 import { hydrateRouteDetails } from './fetch.js';
 import { shouldShowRoute } from './settings.js';
+import { flyToPointInView, invalidateMapCameraIntent } from './map-camera.js';
 // We need these icons. Assuming Vite setup allows importing them here too.
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg';
@@ -135,6 +136,7 @@ export class FilterManager {
 
         // Only fly to stop if not skipped (deep links handle camera with fitBounds)
         if (!skipFlyTo) {
+            invalidateMapCameraIntent();
             const hasMultipleOrigins = this.state.context === 'segment' &&
                 this.state.originIdsOverride &&
                 this.state.originIdsOverride.size > 1;
@@ -152,8 +154,6 @@ export class FilterManager {
             const allStops = this.dataProvider.getAllStops();
             const stop = allStops.find(s => s.id === currentStopId);
             if (stop) {
-                const currentZoom = this.map.getZoom();
-
                 // Enforce Zoom 14 for filter view to provide context, unless user is manually deeper?
                 // User requested "zoom out somewhat", implying a standard context view.
                 const targetZoom = 14;
@@ -167,10 +167,11 @@ export class FilterManager {
                 const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distance / R) + Math.cos(lat1) * Math.sin(distance / R) * Math.cos(rotation));
                 const lon2 = lon1 + Math.atan2(Math.sin(rotation) * Math.sin(distance / R) * Math.cos(lat1), Math.cos(distance / R) - Math.sin(lat1) * Math.sin(lat2));
 
-                this.map.flyTo({
-                    center: [lon2 * (180 / Math.PI), lat2 * (180 / Math.PI)],
+                flyToPointInView([lon2 * (180 / Math.PI), lat2 * (180 / Math.PI)], {
                     zoom: targetZoom,
+                    bottomAnchorSelector: '#info-panel',
                     duration: 1500,
+                    radiusMeters: 12,
                     essential: true
                 });
             }

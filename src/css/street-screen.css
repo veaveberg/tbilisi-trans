@@ -423,7 +423,7 @@
     padding-right: 14px;
     white-space: nowrap;
     animation: street-screen-marquee linear infinite;
-    text-shadow: var(--street-led-text-glow);
+    filter: drop-shadow(0 0 4px rgba(var(--street-led-glow-rgb), 0.55));
     animation-timing-function: steps(60, end);
     overflow: visible;
 }
@@ -448,7 +448,6 @@
     font-size: var(--street-led-numeric-font-size);
     padding-bottom: 2px;
     overflow: visible;
-    filter: none;
 }
 
 .street-screen-ticker-name {
@@ -539,14 +538,14 @@
     opacity: 0.6;
     font-size: var(--street-led-font-size);
     line-height: 14px;
-    text-shadow: var(--street-led-text-glow);
+    filter: drop-shadow(0 0 4px rgba(var(--street-led-glow-rgb), 0.55));
     transform: translateX(var(--street-led-text-offset-x));
 }
 
 .street-screen-empty--clock {
     justify-content: center;
     opacity: 1;
-    text-shadow: none;
+    filter: none;
 }
 
 .street-screen-empty-clock {

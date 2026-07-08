@@ -8,8 +8,9 @@ import { getRoutesForStopStatic, getStaticRouteDetails, MAPBOX_TOKEN } from './a
 import { getCurrentUiLanguage, getCurrentStopNamesLanguage, getCurrentMapLanguage, onLanguageChange, t } from './i18n.ts';
 import { getSegmentForStop, generateSegmentGeometry, generateConnectionGeometry, getConnectionKey } from './metro-utils.js';
 import { setMapFocus } from './map-interactions.js';
-import { getLastUserCoords } from './geolocation.js';
+import { getLastUserCoords, stopTracking } from './geolocation.js';
 import { fetchArrivals, getArrivalMinutesValue, formatArrivalDisplayValue, formatScheduledTime, shouldShowLateDepotWarning, getV3Schedule, isArrivalsLiveDataStale } from './arrivals.js';
+import { getBandPadding } from './map-camera.js';
 
 let metroSegments = null;
 let metroMidpoints = null;
@@ -212,7 +213,9 @@ const state = {
         mode: 'leaveNow',
         value: new Date(),
         calendarMonth: new Date(),
-        calendarOpen: false
+        calendarOpen: false,
+        tempValue: null,
+        tempMode: null
     }
 };
 
@@ -376,9 +379,16 @@ function getModeColor(mode, fallbackColor) {
 }
 
 function ensureDirectionsRouteLayers() {
-    if (!map || !map.isStyleLoaded()) return false;
+    if (!map) {
+        console.warn('[DirectionsPlot] ensureDirectionsRouteLayers called, but map is null');
+        return false;
+    }
+    const hasStyle = !!map.getStyle();
+    console.log(`[DirectionsPlot] ensureDirectionsRouteLayers called. hasStyle=${hasStyle}, isStyleLoaded=${map.isStyleLoaded()}`);
+    if (!hasStyle) return false;
 
     if (!map.getSource(DIRECTIONS_ROUTE_SOURCE_ID)) {
+        console.log(`[DirectionsPlot] Creating source: ${DIRECTIONS_ROUTE_SOURCE_ID}`);
         map.addSource(DIRECTIONS_ROUTE_SOURCE_ID, {
             type: 'geojson',
             data: EMPTY_FEATURE_COLLECTION
@@ -386,8 +396,10 @@ function ensureDirectionsRouteLayers() {
     }
 
     const beforeLayer = map.getLayer('stops-layer') ? 'stops-layer' : undefined;
+    console.log(`[DirectionsPlot] beforeLayer for placement: ${beforeLayer}`);
 
     if (!map.getLayer(DIRECTIONS_ROUTE_LAYER_ID)) {
+        console.log(`[DirectionsPlot] Creating layer: ${DIRECTIONS_ROUTE_LAYER_ID}`);
         map.addLayer({
             id: DIRECTIONS_ROUTE_LAYER_ID,
             type: 'line',
@@ -417,6 +429,7 @@ function ensureDirectionsRouteLayers() {
     }
 
     if (!map.getLayer(DIRECTIONS_ROUTE_WALK_LAYER_ID)) {
+        console.log(`[DirectionsPlot] Creating layer: ${DIRECTIONS_ROUTE_WALK_LAYER_ID}`);
         const isDark = document.body.classList.contains('dark-mode');
         map.addLayer({
             id: DIRECTIONS_ROUTE_WALK_LAYER_ID,
@@ -436,6 +449,7 @@ function ensureDirectionsRouteLayers() {
     }
 
     if (!map.getSource(DIRECTIONS_ROUTE_STOPS_SOURCE_ID)) {
+        console.log(`[DirectionsPlot] Creating source: ${DIRECTIONS_ROUTE_STOPS_SOURCE_ID}`);
         map.addSource(DIRECTIONS_ROUTE_STOPS_SOURCE_ID, {
             type: 'geojson',
             data: EMPTY_FEATURE_COLLECTION
@@ -443,6 +457,7 @@ function ensureDirectionsRouteLayers() {
     }
 
     if (!map.getLayer(DIRECTIONS_ROUTE_STOPS_LAYER_ID)) {
+        console.log(`[DirectionsPlot] Creating layer: ${DIRECTIONS_ROUTE_STOPS_LAYER_ID}`);
         map.addLayer({
             id: DIRECTIONS_ROUTE_STOPS_LAYER_ID,
             type: 'circle',
@@ -597,21 +612,17 @@ function buildRouteStopsFeatures(result, routeIndex = 0) {
 
 function fitDirectionsRoute(featureCollection) {
     const coords = featureCollection.features.flatMap((feature) => feature.geometry.coordinates || []);
-    if (!coords.length) return;
+    console.log(`[DirectionsPlot] fitDirectionsRoute called. Coordinates count: ${coords.length}`);
+    if (!coords.length) {
+        console.warn('[DirectionsPlot] fitDirectionsRoute: No coordinates to fit bounds to.');
+        return;
+    }
 
     const bounds = new mapboxgl.LngLatBounds();
     coords.forEach((coord) => bounds.extend(coord));
-    if (bounds.isEmpty()) return;
-
-    const panel = document.getElementById('directions-panel');
-    let panelHeight = 180;
-    if (panel && !panel.classList.contains('hidden')) {
-        const rect = panel.getBoundingClientRect();
-        if (rect.height > 0 && rect.top > 0) {
-            panelHeight = Math.max(0, window.innerHeight - rect.top);
-        } else {
-            panelHeight = Math.min(panel.offsetHeight || 220, window.innerHeight * 0.42);
-        }
+    if (bounds.isEmpty()) {
+        console.warn('[DirectionsPlot] fitDirectionsRoute: Computed bounds are empty.');
+        return;
     }
 
     const searchWrapper = document.querySelector('.search-wrapper');
@@ -623,32 +634,66 @@ function fitDirectionsRoute(featureCollection) {
         }
     }
 
+    const panelPadding = getBandPadding({
+        topAnchorSelector: '.search-wrapper',
+        bottomAnchorSelector: '#directions-panel',
+        topMargin: 20,
+        topFallback: topPadding,
+        bottomMargin: 16
+    });
+
+    console.log('[DirectionsPlot] Fitting map bounds (fitBounds) to:', bounds.toArray(), { panelPadding });
     map.fitBounds(bounds, {
-        padding: { top: topPadding, bottom: panelHeight + 36, left: 40, right: 40 },
+        padding: panelPadding,
         maxZoom: 15,
-        duration: 900
+        duration: 900,
+        retainPadding: false
     });
 }
 
 function renderDirectionsResult(result, { fit = true } = {}) {
+    console.log('[DirectionsPlot] renderDirectionsResult called:', { fit, hasResult: !!result, routesCount: result?.routes?.length });
     state.routing.result = result;
     if (!ensureDirectionsRouteLayers()) {
+        console.log('[DirectionsPlot] Style not fully loaded or layers not created. Delaying rendering until style.load.');
         map.once('style.load', () => renderDirectionsResult(result, { fit }));
         return;
     }
 
+    setRouteLayersVisibility(true);
+
     const featureCollection = buildRouteFeatures(result, state.routing.selectedRouteIndex);
-    map.getSource(DIRECTIONS_ROUTE_SOURCE_ID)?.setData(featureCollection);
+    console.log(`[DirectionsPlot] Generated route features (selected index: ${state.routing.selectedRouteIndex}):`, featureCollection.features.length, 'features');
+    const routeSource = map.getSource(DIRECTIONS_ROUTE_SOURCE_ID);
+    if (routeSource) {
+        routeSource.setData(featureCollection);
+        console.log(`[DirectionsPlot] Set data on source "${DIRECTIONS_ROUTE_SOURCE_ID}"`);
+    } else {
+        console.warn(`[DirectionsPlot] Source "${DIRECTIONS_ROUTE_SOURCE_ID}" not found on map!`);
+    }
 
     const stopsCollection = buildRouteStopsFeatures(result, state.routing.selectedRouteIndex);
-    map.getSource(DIRECTIONS_ROUTE_STOPS_SOURCE_ID)?.setData(stopsCollection);
+    console.log(`[DirectionsPlot] Generated route stops features:`, stopsCollection.features.length, 'features');
+    const stopsSource = map.getSource(DIRECTIONS_ROUTE_STOPS_SOURCE_ID);
+    if (stopsSource) {
+        stopsSource.setData(stopsCollection);
+        console.log(`[DirectionsPlot] Set data on source "${DIRECTIONS_ROUTE_STOPS_SOURCE_ID}"`);
+    } else {
+        console.warn(`[DirectionsPlot] Source "${DIRECTIONS_ROUTE_STOPS_SOURCE_ID}" not found on map!`);
+    }
 
     if (typeof setMapFocus === 'function') {
         setMapFocus(true);
     }
 
+    if (isDirectionsPanelVisible() && result?.routes?.length > 0) {
+        stopTracking();
+    }
+
     if (fit && featureCollection.features.length) {
         fitDirectionsRoute(featureCollection);
+    } else {
+        console.log('[DirectionsPlot] Skipping fitBounds:', { fit, featuresCount: featureCollection.features.length });
     }
 }
 
@@ -1480,6 +1525,24 @@ function buildRouteOptionElement(route, index, isSelected) {
         const strip = document.createElement('div');
         strip.className = 'directions-leg-strip';
 
+        if (state.time.mode === 'arriveBy' && route.startTime) {
+            const leaveItem = document.createElement('span');
+            leaveItem.className = 'directions-leg-item';
+            
+            const leaveLabel = document.createElement('span');
+            leaveLabel.className = 'directions-leg-label';
+            leaveLabel.textContent = `${t('leaveAt')} ${formatTimeShort(route.startTime)}`;
+            leaveItem.appendChild(leaveLabel);
+            strip.appendChild(leaveItem);
+
+            strip.appendChild(document.createTextNode(' '));
+            const sep = document.createElement('span');
+            sep.className = 'directions-leg-sep';
+            sep.textContent = '›';
+            strip.appendChild(sep);
+            strip.appendChild(document.createTextNode(' '));
+        }
+
         let busSegmentCount = 0;
         for (let i = 0; i < route.segments.length; i++) {
             const seg = route.segments[i];
@@ -1587,7 +1650,7 @@ function renderDirectionsStatus() {
     }
 
     if (state.routing.status === 'error') {
-        placeholder.textContent = state.routing.message || 'Directions request failed.';
+        placeholder.textContent = t('cantGetRoutes');
         placeholder.classList.remove('hidden');
         if (resultsContainer) resultsContainer.classList.add('hidden');
         stopDirectionsRefreshTimer();
@@ -1598,7 +1661,7 @@ function renderDirectionsStatus() {
         let routes = state.routing.result.routes || [];
 
         if (!routes.length) {
-            placeholder.textContent = 'No route options found.';
+            placeholder.textContent = t('cantGetRoutes');
             placeholder.classList.remove('hidden');
             if (resultsContainer) resultsContainer.classList.add('hidden');
             return;
@@ -1641,7 +1704,7 @@ function renderDirectionsStatus() {
         return;
     }
 
-    placeholder.textContent = t('routeOptionsReady');
+    placeholder.textContent = t('cantGetRoutes');
     placeholder.classList.remove('hidden');
     if (resultsContainer) resultsContainer.classList.add('hidden');
 }
@@ -1835,6 +1898,136 @@ function syncMarkerLabels() {
     });
 }
 
+
+function setupDraggableWithDelay(marker, map, delayMs = 300) {
+    const el = marker.getElement();
+    let pressTimer = null;
+    let startX, startY;
+    let isHoldActive = false;
+    let activePointerId = null;
+
+    // Prevent map's context menu from triggering on the marker
+    el.addEventListener('contextmenu', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+    });
+
+    // Marker is ALWAYS draggable: true so Mapbox binds its listeners at start of gesture
+    marker.setDraggable(true);
+
+    const onPointerDown = (e) => {
+        // DO NOT call e.stopPropagation() here to let Mapbox's map-level down event handler run!
+        // To prevent map panning during the 300ms hold window, we disable map controls immediately.
+
+        // Only left click for mouse/pointer
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        if (e.type === 'mousedown' && e.button !== 0) return;
+
+        // Reset state
+        isHoldActive = false;
+        activePointerId = e.pointerId !== undefined ? e.pointerId : null;
+
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        startX = clientX;
+        startY = clientY;
+
+        // Disable map controls immediately to freeze map panning/zooming during the hold timer
+        map.dragPan.disable();
+        map.scrollZoom.disable();
+        map.doubleClickZoom.disable();
+
+        clearTimeout(pressTimer);
+        pressTimer = setTimeout(() => {
+            isHoldActive = true;
+            el.classList.add('grabbing-ready');
+            
+            if (navigator.vibrate) {
+                navigator.vibrate(40);
+            }
+        }, delayMs);
+
+        // Intercept movements at window level before hold is complete
+        const onPointerMove = (moveEvt) => {
+            if (activePointerId !== null && moveEvt.pointerId !== undefined && moveEvt.pointerId !== activePointerId) return;
+
+            const moveX = moveEvt.touches ? moveEvt.touches[0].clientX : moveEvt.clientX;
+            const moveY = moveEvt.touches ? moveEvt.touches[0].clientY : moveEvt.clientY;
+            
+            const dx = moveX - startX;
+            const dy = moveY - startY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (!isHoldActive) {
+                if (distance > 6) {
+                    cancelDragHold();
+                } else {
+                    // Suppress event from reaching Mapbox window drag listeners
+                    moveEvt.stopImmediatePropagation();
+                    if (moveEvt.cancelable) {
+                        moveEvt.preventDefault();
+                    }
+                }
+            } else {
+                // Prevent mobile scroll bounce when dragging the marker
+                if (moveEvt.type === 'touchmove' && moveEvt.cancelable) {
+                    moveEvt.preventDefault();
+                }
+            }
+        };
+
+        const onPointerUp = (upEvt) => {
+            if (activePointerId !== null && upEvt.pointerId !== undefined && upEvt.pointerId !== activePointerId) return;
+            cleanup();
+        };
+
+        function cancelDragHold() {
+            clearTimeout(pressTimer);
+            
+            // Force Mapbox to release its active map-level drag listeners
+            marker._state = 'inactive';
+            map.off('mousemove', marker._onMove);
+            map.off('touchmove', marker._onMove);
+            map.off('mouseup', marker._onUp);
+            map.off('touchend', marker._onUp);
+
+            cleanup();
+        }
+
+        function cleanup() {
+            clearTimeout(pressTimer);
+            el.classList.remove('grabbing-ready');
+            
+            // Re-enable map controls
+            map.dragPan.enable();
+            map.scrollZoom.enable();
+            map.doubleClickZoom.enable();
+
+            window.removeEventListener('pointermove', onPointerMove, { capture: true });
+            window.removeEventListener('pointerup', onPointerUp, { capture: true });
+            window.removeEventListener('mousemove', onPointerMove, { capture: true });
+            window.removeEventListener('mouseup', onPointerUp, { capture: true });
+            window.removeEventListener('touchmove', onPointerMove, { capture: true });
+            window.removeEventListener('touchend', onPointerUp, { capture: true });
+            window.removeEventListener('touchcancel', onPointerUp, { capture: true });
+        }
+
+        // Always listen to all movement/release events to support both pointer and touch fallbacks on iOS
+        window.addEventListener('pointermove', onPointerMove, { capture: true });
+        window.addEventListener('pointerup', onPointerUp, { capture: true });
+        window.addEventListener('mousemove', onPointerMove, { capture: true });
+        window.addEventListener('mouseup', onPointerUp, { capture: true });
+        window.addEventListener('touchmove', onPointerMove, { capture: true, passive: false });
+        window.addEventListener('touchend', onPointerUp, { capture: true });
+        window.addEventListener('touchcancel', onPointerUp, { capture: true });
+    };
+
+    // Always listen to all down event types in capture phase to intercept regardless of engine preference
+    el.addEventListener('pointerdown', onPointerDown, { capture: true });
+    el.addEventListener('mousedown', onPointerDown, { capture: true });
+    el.addEventListener('touchstart', onPointerDown, { capture: true, passive: true });
+}
+
 function renderMarker(type) {
     const point = state[type];
     if (state.markers[type]) {
@@ -1851,6 +2044,8 @@ function renderMarker(type) {
     })
         .setLngLat([point.lng, point.lat])
         .addTo(map);
+
+    setupDraggableWithDelay(state.markers[type], map, 300);
 
     state.markers[type].on('dragend', () => {
         const lngLat = state.markers[type]?.getLngLat();
@@ -2031,11 +2226,19 @@ function openDirectionsSheet() {
     syncAllMarkerVisibility();
     requestAnimationFrame(syncAllMarkerPositions);
     updateDirectionsIconState(true);
+
+    if (state.routing.result) {
+        stopTracking();
+    }
 }
 
 function setRouteLayersVisibility(visible) {
-    if (!map) return;
+    if (!map) {
+        console.warn('[DirectionsPlot] Cannot set visibility: map is not initialized');
+        return;
+    }
     const value = visible ? 'visible' : 'none';
+    console.log(`[DirectionsPlot] Setting directions layers visibility to "${value}"`);
     const layers = [
         DIRECTIONS_ROUTE_CASING_LAYER_ID,
         DIRECTIONS_ROUTE_LAYER_ID,
@@ -2043,8 +2246,11 @@ function setRouteLayersVisibility(visible) {
         DIRECTIONS_ROUTE_STOPS_LAYER_ID
     ];
     layers.forEach((layer) => {
-        if (map.getLayer(layer)) {
+        const exists = !!map.getLayer(layer);
+        console.log(`[DirectionsPlot] Layer "${layer}" status: exists=${exists}`);
+        if (exists) {
             map.setLayoutProperty(layer, 'visibility', value);
+            console.log(`[DirectionsPlot] Set layer "${layer}" visibility to "${value}"`);
         }
     });
 }
@@ -2067,6 +2273,13 @@ export function updateDirectionsIconState(isActive) {
     }
 }
 
+export function redrawActiveDirections() {
+    if (state.routing.result) {
+        console.log('[DirectionsPlot] Redrawing active directions route');
+        renderDirectionsResult(state.routing.result, { fit: false });
+    }
+}
+
 export function openDirections() {
     state.isSuspended = false;
     if (!state.from && !state.to) {
@@ -2085,8 +2298,7 @@ export function openDirections() {
     }
     if (state.from && state.to) {
         if (state.routing.result) {
-            ensureDirectionsRouteLayers();
-            setRouteLayersVisibility(true);
+            renderDirectionsResult(state.routing.result, { fit: true });
         } else {
             scheduleDirectionsFetch({ delay: 0 });
         }
@@ -2114,19 +2326,7 @@ export function toggleDirections() {
         
         // Restore route layers visibility if we have a result
         if (state.routing.result) {
-            ensureDirectionsRouteLayers();
-            setRouteLayersVisibility(true);
-            const featureCollection = buildRouteFeatures(state.routing.result, state.routing.selectedRouteIndex);
-            map.getSource(DIRECTIONS_ROUTE_SOURCE_ID)?.setData(featureCollection);
-            const stopsCollection = buildRouteStopsFeatures(state.routing.result, state.routing.selectedRouteIndex);
-            map.getSource(DIRECTIONS_ROUTE_STOPS_SOURCE_ID)?.setData(stopsCollection);
-
-            if (typeof setMapFocus === 'function') {
-                setMapFocus(true);
-            }
-            if (featureCollection.features.length) {
-                fitDirectionsRoute(featureCollection);
-            }
+            renderDirectionsResult(state.routing.result, { fit: true });
         } else {
             // No result, check if we need to initialize default starting point
             if (!state.from && !state.to) {
@@ -2378,7 +2578,8 @@ function renderCalendar() {
 
     const monthDate = state.time.calendarMonth;
     const locale = getCurrentUiLanguage();
-    monthLabel.textContent = new Intl.DateTimeFormat(locale, { month: 'long' }).format(monthDate);
+    const monthName = new Intl.DateTimeFormat(locale, { month: 'long' }).format(monthDate);
+    monthLabel.textContent = monthName.charAt(0).toUpperCase() + monthName.slice(1);
     grid.innerHTML = '';
 
     const firstOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
@@ -2397,7 +2598,7 @@ function renderCalendar() {
         button.dataset.date = formatLocalInputValue(cellDate);
 
         button.classList.toggle('outside-month', cellDate.getMonth() !== monthDate.getMonth());
-        button.classList.toggle('selected', isSameDay(cellDate, state.time.value));
+        button.classList.toggle('selected', isSameDay(cellDate, state.time.tempValue || state.time.value));
         button.classList.toggle('today', isSameDay(cellDate, today));
         button.classList.toggle('weekend', cellDate.getDay() === 0 || cellDate.getDay() === 6);
         button.classList.toggle('disabled', startOfDay(cellDate) < minDate || startOfDay(cellDate) > maxDate);
@@ -2409,20 +2610,38 @@ function renderCalendar() {
         }).format(cellDate));
 
         button.addEventListener('click', () => {
-            const next = new Date(state.time.value);
+            const baseDate = state.time.tempValue || state.time.value;
+            const next = new Date(baseDate);
             next.setFullYear(cellDate.getFullYear(), cellDate.getMonth(), cellDate.getDate());
             state.time.calendarOpen = false;
-            setScheduledTime(next);
+            if (state.time.tempValue) {
+                state.time.tempValue = clampScheduledDate(next);
+                renderTimePicker();
+            } else {
+                setScheduledTime(next);
+            }
         });
 
         grid.appendChild(button);
     }
 }
 
+function commitTimeSelection() {
+    if (!state.time.tempValue) return;
+
+    const next = state.time.tempValue;
+    const mode = state.time.tempMode || (state.time.mode === 'leaveNow' ? 'departAt' : state.time.mode);
+
+    state.time.tempValue = null;
+    state.time.tempMode = null;
+
+    setScheduledTime(next, mode);
+}
+
 function renderTimePicker() {
     const dateDisplay = document.getElementById('directions-date-display');
     const modeSelect = document.getElementById('directions-time-mode-select');
-    const nowBtn = document.getElementById('directions-now-btn');
+    const resetBtn = document.getElementById('directions-reset-btn');
     const timePrevBtn = document.getElementById('directions-time-prev');
     const timeNextBtn = document.getElementById('directions-time-next');
     const datePrevBtn = document.getElementById('directions-date-prev');
@@ -2438,35 +2657,106 @@ function renderTimePicker() {
     const minMonth = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
     const maxMonth = new Date(maxDate.getFullYear(), maxDate.getMonth(), 1);
 
-    const isLeaveNow = state.time.mode === 'leaveNow';
-    const activeDate = isLeaveNow ? new Date() : state.time.value;
+    const isLeaveNow = state.time.mode === 'leaveNow' && !state.time.tempValue;
+    const activeDate = state.time.tempValue || (isLeaveNow ? new Date() : state.time.value);
     if (isLeaveNow) {
         state.time.value = activeDate;
         state.time.calendarMonth = new Date(activeDate.getFullYear(), activeDate.getMonth(), 1);
     }
 
     if (dateDisplay) dateDisplay.textContent = formatDateLabel(activeDate);
-    if (modeSelect) modeSelect.value = state.time.mode === 'arriveBy' ? 'arriveBy' : 'departAt';
+    
+    const displayMode = state.time.tempMode || state.time.mode;
+    if (modeSelect) modeSelect.value = displayMode === 'arriveBy' ? 'arriveBy' : 'departAt';
+    
     if (timeAndDateLabel) timeAndDateLabel.textContent = t('timeAndDate');
-    if (nowBtn) nowBtn.classList.toggle('hidden', state.time.mode === 'arriveBy');
+    
+    if (resetBtn) resetBtn.classList.toggle('hidden', isLeaveNow);
+
     if (datePill) {
         datePill.classList.toggle('is-open', state.time.calendarOpen);
         datePill.setAttribute('aria-expanded', String(state.time.calendarOpen));
     }
     if (calendar) calendar.classList.toggle('hidden', !state.time.calendarOpen);
     if (timeInput) {
-        timeInput.value = formatTimeLabel(activeDate);
+        if (isLeaveNow) {
+            if (timeInput.type !== 'text') {
+                timeInput.type = 'text';
+            }
+            timeInput.value = t('now');
+        } else {
+            if (timeInput.type !== 'time') {
+                timeInput.type = 'time';
+            }
+            timeInput.value = formatTimeLabel(activeDate);
+        }
         timeInput.readOnly = false;
     }
 
-    if (timePrevBtn) timePrevBtn.disabled = isBeforeMin(snapTimeToFiveMinuteSlot(state.time.value, -1));
-    if (timeNextBtn) timeNextBtn.disabled = isAfterMax(snapTimeToFiveMinuteSlot(state.time.value, 1));
-    if (datePrevBtn) datePrevBtn.disabled = isBeforeMin(addDays(state.time.value, -1));
-    if (dateNextBtn) dateNextBtn.disabled = isAfterMax(addDays(state.time.value, 1));
+    if (timePrevBtn) timePrevBtn.disabled = isBeforeMin(snapTimeToFiveMinuteSlot(activeDate, -1));
+    if (timeNextBtn) timeNextBtn.disabled = isAfterMax(snapTimeToFiveMinuteSlot(activeDate, 1));
+    if (datePrevBtn) datePrevBtn.disabled = isBeforeMin(addDays(activeDate, -1));
+    if (dateNextBtn) dateNextBtn.disabled = isAfterMax(addDays(activeDate, 1));
     if (calendarPrevBtn) calendarPrevBtn.disabled = state.time.calendarMonth <= minMonth;
     if (calendarNextBtn) calendarNextBtn.disabled = state.time.calendarMonth >= maxMonth;
 
     renderCalendar();
+    updateDirectionsOptionsSummary();
+}
+
+function updateDirectionsOptionsSummary() {
+    const labelEl = document.getElementById('directions-options-summary-label');
+    if (!labelEl) return;
+
+    const overrides = [];
+
+    const selectedModes = getSelectedModeValues() || [];
+    const hasBus = selectedModes.includes('BUS');
+    const hasMetro = selectedModes.includes('SUBWAY') || selectedModes.includes('METRO');
+    const hasCableCar = selectedModes.includes('GONDOLA');
+
+    if (!hasBus) {
+        overrides.push(t('noBus'));
+    }
+    if (!hasMetro) {
+        overrides.push(t('noMetro'));
+    }
+    if (!hasCableCar) {
+        overrides.push(t('noCableCar'));
+    }
+
+    const optimize = getSelectedOptimizeValue();
+    if (optimize === 'lessWalking') {
+        overrides.push(t('lessWalking'));
+    } else if (optimize === 'lessTransfers') {
+        overrides.push(t('lessTransfers'));
+    }
+
+    if (state.time.mode !== 'leaveNow') {
+        const isLeaveNow = state.time.mode === 'leaveNow';
+        const activeDate = isLeaveNow ? new Date() : state.time.value;
+        const timeStr = formatTimeLabel(activeDate);
+        const dateLabel = formatDateLabel(activeDate);
+        
+        let timeLabel = '';
+        if (dateLabel === t('today')) {
+            timeLabel = `${t(state.time.mode)} ${timeStr}`;
+        } else {
+            timeLabel = `${t(state.time.mode)} ${dateLabel} ${timeStr}`;
+        }
+        overrides.push(timeLabel);
+    }
+
+    const summaryEl = labelEl.closest('.directions-options-summary');
+    if (overrides.length > 0) {
+        labelEl.textContent = overrides.join(', ');
+        labelEl.classList.add('directions-options-overridden');
+        summaryEl?.classList.add('directions-options-overridden');
+    } else {
+        labelEl.textContent = t('options');
+        labelEl.classList.remove('directions-options-overridden');
+        summaryEl?.classList.remove('directions-options-overridden');
+    }
 }
 
 function syncTimeFromRadio() {
@@ -2513,7 +2803,7 @@ export function initDirectionsUI() {
     const clearFromBtn = document.getElementById('directions-clear-from');
     const clearToBtn = document.getElementById('directions-clear-to');
     const timeModeSelect = document.getElementById('directions-time-mode-select');
-    const nowBtn = document.getElementById('directions-now-btn');
+    const resetBtn = document.getElementById('directions-reset-btn');
     const timePrevBtn = document.getElementById('directions-time-prev');
     const timeNextBtn = document.getElementById('directions-time-next');
     const datePrevBtn = document.getElementById('directions-date-prev');
@@ -2538,13 +2828,12 @@ export function initDirectionsUI() {
     let startPoint = null;
 
     function startLongPressTimer(event) {
-        if (longPressTimeout) {
-            clearTimeout(longPressTimeout);
-        }
-        hideContextMenu();
+        cancelLongPressTimer();
+        // Don't trigger context menu if we tap on route marker elements
+        if (event.originalEvent?.target?.closest('.directions-pin')) return;
+        
         startPoint = event.point;
         longPressTimeout = setTimeout(() => {
-            longPressTimeout = null;
             showContextMenu(event);
         }, 600);
     }
@@ -2609,34 +2898,109 @@ export function initDirectionsUI() {
     clearToBtn?.addEventListener('click', () => clearPoint('to'));
 
     timeModeSelect?.addEventListener('change', (event) => {
-        setTimeMode(event.target.value === 'arriveBy' ? 'arriveBy' : 'departAt');
+        const nextMode = event.target.value === 'arriveBy' ? 'arriveBy' : 'departAt';
+        if (state.time.tempValue) {
+            state.time.tempMode = nextMode;
+            renderTimePicker();
+        } else {
+            setTimeMode(nextMode);
+        }
     });
+
+    const initTimeInputTempState = () => {
+        if (!state.time.tempValue) {
+            state.time.tempValue = new Date(state.time.value);
+            state.time.tempMode = state.time.mode === 'leaveNow' ? 'departAt' : state.time.mode;
+            renderTimePicker();
+        }
+    };
 
     timeInput?.addEventListener('focus', () => {
-        if (state.time.mode === 'leaveNow') {
-            setTimeMode('departAt');
+        initTimeInputTempState();
+        if (timeInput.type === 'time' && typeof timeInput.showPicker === 'function') {
+            try {
+                timeInput.showPicker();
+            } catch (e) {
+                console.error('showPicker failed', e);
+            }
         }
     });
 
-    timeInput?.addEventListener('change', () => {
-        const next = parseTimeInputValue(timeInput.value, state.time.value);
-        if (!next) {
-            renderTimePicker();
-            return;
+    timeInput?.addEventListener('click', () => {
+        initTimeInputTempState();
+        if (timeInput.type === 'time' && typeof timeInput.showPicker === 'function') {
+            try {
+                timeInput.showPicker();
+            } catch (e) {
+                console.error('showPicker failed', e);
+            }
         }
-        setScheduledTime(next);
     });
 
-    nowBtn?.addEventListener('click', () => {
+    const handleTimeInputChange = () => {
+        if (!state.time.tempValue) return;
+        const parsed = parseTimeInputValue(timeInput.value, state.time.tempValue);
+        if (parsed) {
+            state.time.tempValue = parsed;
+        }
+    };
+
+    timeInput?.addEventListener('change', handleTimeInputChange);
+    timeInput?.addEventListener('input', handleTimeInputChange);
+
+    timeInput?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            commitTimeSelection();
+            timeInput.blur();
+        }
+    });
+
+    timeInput?.addEventListener('blur', () => {
+        setTimeout(() => {
+            if (state.time.tempValue) {
+                commitTimeSelection();
+            }
+        }, 150);
+    });
+
+    resetBtn?.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+    });
+
+    resetBtn?.addEventListener('click', () => {
         state.time.value = new Date();
         state.time.calendarOpen = false;
+        state.time.tempValue = null;
+        state.time.tempMode = null;
         setTimeMode('leaveNow');
     });
 
-    timePrevBtn?.addEventListener('click', () => setScheduledTime(snapTimeToFiveMinuteSlot(state.time.value, -1)));
-    timeNextBtn?.addEventListener('click', () => setScheduledTime(snapTimeToFiveMinuteSlot(state.time.value, 1)));
-    datePrevBtn?.addEventListener('click', () => setScheduledTime(addDays(state.time.value, -1)));
-    dateNextBtn?.addEventListener('click', () => setScheduledTime(addDays(state.time.value, 1)));
+    const adjustTime = (direction) => {
+        const baseDate = state.time.tempValue || state.time.value;
+        const next = snapTimeToFiveMinuteSlot(baseDate, direction);
+        if (state.time.tempValue) {
+            state.time.tempValue = clampScheduledDate(next);
+            renderTimePicker();
+        } else {
+            setScheduledTime(next);
+        }
+    };
+
+    const adjustDate = (days) => {
+        const baseDate = state.time.tempValue || state.time.value;
+        const next = addDays(baseDate, days);
+        if (state.time.tempValue) {
+            state.time.tempValue = clampScheduledDate(next);
+            renderTimePicker();
+        } else {
+            setScheduledTime(next);
+        }
+    };
+
+    timePrevBtn?.addEventListener('click', () => adjustTime(-1));
+    timeNextBtn?.addEventListener('click', () => adjustTime(1));
+    datePrevBtn?.addEventListener('click', () => adjustDate(-1));
+    dateNextBtn?.addEventListener('click', () => adjustDate(1));
     datePill?.addEventListener('click', () => setCalendarOpen(!state.time.calendarOpen));
     calendarPrevBtn?.addEventListener('click', () => {
         state.time.calendarMonth = new Date(
@@ -2667,6 +3031,7 @@ export function initDirectionsUI() {
             syncSegmentedActiveState('directions-optimize');
             syncDirectionsUrl();
             scheduleDirectionsFetch();
+            updateDirectionsOptionsSummary();
         });
     });
 
@@ -2674,6 +3039,7 @@ export function initDirectionsUI() {
         input.addEventListener('change', () => {
             syncDirectionsUrl();
             scheduleDirectionsFetch();
+            updateDirectionsOptionsSummary();
         });
     });
 

@@ -17,7 +17,7 @@ export const settings = {
     showMinibuses: true,
     showMinibusSegments: false,
     showRustaviBuses: true,
-    showPoiLabels: false,
+    showPoiLabels: true,
     pageScale: 1.0
 };
 
@@ -598,7 +598,7 @@ async function openNativeSettings(options = {}) {
         show3DBuildings: getStoredBoolean('show3DBuildings', false),
         show3DTerrain: getStoredBoolean('show3DTerrain', false),
         exaggerateTerrain: getStoredBoolean('exaggerateTerrain', false),
-        showPoiLabels: getStoredBoolean('showPoiLabels', false),
+        showPoiLabels: getStoredBoolean('showPoiLabels', true),
         theme: localStorage.getItem('theme') || 'system',
         pageScale: currentScale,
         icloudSyncEnabled: getStoredBoolean('icloudSyncEnabled', true),
@@ -1057,7 +1057,8 @@ function addMapSection() {
     // Load stored values
     const show3DBuildings = localStorage.getItem('show3DBuildings') === 'true'; // Default false
     const show3DTerrain = localStorage.getItem('show3DTerrain') === 'true'; // Default false
-    const showPoiLabels = localStorage.getItem('showPoiLabels') === 'true'; // Default false
+    const showPoiLabels = localStorage.getItem('showPoiLabels') !== 'false'; // Default true
+    settings.showPoiLabels = showPoiLabels;
 
     const section = document.createElement('div');
     section.id = 'map-section';

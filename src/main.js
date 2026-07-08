@@ -29,7 +29,8 @@ import { arrivalsController } from './arrivals-controller.js';
 import { getIntervalDescription } from './intervals.js';
 import { initMinibusSegmentsEditor, loadMinibusSegmentEditsFromFile } from './minibus-segments-editor.js';
 import { StreetScreenController } from './street-screen.js';
-import { applyDirectionsUrlState, initDirectionsUI, isDirectionsContextActive } from './directions.js';
+import { applyDirectionsUrlState, initDirectionsUI, isDirectionsContextActive, redrawActiveDirections, setPoint } from './directions.js';
+import { flyToPointInView, beginMapCameraIntent, invalidateMapCameraIntent, isCurrentMapCameraIntent, getBandPadding } from './map-camera.js';
 
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
@@ -57,6 +58,17 @@ let stopToRoutesMap = new Map();
 const hydratedStops = new Set();
 let lastRouteUpdateId = 0;
 const redirectMap = new Map();
+
+function cancelPendingFilterBounds() {
+    window._pendingFilterBounds = null;
+    window._pendingFilterBoundsCameraRequestId = null;
+    window._pendingFilterBoundsScheduled = false;
+}
+
+function invalidateScheduledMapCamera() {
+    invalidateMapCameraIntent();
+    cancelPendingFilterBounds();
+}
 
 const getPublicWebBaseUrl = () => {
     const configured = import.meta.env.VITE_PUBLIC_WEB_BASE_URL;
@@ -93,6 +105,21 @@ window.addEventListener('pageScaleChange', (e) => {
     const scale = e.detail;
     document.documentElement.style.setProperty('--ui-scale', scale);
     document.documentElement.classList.toggle('ui-scaled-down', scale < 1);
+});
+
+// Prevent focus-induced viewport scrolling on mobile
+window.addEventListener('scroll', () => {
+    if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+    }
+});
+window.addEventListener('focusin', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+        setTimeout(() => {
+            window.scrollTo(0, 0);
+            document.body.scrollTop = 0;
+        }, 0);
+    }
 });
 const hubMap = new Map();
 const hubSourcesMap = new Map();
@@ -1103,6 +1130,7 @@ async function initializeMapData(stopsData, routesData) {
             const validStopLayers = ALL_STOP_LAYERS.filter(id => map.getLayer(id));
             if (map.queryRenderedFeatures(e.point, { layers: validStopLayers }).length > 0) return;
 
+            stopTracking();
             if (e.originalEvent) e.originalEvent._clickHandled = true;
 
             const feature = e.features?.[0];
@@ -1116,10 +1144,14 @@ async function initializeMapData(stopsData, routesData) {
                 lat = feature.geometry.coordinates[1];
             }
 
-            runMapAction(e, () => {
-                // Fly to the exact POI coordinates
-                map.flyTo({ center: [lng, lat], zoom: 17 });
+            const cameraIntentId = flyToPointInView([lng, lat], {
+                zoom: 17,
+                bottomAnchorSelector: '#info-panel',
+                duration: 900,
+                radiusMeters: 10
+            });
 
+            runMapAction(e, () => {
                 // Drop a highlighted red marker directly at the snapped coordinates
                 if (window._searchPlaceMarker) {
                     window._searchPlaceMarker.remove();
@@ -1133,12 +1165,15 @@ async function initializeMapData(stopsData, routesData) {
                     const place = await resolvePlaceClickDetails({
                         feature,
                         center: [lng, lat],
-                        name: feature.properties?.name || feature.properties?.name_en || feature.properties?.name_primary || 'Point of Interest',
+                        name: feature.properties?.name || feature.properties?.name_en || feature.properties?.name_primary,
                         assumePoi: true
                     });
+                    if (!isCurrentMapCameraIntent(cameraIntentId)) {
+                        return;
+                    }
 
                     showPlaceInfoSheet({
-                        text: place.text,
+                        text: place.hasRealName ? place.text : place.address,
                         place_name: place.description,
                         center: place.center,
                         extent: null,
@@ -1173,6 +1208,9 @@ async function initializeMapData(stopsData, routesData) {
     document.body.classList.remove('loading');
     setTimeout(() => {
         map.resize();
+        if (isDirectionsContextActive()) {
+            redrawActiveDirections();
+        }
         // This fixes the issue where "Fresh Load" resets the layer styles, undoing deep link dimming.
         if (window.currentStopId) {
             const parsed = Router.parse();
@@ -1786,7 +1824,8 @@ async function loadMinibusSegments() {
                             right: 50
                         },
                         maxZoom: 16,
-                        duration: 900
+                        duration: 900,
+                        retainPadding: false
                     });
                 }
 
@@ -2045,6 +2084,9 @@ window.addEventListener('themeChanged', (e) => {
         if (window.currentRoute && routePanelVisible) {
             updateRouteView(window.currentRoute, { suppressPanel: true });
         }
+        if (isDirectionsContextActive()) {
+            redrawActiveDirections();
+        }
     }, 100);
 });
 
@@ -2138,13 +2180,15 @@ function fitFilterBounds(originStop, targetIds) {
 
     // Store the bounds to fit - only the last one will be used
     window._pendingFilterBounds = bounds;
+    window._pendingFilterBoundsCameraRequestId = beginMapCameraIntent();
 
     // Schedule fitBounds to run when map is idle (only once)
     if (!window._pendingFilterBoundsScheduled) {
         window._pendingFilterBoundsScheduled = true;
 
         const fitWhenReady = () => {
-            if (window._pendingFilterBounds) {
+            const cameraRequestId = window._pendingFilterBoundsCameraRequestId;
+            if (isCurrentMapCameraIntent(cameraRequestId) && window._pendingFilterBounds) {
                 const b = window._pendingFilterBounds;
 
                 // Get panel height for bottom padding, but cap it to avoid overflow
@@ -2153,40 +2197,30 @@ function fitFilterBounds(originStop, targetIds) {
                 const maxPadding = Math.min(window.innerHeight * 0.4, 300);
                 const panelHeight = Math.min(rawPanelHeight, maxPadding);
 
-                // Temporarily restore original map methods (fitBounds internally uses flyTo)
-                const origMethods = window._originalMapMethods;
-                if (origMethods) {
-                    map.flyTo = origMethods.flyTo;
-                    map.jumpTo = origMethods.jumpTo;
-                    map.easeTo = origMethods.easeTo;
-                }
-
-                map.fitBounds(b, {
+                const camera = map.cameraForBounds(b, {
                     padding: {
                         top: 100,
                         bottom: panelHeight + 60,
                         left: 50,
                         right: 50
                     },
-                    maxZoom: 16,
-                    duration: 1200
+                    maxZoom: 16
                 });
-
-                // Re-apply no-op overrides so auto-locate doesn't center
-                if (origMethods) {
-                    map.flyTo = () => map;
-                    map.jumpTo = () => map;
-                    map.easeTo = () => map;
+                if (camera) {
+                    map.flyTo({
+                        ...camera,
+                        duration: 1200
+                    });
                 }
 
-                window._pendingFilterBounds = null;
-                window._pendingFilterBoundsScheduled = false;
+                cancelPendingFilterBounds();
             }
         };
 
         map.once('idle', fitWhenReady);
         setTimeout(() => {
-            if (window._pendingFilterBounds) {
+            const cameraRequestId = window._pendingFilterBoundsCameraRequestId;
+            if (isCurrentMapCameraIntent(cameraRequestId) && window._pendingFilterBounds) {
                 fitWhenReady();
             }
         }, 2000);
@@ -2444,7 +2478,14 @@ map.on('moveend', () => {
 
 async function showStopInfo(stop, addToStack = true, flyToStop = false, updateURL = true, options = {}) {
     closeAllMoreMenus();
+    invalidateScheduledMapCamera();
+    invalidateMapCameraIntent();
     const { suppressPanel = false, forceRoutesRefresh = false, fromFavorites = false } = options;
+
+    if (window._searchPlaceMarker) {
+        window._searchPlaceMarker.remove();
+        window._searchPlaceMarker = null;
+    }
 
     // Stop location tracking if we are selecting something specific
     stopTracking();
@@ -2528,6 +2569,8 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         if (map.getSource(id)) map.getSource(id).setData({ type: 'FeatureCollection', features: [] });
     });
 
+    let flyTarget = null;
+
     if (stop.id) {
         if (window.selectDevStop) window.selectDevStop(stop.id);
 
@@ -2535,16 +2578,6 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
 
         console.log('[showStopInfo] flyToStop:', flyToStop, 'stop.lon:', stop.lon, 'stop.lat:', stop.lat);
         if (flyToStop && stop.lon && stop.lat) {
-            console.log('[showStopInfo] Executing flyTo to:', stop.lon, stop.lat);
-
-            // Restore original map methods if they were overridden by auto-show location marker
-            if (window._originalMapMethods) {
-                map.flyTo = window._originalMapMethods.flyTo;
-                map.jumpTo = window._originalMapMethods.jumpTo;
-                map.easeTo = window._originalMapMethods.easeTo;
-            }
-
-            const offsetY = window.innerWidth <= 600 ? -(window.innerHeight * 0.05) : 0;
             const currentZoom = map.getZoom();
             // Zoom in closer for metro (to see segment labels)
             let targetZoom = stop.savedZoom || (currentZoom > 16 ? currentZoom : 16);
@@ -2558,11 +2591,10 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                 targetLat = stop.segmentCenterLat;
             }
 
-            map.flyTo({
+            flyTarget = {
                 center: [targetLon, targetLat],
-                zoom: targetZoom,
-                offset: [0, offsetY]
-            });
+                zoom: targetZoom
+            };
         }
 
         if (stop.lon && stop.lat) {
@@ -2709,8 +2741,10 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
     }
 
     const editBtn = document.getElementById('btn-edit-stop');
+    const stopDirsContainer = document.getElementById('stop-directions-container');
 
     if (isMetro) {
+        if (stopDirsContainer) stopDirsContainer.classList.add('hidden');
         if (editBtn) editBtn.classList.add('hidden');
         if (filterBtn) filterBtn.classList.add('hidden');
         handleMetroStop(stop, panel, nameEl, listEl, {
@@ -2723,6 +2757,7 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         applyFavoritesBackButtonsIfNeeded();
         return;
     } else {
+        if (stopDirsContainer) stopDirsContainer.classList.remove('hidden');
         metro.stopMetroTicker();
         const hasWriteAccess = (location.hostname === 'localhost' || location.hostname.startsWith('192.168.')) && import.meta.env.DEV;
         if (editBtn) {
@@ -2733,11 +2768,51 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
             const textEl = filterBtn.querySelector('.filter-text');
             if (textEl) textEl.textContent = t('filterByDestination');
         }
+
+        const stopDirFromBtn = document.getElementById('stop-dir-from');
+        const stopDirToBtn = document.getElementById('stop-dir-to');
+        if (stopDirFromBtn && stopDirToBtn) {
+            const newFromBtn = stopDirFromBtn.cloneNode(true);
+            const newToBtn = stopDirToBtn.cloneNode(true);
+            stopDirFromBtn.parentNode.replaceChild(newFromBtn, stopDirFromBtn);
+            stopDirToBtn.parentNode.replaceChild(newToBtn, stopDirToBtn);
+
+            newFromBtn.addEventListener('click', () => {
+                setPoint('from', {
+                    lat: stop.lat,
+                    lng: stop.lon,
+                    label: stop.name
+                });
+                setSheetState(panel, 'hidden');
+            });
+
+            newToBtn.addEventListener('click', () => {
+                setPoint('to', {
+                    lat: stop.lat,
+                    lng: stop.lon,
+                    label: stop.name
+                });
+                setSheetState(panel, 'hidden');
+            });
+        }
     }
 
     setSheetState(panel, 'half');
     updateBackButtons();
     applyFavoritesBackButtonsIfNeeded();
+
+    if (flyTarget) {
+        requestAnimationFrame(() => {
+            if (!flyTarget) return;
+            console.log('[showStopInfo] Executing flyTo to:', flyTarget.center[0], flyTarget.center[1]);
+            flyToPointInView(flyTarget.center, {
+                zoom: flyTarget.zoom,
+                bottomAnchorSelector: '#info-panel',
+                duration: 900,
+                radiusMeters: 12
+            });
+        });
+    }
 
     // Gondola stops: show arrivals only when the API returns real data for this exact stop.
     // Skip static/equivalent stop fallbacks to avoid unrelated route leakage.
@@ -3865,6 +3940,8 @@ let currentPatternIndex = 0;
 // busUpdateInterval declared at top scope
 
 async function showRouteOnMap(route, addToStack = true, options = {}) {
+    console.log('[RoutePlot] showRouteOnMap called:', { routeShortName: route?.shortName, routeId: route?.id, addToStack, options });
+    invalidateScheduledMapCamera();
     // Stop location tracking if we are selecting something specific
     stopTracking();
     if (filterManager?.state) {
@@ -3881,6 +3958,7 @@ async function showRouteOnMap(route, addToStack = true, options = {}) {
         // If explicit startZoom provided (e.g. from Deep Link where map is flying), use it.
         // Otherwise capture current zoom.
         top.data.savedZoom = options.startZoom || map.getZoom();
+        console.log('[RoutePlot] Saved stop view zoom level:', top.data.savedZoom);
     }
 
     if (addToStack) addToHistory('route', route);
@@ -3907,8 +3985,11 @@ async function showRouteOnMap(route, addToStack = true, options = {}) {
 async function updateRouteView(route, options = {}) {
     closeAllMoreMenus();
     syncFavoriteButtonState();
+    const routeName = route?.shortName || route?.customShortName || 'Unknown';
+    const routeId = route?.id || 'Unknown';
     try {
         const requestId = ++lastRouteUpdateId; // Start new request
+        console.log(`[RoutePlot] Starting route view update for ${routeName} (ID: ${routeId}, requestId: ${requestId})`);
         const liveBusSessionId = resetLiveBusSession();
 
         // Close route edit panel if open (to prevent showing stale data)
@@ -4001,6 +4082,7 @@ async function updateRouteView(route, options = {}) {
                 .filter(layer => layer.id.startsWith('route') || layer.id.startsWith('live-buses'))
                 .map(layer => layer.id);
 
+            console.log('[RoutePlot] Removing existing route layers:', layersToRemove);
             layersToRemove.forEach(id => {
                 if (map.getLayer(id)) map.removeLayer(id);
             });
@@ -4008,27 +4090,41 @@ async function updateRouteView(route, options = {}) {
         // Explicitly remove sources (Dynamic)
         // Note: map.getStyle().sources returns an object { id: sourceDef }
         const sources = style ? style.sources : {};
+        console.log('[RoutePlot] Checking for route/live-bus sources to remove...');
         Object.keys(sources).forEach(id => {
             if (id.startsWith('route') || id.startsWith('live-buses')) {
-                if (map.getSource(id)) map.removeSource(id);
+                if (map.getSource(id)) {
+                    console.log(`[RoutePlot] Removing source: ${id}`);
+                    map.removeSource(id);
+                }
             }
         });
 
         // Helper to perform the actual rendering based on fetched data
         const renderPhase = async (isOptimistic = false) => {
             const strategy = isOptimistic ? 'cache-only' : 'cache-first';
+            console.log(`[RoutePlot] Entering renderPhase (${isOptimistic ? 'Optimistic' : 'Live'}, strategy: ${strategy})`);
 
             // 1. Fetch Route Details (v3) to get patterns
             let routeDetails;
             try {
                 routeDetails = await api.fetchRouteDetailsV3(route.id, { strategy });
             } catch (e) {
+                console.warn(`[RoutePlot] fetchRouteDetailsV3 failed for phase ${isOptimistic ? 'Optimistic' : 'Live'}:`, e.message);
                 if (!isOptimistic) throw e;
                 return false;
             }
-            if (!routeDetails || requestId !== lastRouteUpdateId) return false;
+            if (!routeDetails) {
+                console.warn(`[RoutePlot] No routeDetails returned for route ID ${route.id}`);
+                return false;
+            }
+            if (requestId !== lastRouteUpdateId) {
+                console.warn(`[RoutePlot] Aborting renderPhase: requestId mismatch (${requestId} !== ${lastRouteUpdateId})`);
+                return false;
+            }
 
-            const patterns = routeDetails.patterns;
+            const patterns = routeDetails.patterns || [];
+            console.log(`[RoutePlot] Fetched ${patterns.length} raw patterns for route ID ${route.id}`);
 
             // --- RESTORED LOOP LOGIC ---
             // Pre-process patterns to split loops into virtual directions
@@ -4052,6 +4148,7 @@ async function updateRouteView(route, options = {}) {
                             activeOverrides.virtualTerminusStopId;
                     }
                     const virtuals = RouteGeometry.generateVirtualPatterns(p, stops, route.longName, forcedId);
+                    console.log(`[RoutePlot] Split loop pattern (${p.patternSuffix}) into ${virtuals.length} virtual patterns`);
                     processedPatterns.push(...virtuals);
                 } else {
                     processedPatterns.push(p);
@@ -4059,6 +4156,7 @@ async function updateRouteView(route, options = {}) {
             }
             routeDetails.patterns = processedPatterns;
             route.patterns = processedPatterns;
+            console.log(`[RoutePlot] Processed patterns count: ${processedPatterns.length}`);
             // ---------------------------
 
             // Auto-Direction Logic:
@@ -4066,6 +4164,7 @@ async function updateRouteView(route, options = {}) {
             if (options.initialDirectionIndex !== undefined && processedPatterns[options.initialDirectionIndex]) {
                 currentPatternIndex = options.initialDirectionIndex;
                 directionFound = true;
+                console.log(`[RoutePlot] Selected direction index ${currentPatternIndex} from initialDirectionIndex option`);
             } else if (options.targetHeadsign && processedPatterns.length > 0) {
                 const normalizedTarget = options.targetHeadsign.toLowerCase().trim();
                 const matchedIndex = processedPatterns.findIndex(p =>
@@ -4074,6 +4173,7 @@ async function updateRouteView(route, options = {}) {
                 if (matchedIndex !== -1) {
                     currentPatternIndex = matchedIndex;
                     directionFound = true;
+                    console.log(`[RoutePlot] Selected direction index ${currentPatternIndex} matching target headsign "${options.targetHeadsign}"`);
                 }
             }
 
@@ -4085,7 +4185,10 @@ async function updateRouteView(route, options = {}) {
                     })));
 
                     const allStopsData = await Promise.all(stopsPromises);
-                    if (requestId !== lastRouteUpdateId) return false;
+                    if (requestId !== lastRouteUpdateId) {
+                        console.warn('[RoutePlot] Aborting pattern matching due to request preemption');
+                        return false;
+                    }
 
                     const matchedIndex = processedPatterns.findIndex(p => {
                         const data = allStopsData.find(d => d.suffix === p.patternSuffix);
@@ -4108,8 +4211,11 @@ async function updateRouteView(route, options = {}) {
                     if (matchedIndex !== -1) {
                         currentPatternIndex = matchedIndex;
                         directionFound = true;
+                        console.log(`[RoutePlot] Selected direction index ${currentPatternIndex} matching stopId "${options.fromStopId}"`);
                     }
-                } catch (e) { }
+                } catch (e) {
+                    console.warn('[RoutePlot] Auto-direction pattern matching failed:', e.message);
+                }
             }
 
             if (!processedPatterns[currentPatternIndex]) {
@@ -4117,11 +4223,18 @@ async function updateRouteView(route, options = {}) {
             }
 
             const currentPattern = processedPatterns[currentPatternIndex];
-            if (!currentPattern) return false;
+            console.log(`[RoutePlot] Final selected pattern index: ${currentPatternIndex}, suffix: ${currentPattern?.patternSuffix}`);
+            if (!currentPattern) {
+                console.warn('[RoutePlot] Aborting: No current pattern found to plot');
+                return false;
+            }
 
             // Fetch stops for current pattern to get origin → destination
             const currentPatternStops = await api.fetchRouteStopsV3(route.id, currentPattern.patternSuffix, { strategy });
-            if (requestId !== lastRouteUpdateId) return false;
+            if (requestId !== lastRouteUpdateId) {
+                console.warn('[RoutePlot] Aborting after currentPatternStops fetch due to preemption');
+                return false;
+            }
 
             const destinationHeadsign = getPatternHeadsign(route, currentPatternIndex, currentPattern.headsign);
             let originHeadsign = '';
@@ -4276,8 +4389,23 @@ async function updateRouteView(route, options = {}) {
 
             // 2. Fetch Polylines (Current & Ghost)
             const allSuffixes = processedPatterns.map(p => p.patternSuffix).join(',');
-            const polylineData = await api.fetchRoutePolylineV3(route.id, allSuffixes, { strategy });
-            if (!polylineData || requestId !== lastRouteUpdateId) return false;
+            let polylineData;
+            try {
+                polylineData = await api.fetchRoutePolylineV3(route.id, allSuffixes, { strategy });
+            } catch (e) {
+                console.warn(`[RoutePlot] fetchRoutePolylineV3 failed for phase ${isOptimistic ? 'Optimistic' : 'Live'}:`, e.message);
+                if (!isOptimistic) throw e;
+                return false;
+            }
+
+            if (!polylineData) {
+                console.warn(`[RoutePlot] No polyline data returned for route ID ${route.id}`);
+                return false;
+            }
+            if (requestId !== lastRouteUpdateId) {
+                console.warn('[RoutePlot] Aborting before rendering due to preemption');
+                return false;
+            }
 
             // Plot Ghost Route
             processedPatterns.forEach(p => {
@@ -4289,6 +4417,7 @@ async function updateRouteView(route, options = {}) {
 
                     if (ghostCoords) {
                         const ghostId = `route-ghost-${p.patternSuffix}`;
+                        console.log(`[RoutePlot] Adding/updating ghost route source: ${ghostId} (${ghostCoords.length} points)`);
                         if (!map.getSource(ghostId)) {
                             map.addSource(ghostId, {
                                 type: 'geojson',
@@ -4310,13 +4439,31 @@ async function updateRouteView(route, options = {}) {
             if (Array.isArray(currEntry)) coordinates = currEntry;
             else if (currEntry && currEntry.encodedValue) coordinates = api.decodePolyline(currEntry.encodedValue);
 
-            if (coordinates) {
-                if (map.getSource('route')) {
-                    map.getSource('route').setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: coordinates } });
-                } else {
-                    map.addSource('route', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coordinates } } });
-                }
+            console.log(`[RoutePlot] Current route active coordinates status:`, {
+                hasCoords: !!coordinates,
+                length: coordinates?.length || 0
+            });
 
+            // Re-create or update main 'route' source safely
+            // Note: If coordinates are missing, we still initialize source to prevent Mapbox error.
+            if (!map.getSource('route')) {
+                map.addSource('route', {
+                    type: 'geojson',
+                    data: coordinates 
+                        ? { type: 'Feature', geometry: { type: 'LineString', coordinates: coordinates } }
+                        : { type: 'FeatureCollection', features: [] }
+                });
+                console.log('[RoutePlot] Created new "route" map source');
+            } else {
+                map.getSource('route').setData(
+                    coordinates 
+                        ? { type: 'Feature', geometry: { type: 'LineString', coordinates: coordinates } }
+                        : { type: 'FeatureCollection', features: [] }
+                );
+                console.log('[RoutePlot] Updated existing "route" map source data');
+            }
+
+            if (coordinates && coordinates.length > 0) {
                 if (!isOptimistic || !window._routeBoundsFit) {
                     const viewBounds = map.getBounds();
                     const sampleStep = Math.max(1, Math.floor(coordinates.length / 200));
@@ -4334,35 +4481,49 @@ async function updateRouteView(route, options = {}) {
                     const forceFit = options.fitToRoute || options.routeSource === 'deepLink' || options.routeSource === 'search';
                     const shouldFit = !options.preserveBounds && (forceFit || !isRouteOnScreen);
 
-                    if (shouldFit && coordinates.length > 0) {
+                    console.log('[RoutePlot] Camera fit assessment:', { isRouteOnScreen, forceFit, shouldFit, preserveBounds: options.preserveBounds });
+
+                    if (shouldFit) {
                         const bounds = new mapboxgl.LngLatBounds();
                         coordinates.forEach(coord => bounds.extend(coord));
-                        const panel = document.getElementById('route-info');
-                        const rawPanelHeight = panel ? panel.offsetHeight : 200;
-                        const maxPadding = Math.min(window.innerHeight * 0.35, 250);
-                        const panelHeight = Math.min(rawPanelHeight, maxPadding);
-                        const origMethods = window._originalMapMethods;
-                        if (origMethods) { map.flyTo = origMethods.flyTo; map.jumpTo = origMethods.jumpTo; map.easeTo = origMethods.easeTo; }
-                        map.fitBounds(bounds, { padding: { top: 80, bottom: panelHeight + 40, left: 40, right: 40 }, maxZoom: 15, duration: 1200 });
-                        if (origMethods) { map.flyTo = () => map; map.jumpTo = () => map; map.easeTo = () => map; }
+                        console.log('[RoutePlot] Fitting bounds (fitBounds) for route:', bounds.toArray());
+                        map.fitBounds(bounds, {
+                            padding: getBandPadding({ bottomAnchorSelector: '#route-info' }),
+                            maxZoom: 15,
+                            duration: 1200,
+                            retainPadding: false
+                        });
                         window._routeBoundsFit = true;
                     } else if (options.centerOnStop && options.centerOnStop.lat && options.centerOnStop.lon && !options.preserveBounds) {
-                        const offsetY = window.innerWidth <= 600 ? -(window.innerHeight * 0.05) : 0;
-                        map.flyTo({ center: [options.centerOnStop.lon, options.centerOnStop.lat], zoom: 14, offset: [0, offsetY], duration: 1500 });
+                        const center = [options.centerOnStop.lon, options.centerOnStop.lat];
+                        console.log('[RoutePlot] Centering on stop:', center);
+                        flyToPointInView(center, {
+                            zoom: 14,
+                            bottomAnchorSelector: '#route-info',
+                            duration: 1500,
+                            radiusMeters: 12
+                        });
                         window._routeBoundsFit = true;
                     } else if (map.getZoom() > 14.5 && !options.preserveBounds) {
+                        console.log('[RoutePlot] Easing zoom out to 14');
                         map.easeTo({ zoom: 14, duration: 800 });
                     }
                 }
+            } else {
+                console.warn('[RoutePlot] Active pattern coordinates are missing or empty');
             }
 
             // 3. Fetch Stops for "Bumps"
             const stopsData = await api.fetchRouteStopsV3(route.id, patternSuffix, { strategy });
-            if (requestId !== lastRouteUpdateId) return false;
+            if (requestId !== lastRouteUpdateId) {
+                console.warn('[RoutePlot] Aborting before rendering stops due to preemption');
+                return false;
+            }
+            console.log(`[RoutePlot] Fetched ${stopsData?.length || 0} stops for the active pattern`);
 
             const stopsGeoJSON = {
                 type: 'FeatureCollection',
-                features: stopsData.map(stop => {
+                features: (stopsData || []).map(stop => {
                     const sId = String(stop.id);
                     const normId = redirectMap.get(sId) || sId;
                     const existingStop = allStops.find(s => s.id === normId);
@@ -4380,12 +4541,14 @@ async function updateRouteView(route, options = {}) {
 
             // Layers
             if (!map.getLayer('route')) {
+                console.log('[RoutePlot] Adding "route" map layer');
                 map.addLayer({
                     id: 'route', type: 'line', source: 'route', layout: { 'line-join': 'round', 'line-cap': 'round' },
                     paint: { 'line-color': getRouteDisplayColor(route), 'line-width': 12, 'line-opacity': 0.8, 'line-emissive-strength': 1 }
                 });
             }
             if (!map.getLayer('route-stops')) {
+                console.log('[RoutePlot] Adding "route-stops" map layer');
                 map.addLayer({
                     id: 'route-stops', type: 'circle', source: 'route-stops',
                     paint: { 'circle-color': '#ffffff', 'circle-radius': 3, 'circle-stroke-width': 0, 'circle-opacity': 1, 'circle-emissive-strength': 1 }
@@ -4400,6 +4563,7 @@ async function updateRouteView(route, options = {}) {
                     !!window.currentRoute &&
                     String(window.currentRoute.id) === String(route.id) &&
                     isRoutePanelVisible();
+                console.log('[RoutePlot] Starting live bus tracking loop for route ID:', route.id);
                 updateLiveBuses(route.id, patternSuffix, liveColor, { shouldRender: canRenderLiveBuses });
                 busUpdateInterval = setInterval(() => {
                     if (document.hidden) return;
@@ -4411,6 +4575,7 @@ async function updateRouteView(route, options = {}) {
             if (options.fromStopId) {
                 const highlightStop = allStops.find(s => String(s.id) === String(options.fromStopId));
                 if (highlightStop && highlightStop.lon && highlightStop.lat) {
+                    console.log(`[RoutePlot] Highlighting stop ID ${options.fromStopId} on map`);
                     if (!map.getSource('selected-stop')) {
                         map.addSource('selected-stop', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
                     }
@@ -4467,6 +4632,7 @@ async function updateRouteView(route, options = {}) {
                 map.getSource('selected-stop').setData({ type: 'FeatureCollection', features: [] });
             }
 
+            console.log('[RoutePlot] Completed renderPhase successfully');
             return true;
         };
 
@@ -4474,10 +4640,15 @@ async function updateRouteView(route, options = {}) {
         window._routeBoundsFit = false; // Internal flag to prevent double-fit
 
         // Phase 1: Optimistic (Silent if fails)
+        console.log('[RoutePlot] Launching Phase 1 (Optimistic)');
         const hitCache = await renderPhase(true);
-        if (requestId !== lastRouteUpdateId) return;
+        if (requestId !== lastRouteUpdateId) {
+            console.log('[RoutePlot] Request preempted during Phase 1');
+            return;
+        }
 
         // Phase 2: Live
+        console.log('[RoutePlot] Launching Phase 2 (Live/Network)');
         await renderPhase(false);
 
         // Move highlight layer to top
@@ -5056,7 +5227,7 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
     } finally {
         clearHistory(); // Clear history on close
         Router.update(null, false, [], getMapHash());
-        map.flyTo({ pitch: 0 }); // REMOVED ZOOM
+        map.easeTo({ pitch: 0, duration: 250, essential: true });
     }
 });
 
@@ -5076,7 +5247,7 @@ document.getElementById('close-route-info').addEventListener('click', (e) => {
 
     // Also reset URL when closing route info
     Router.update(null, false, [], getMapHash());
-    map.flyTo({ pitch: 0 }); // REMOVED ZOOM
+    map.easeTo({ pitch: 0, duration: 250, essential: true });
 });
 
 function clearRoute() {

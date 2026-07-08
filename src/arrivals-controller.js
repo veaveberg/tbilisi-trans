@@ -93,9 +93,7 @@ class ArrivalsController {
             console.warn('[ArrivalsController] Live fetch failed:', e);
             // Keep showing scheduled data if available
         } finally {
-            if (requestId === this.requestSeq) {
-                updateArrivalsLoadingState(false);
-            }
+            updateArrivalsLoadingState(false);
         }
     }
 
@@ -172,6 +170,10 @@ class ArrivalsController {
         this.stopId = null;
         this.arrivals = [];
         this.timestamp = 0;
+
+        // Force reset the loading state
+        window._arrivalsLoadingCount = 0;
+        updateArrivalsLoadingState(false);
     }
 }
 
