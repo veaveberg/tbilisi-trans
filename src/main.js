@@ -1029,7 +1029,13 @@ function resumeAppActivity() {
         try { arrivalsController.refresh(); } catch (e) { }
     }
     if (wasTrackingBeforePause) {
-        try { refreshLocationMarker(map, { preserveCurrentZoom: true, suppressCameraUpdate: true }); } catch (e) { }
+        try {
+            refreshLocationMarker(map, {
+                preserveCurrentZoom: true,
+                suppressCameraUpdate: true,
+                recenterAfterUpdate: true
+            });
+        } catch (e) { }
         if (typeof trackingZoomBeforePause === 'number') {
             setTimeout(() => {
                 if (!isTrackingActive()) return;
@@ -1041,7 +1047,7 @@ function resumeAppActivity() {
                         easing: (t) => t
                     });
                 }
-            }, 0);
+            }, 700);
         }
     }
     try {
@@ -2476,6 +2482,26 @@ map.on('moveend', () => {
 });
 
 
+function areStopIdsEquivalent(idA, idB) {
+    const a = String(idA || '').trim();
+    const b = String(idB || '').trim();
+    if (!a || !b) return false;
+    if (a === b) return true;
+    const cleanA = a.includes(':') ? a.split(':').pop() : a;
+    const cleanB = b.includes(':') ? b.split(':').pop() : b;
+    if (cleanA === cleanB) return true;
+    const canonicalA = getCanonicalMergedStopId(a);
+    const canonicalB = getCanonicalMergedStopId(b);
+    if (canonicalA === canonicalB) return true;
+    const equivA = typeof getEquivalentStops === 'function' ? getEquivalentStops(a, false) : [];
+    const equivCleanA = equivA.map(id => String(id).includes(':') ? String(id).split(':').pop() : String(id));
+    if (equivCleanA.includes(cleanB) || equivCleanA.includes(b)) return true;
+    const equivB = typeof getEquivalentStops === 'function' ? getEquivalentStops(b, false) : [];
+    const equivCleanB = equivB.map(id => String(id).includes(':') ? String(id).split(':').pop() : String(id));
+    if (equivCleanB.includes(cleanA) || equivCleanB.includes(a)) return true;
+    return false;
+}
+
 async function showStopInfo(stop, addToStack = true, flyToStop = false, updateURL = true, options = {}) {
     closeAllMoreMenus();
     invalidateScheduledMapCamera();
@@ -2837,6 +2863,71 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         arrivals.resetStopRouteFilter(stop.id);
         window.lastRoutes = [];
         window.lastArrivals = [];
+
+        // Pre-select route filter if clicking a boarding or transfer stop in directions mode
+        if (isDirectionsContextActive() && stop.id) {
+            console.log(`[DirectionsFilter] Directions active. Clicked stop ID: ${stop.id}`);
+            const transferPoints = typeof window.getActiveDirectionsTransferPoints === 'function'
+                ? window.getActiveDirectionsTransferPoints()
+                : [];
+            console.log(`[DirectionsFilter] Active directions transferPoints:`, JSON.stringify(transferPoints));
+            const clickedStopCanonical = getCanonicalMergedStopId(stop.id);
+            console.log(`[DirectionsFilter] Clicked stop canonical ID: ${clickedStopCanonical}`);
+            const matchedPt = transferPoints.find(p => p.stopId && areStopIdsEquivalent(p.stopId, stop.id));
+            console.log(`[DirectionsFilter] matchedPt:`, matchedPt);
+            
+            if (matchedPt) {
+                let routeShortNames = [];
+                
+                // Attempt to read route short names from the rendered directions results list in DOM
+                const resultsContainer = document.getElementById('directions-results');
+                if (resultsContainer) {
+                    const selectedOption = resultsContainer.querySelector('.directions-route-option.selected');
+                    if (selectedOption) {
+                        const legElements = Array.from(selectedOption.querySelectorAll('.directions-leg-item'));
+                        const matchedLeg = legElements.find(el => {
+                            const legStopId = el.getAttribute('data-stop-id');
+                            return legStopId && areStopIdsEquivalent(legStopId, stop.id);
+                        });
+                        if (matchedLeg) {
+                            const routeSpans = matchedLeg.querySelectorAll('.directions-leg-route-num');
+                            routeShortNames = Array.from(routeSpans).map(span => {
+                                return span.dataset.routeShortName || (span.firstChild ? span.firstChild.textContent.trim() : span.textContent.trim()).split(' ')[0];
+                            }).filter(Boolean);
+                            console.log(`[DirectionsFilter] Retrieved route short names from DOM:`, routeShortNames);
+                        }
+                    }
+                }
+                
+                // Fallback to the primary route if DOM lookup yielded nothing
+                if (routeShortNames.length === 0 && matchedPt.filterRouteShortName) {
+                    routeShortNames = [matchedPt.filterRouteShortName];
+                    console.log(`[DirectionsFilter] Fallback to primary route short name:`, routeShortNames);
+                }
+                
+                if (routeShortNames.length > 0) {
+                    const resolvedRouteIds = [];
+                    routeShortNames.forEach(shortName => {
+                        const resolvedRoute = resolveRouteByShortName(shortName, {
+                            preferredStopId: stop.id,
+                            preferBus: matchedPt.filterRouteMode !== 'SUBWAY'
+                        });
+                        console.log(`[DirectionsFilter] Resolved route for ${shortName}:`, resolvedRoute);
+                        if (resolvedRoute && resolvedRoute.id) {
+                            resolvedRouteIds.push(String(resolvedRoute.id));
+                        }
+                    });
+                    if (resolvedRouteIds.length > 0) {
+                        console.log(`[DirectionsFilter] Auto-applying filters for route IDs:`, resolvedRouteIds, `(Stop: ${stop.id})`);
+                        arrivals.setStopRouteFilterIds(resolvedRouteIds, stop.id);
+                    } else {
+                        console.log(`[DirectionsFilter] Could not resolve any route IDs for shortNames:`, routeShortNames);
+                    }
+                }
+            } else {
+                console.log(`[DirectionsFilter] Clicked stop is not a boarding or transfer stop.`);
+            }
+        }
     }
     if (isDifferentStop || forceRoutesRefresh) {
         const equivalentIds = getEquivalentStops(stop.id, false);
@@ -2914,6 +3005,8 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         });
     }
 }
+
+window.showStopInfo = showStopInfo;
 
 function getRouteDisplayColor(route) {
     if (!route) return 'var(--primary)';

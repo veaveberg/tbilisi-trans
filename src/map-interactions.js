@@ -43,6 +43,10 @@ export function runMapAction(event, action) {
 }
 
 export function setMapFocus(active) {
+    // Keep map dimmed/focused if directions display is active
+    if (!active && typeof window.isDirectionsContextActive === 'function' && window.isDirectionsContextActive()) {
+        active = true;
+    }
     if (active && window.isFilterModeActive === true) {
         active = false;
     }
@@ -238,6 +242,85 @@ export function setMapFocus(active) {
         map.setPaintProperty('stops-label-selected', 'text-opacity', selectedLabelOpacity);
         map.setPaintProperty('stops-label-selected', 'text-color', labelColor);
         map.setPaintProperty('stops-label-selected', 'text-halo-color', haloColor);
+    }
+
+    // Custom scrim (dimming) layer over basemap style to dim POIs and labels
+    const DIM_SOURCE_ID = 'map-focus-dim-source';
+    const DIM_LAYER_ID = 'map-focus-dim-layer';
+
+    if (map) {
+        if (active) {
+            // Ensure the GeoJSON source for world bounds exists
+            if (!map.getSource(DIM_SOURCE_ID)) {
+                map.addSource(DIM_SOURCE_ID, {
+                    type: 'geojson',
+                    data: {
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Polygon',
+                            coordinates: [[
+                                [-180, -90],
+                                [180, -90],
+                                [180, 90],
+                                [-180, 90],
+                                [-180, -90]
+                            ]]
+                        }
+                    }
+                });
+            }
+
+            // Ensure the fill layer exists
+            if (!map.getLayer(DIM_LAYER_ID)) {
+                map.addLayer({
+                    id: DIM_LAYER_ID,
+                    type: 'fill',
+                    source: DIM_SOURCE_ID,
+                    slot: 'top',
+                    paint: {
+                        'fill-color': isDark ? '#1e293b' : '#ffffff',
+                        'fill-opacity': 0.45,
+                        'fill-emissive-strength': 1
+                    }
+                });
+            } else {
+                // Update fill color for theme switches and make it visible
+                map.setPaintProperty(DIM_LAYER_ID, 'fill-color', isDark ? '#1e293b' : '#ffffff');
+                map.setLayoutProperty(DIM_LAYER_ID, 'visibility', 'visible');
+            }
+
+            // Move the dim layer dynamically before our custom overlays
+            const candidateLayers = [
+                'directions-route-casing',
+                'directions-route-line',
+                'directions-route-walk-line',
+                'directions-route-stops-layer',
+                'stops-layer',
+                'stops-layer-circle',
+                'stops-highlight',
+                'metro-layer-circle',
+                'metro-layer-label'
+            ];
+            let beforeId = undefined;
+            for (const id of candidateLayers) {
+                if (map.getLayer(id)) {
+                    beforeId = id;
+                    break;
+                }
+            }
+            if (beforeId) {
+                try {
+                    map.moveLayer(DIM_LAYER_ID, beforeId);
+                } catch (e) {
+                    console.warn('[MapFocus] Failed to move dim layer:', e);
+                }
+            }
+        } else {
+            // Hide the dim layer if it exists
+            if (map.getLayer(DIM_LAYER_ID)) {
+                map.setLayoutProperty(DIM_LAYER_ID, 'visibility', 'none');
+            }
+        }
     }
 
 }

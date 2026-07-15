@@ -171,11 +171,13 @@ export function initArrivals(dependencies) {
 }
 
 export function resetStopRouteFilter(stopId = null) {
+    console.log(`[ArrivalsFilter] resetStopRouteFilter called for stopId: ${stopId}`);
     selectedStopRouteIds = new Set();
     selectedStopRouteFilterStopId = stopId ? String(stopId) : null;
 }
 
 export function setStopRouteFilterIds(routeIds = [], stopId = null) {
+    console.log(`[ArrivalsFilter] setStopRouteFilterIds called with routeIds:`, routeIds, `for stopId: ${stopId}`);
     selectedStopRouteIds = new Set(
         Array.isArray(routeIds)
             ? routeIds.map(id => String(id).trim()).filter(Boolean)

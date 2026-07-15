@@ -34,6 +34,14 @@ let latestHeading = null;
 let latestWebRawHeading = null;
 let lastIndicatorRotation = null;
 let cumulativeIndicatorRotation = 0;
+let displayedIndicatorRotation = null;
+let targetIndicatorRotation = null;
+let headingIndicatorAnimationFrame = null;
+let headingIndicatorAnimationLastTs = null;
+let displayedMapBearing = null;
+let targetMapBearing = null;
+let mapBearingAnimationFrame = null;
+let mapBearingAnimationLastTs = null;
 let isHeadingSupported = false;
 let isWaitingForFirstLocation = false;
 let isAutoFlyOnLaunch = false;
@@ -49,10 +57,16 @@ const TBILISI_REGION_BBOX = Object.freeze({
 });
 const FOLLOW_SMOOTHING_FACTOR = 0.35;
 const FOLLOW_SNAP_DISTANCE_METERS = 250;
+const LOCATION_MARKER_ANIMATION_MS = 650;
+const LOCATION_MARKER_SNAP_DISTANCE_METERS = 1000;
+const HEADING_INDICATOR_SMOOTHING_MS = 120;
+const HEADING_MAP_BEARING_SMOOTHING_MS = 260;
 const NativeGeolocation = registerPlugin('NativeGeolocation');
 const isNative = typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform();
 const nativeWatchCallbacks = new Map();
 let nativeWatchListenerPromise = null;
+let markerAnimationFrame = null;
+let markerAnimationCoords = null;
 
 function toNativeGeolocationOptions(options) {
     return {
@@ -87,6 +101,13 @@ function normalizeGeolocationPosition(position) {
 function normalizeHeadingDegrees(value) {
     if (!Number.isFinite(value)) return 0;
     return ((value % 360) + 360) % 360;
+}
+
+function unwrapDegreesNear(target, reference) {
+    let unwrapped = target;
+    while (unwrapped - reference > 180) unwrapped -= 360;
+    while (unwrapped - reference < -180) unwrapped += 360;
+    return unwrapped;
 }
 
 function hasUserLocationMarker() {
@@ -216,8 +237,8 @@ function handleHeadingUpdate(map, heading) {
     const now = Date.now();
     if (!handleHeadingUpdate.lastUpdate || now - handleHeadingUpdate.lastUpdate > 50) {
         handleHeadingUpdate.lastUpdate = now;
-        if (currentLocationState === LOCATION_STATES.HEADING && !isUserRotating && !isUserInteracting && !isDragging && !isPitching && !isReCentering) {
-            map.easeTo({ bearing: latestHeading, duration: 150, easing: (t) => t });
+        if (currentLocationState === LOCATION_STATES.HEADING && !isUserRotating && !isUserInteracting && !isDragging && !isPitching) {
+            setHeadingMapBearing(map, latestHeading);
         }
     }
 }
@@ -279,6 +300,11 @@ if (isNative) {
         callback(true);
     };
 }
+// Own location camera behavior in this module. Mapbox's default GeolocateControl
+// camera uses fitBounds around GPS accuracy, which can jump to zoom 18 on app resume.
+if (typeof geolocate._updateCamera === 'function') {
+    geolocate._updateCamera = () => { };
+}
 
 // Exports
 export function isTrackingActive() {
@@ -296,6 +322,7 @@ export function isUserInteractingWithMap() {
 export function stopTracking() {
     if (currentLocationState !== LOCATION_STATES.OFF) {
         currentLocationState = LOCATION_STATES.OFF;
+        stopHeadingMapBearingAnimation();
         smoothedFollowCoords = null;
         const locateBtn = document.getElementById('locate-me');
         if (locateBtn) updateLocationIcon(locateBtn);
@@ -307,6 +334,7 @@ export async function refreshLocationMarker(map, options = {}) {
         activateFollow = false,
         preserveCurrentZoom = false,
         suppressCameraUpdate = false,
+        recenterAfterUpdate = false,
         repairMissingMarker = true
     } = options;
     if (!isSecureContext()) return false;
@@ -325,7 +353,6 @@ export async function refreshLocationMarker(map, options = {}) {
         }
 
         let restoreFitBoundsZoom = null;
-        let restoreCameraUpdater = null;
         if (preserveCurrentZoom) {
             const fitBoundsOptions = geolocate?.options?.fitBoundsOptions;
             const currentZoom = map?.getZoom?.();
@@ -346,25 +373,13 @@ export async function refreshLocationMarker(map, options = {}) {
             }
         }
 
-        if (suppressCameraUpdate && typeof geolocate?._updateCamera === 'function') {
-            const originalUpdateCamera = geolocate._updateCamera.bind(geolocate);
-            geolocate._updateCamera = () => { };
-            restoreCameraUpdater = () => {
-                geolocate._updateCamera = originalUpdateCamera;
-            };
-            if (typeof geolocate.once === 'function') {
-                geolocate.once('geolocate', restoreCameraUpdater);
-                geolocate.once('error', restoreCameraUpdater);
-            }
-            setTimeout(() => {
-                restoreCameraUpdater?.();
-                restoreCameraUpdater = null;
-            }, 2000);
-        }
-
         try { map?.resize?.(); } catch (e) { }
         startPersistentOrientationTracking(map);
         triggerGeolocateWithoutStoppingActiveWatch(map, { suppressCameraUpdate });
+        if (recenterAfterUpdate) {
+            scheduleFollowCameraSync(map, { delayMs: 150, force: true, duration: 250 });
+            scheduleFollowCameraSync(map, { delayMs: 650, force: true, duration: 250 });
+        }
         if (repairMissingMarker) {
             scheduleMissingMarkerRecovery(map, { preserveCurrentZoom, suppressCameraUpdate });
         }
@@ -381,6 +396,10 @@ export async function refreshLocationMarker(map, options = {}) {
     }
 
     geolocate.trigger();
+    if (recenterAfterUpdate) {
+        scheduleFollowCameraSync(map, { delayMs: 150, force: true, duration: 250 });
+        scheduleFollowCameraSync(map, { delayMs: 650, force: true, duration: 250 });
+    }
     return true;
 }
 
@@ -416,6 +435,83 @@ function distanceMeters(a, b) {
     const h = Math.sin(dLat / 2) ** 2 +
         Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
     return 2 * earthRadiusMeters * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+}
+
+function createAnimatedPosition(position, lng, lat) {
+    return {
+        ...position,
+        coords: {
+            longitude: lng,
+            latitude: lat,
+            accuracy: position.coords.accuracy,
+            altitude: position.coords.altitude ?? null,
+            altitudeAccuracy: position.coords.altitudeAccuracy ?? null,
+            heading: position.coords.heading ?? null,
+            speed: position.coords.speed ?? null
+        }
+    };
+}
+
+function installSmoothLocationMarkerUpdates() {
+    if (geolocate.__smoothMarkerUpdatesInstalled || typeof geolocate._updateMarker !== 'function') return;
+
+    const originalUpdateMarker = geolocate._updateMarker.bind(geolocate);
+    geolocate._updateMarker = (position) => {
+        if (!position?.coords) {
+            if (markerAnimationFrame !== null) {
+                cancelAnimationFrame(markerAnimationFrame);
+                markerAnimationFrame = null;
+            }
+            markerAnimationCoords = null;
+            originalUpdateMarker(position);
+            return;
+        }
+
+        const targetCoords = {
+            lng: position.coords.longitude,
+            lat: position.coords.latitude
+        };
+        const startCoords = markerAnimationCoords;
+        const shouldSnap = !startCoords ||
+            document.hidden ||
+            distanceMeters(startCoords, targetCoords) > LOCATION_MARKER_SNAP_DISTANCE_METERS;
+
+        if (markerAnimationFrame !== null) {
+            cancelAnimationFrame(markerAnimationFrame);
+            markerAnimationFrame = null;
+        }
+
+        if (shouldSnap) {
+            markerAnimationCoords = { ...targetCoords };
+            originalUpdateMarker(position);
+            return;
+        }
+
+        const startedAt = performance.now();
+        const animate = (now) => {
+            const progress = Math.min(1, (now - startedAt) / LOCATION_MARKER_ANIMATION_MS);
+            const eased = easeOutCubic(progress);
+            const lng = startCoords.lng + (targetCoords.lng - startCoords.lng) * eased;
+            const lat = startCoords.lat + (targetCoords.lat - startCoords.lat) * eased;
+
+            originalUpdateMarker(createAnimatedPosition(position, lng, lat));
+
+            if (progress < 1) {
+                markerAnimationFrame = requestAnimationFrame(animate);
+            } else {
+                markerAnimationFrame = null;
+                markerAnimationCoords = { ...targetCoords };
+                originalUpdateMarker(position);
+            }
+        };
+
+        markerAnimationFrame = requestAnimationFrame(animate);
+    };
+    geolocate.__smoothMarkerUpdatesInstalled = true;
 }
 
 function getSmoothedFollowCoords(nextCoords) {
@@ -494,6 +590,61 @@ function getCenteringOffset() {
     return offset;
 }
 
+function isFollowModeActive() {
+    return currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING;
+}
+
+function isFollowCameraBlocked() {
+    return isUserInteracting || isUserRotating || isDragging || isPitching || isReCentering;
+}
+
+function centerFollowCamera(map, options = {}) {
+    const {
+        duration = 500,
+        force = false,
+        useSmoothing = false
+    } = options;
+
+    if (!map || !lastUserCoords || !isFollowModeActive()) return false;
+    if (!force && isFollowCameraBlocked()) return false;
+
+    const targetCoords = useSmoothing
+        ? getSmoothedFollowCoords(lastUserCoords)
+        : lastUserCoords;
+    const cameraOptions = {
+        center: [targetCoords.lng, targetCoords.lat],
+        offset: getCenteringOffset(),
+        duration,
+        easing: (t) => t * (2 - t),
+        essential: true
+    };
+
+    if (currentLocationState === LOCATION_STATES.HEADING && latestHeading !== null) {
+        setHeadingMapBearing(map, latestHeading);
+    }
+
+    isReCentering = true;
+    map.easeTo(cameraOptions);
+    map.once('moveend', () => { isReCentering = false; });
+    setTimeout(() => { isReCentering = false; }, Math.max(duration + 250, 750));
+    return true;
+}
+
+function scheduleFollowCameraSync(map, options = {}) {
+    const {
+        delayMs = 0,
+        force = false,
+        duration = 500,
+        useSmoothing = false
+    } = options;
+
+    if (!isFollowModeActive() || !lastUserCoords) return;
+
+    setTimeout(() => {
+        centerFollowCamera(map, { force, duration, useSmoothing });
+    }, delayMs);
+}
+
 // Helper to parse rotation from a transform string (matrix or rotate)
 function getRotationFromTransform(transform) {
     if (!transform || transform === 'none') return 0;
@@ -512,6 +663,113 @@ function getRotationFromTransform(transform) {
         if (match && match[1]) return parseFloat(match[1]);
     }
     return 0;
+}
+
+function setHeadingIndicatorRotation(rotation, options = {}) {
+    const { snap = false } = options;
+    targetIndicatorRotation = rotation;
+
+    if (snap || displayedIndicatorRotation === null || document.hidden) {
+        displayedIndicatorRotation = rotation;
+        headingIndicatorAnimationLastTs = null;
+        if (headingIndicatorAnimationFrame !== null) {
+            cancelAnimationFrame(headingIndicatorAnimationFrame);
+            headingIndicatorAnimationFrame = null;
+        }
+        document.documentElement.style.setProperty('--indicator-rotation', `${displayedIndicatorRotation}deg`);
+        return;
+    }
+
+    if (headingIndicatorAnimationFrame !== null) return;
+
+    const animate = (timestamp) => {
+        if (headingIndicatorAnimationLastTs === null) {
+            headingIndicatorAnimationLastTs = timestamp;
+        }
+
+        const elapsed = Math.max(0, timestamp - headingIndicatorAnimationLastTs);
+        headingIndicatorAnimationLastTs = timestamp;
+        const progress = 1 - Math.exp(-elapsed / HEADING_INDICATOR_SMOOTHING_MS);
+        displayedIndicatorRotation += (targetIndicatorRotation - displayedIndicatorRotation) * progress;
+        document.documentElement.style.setProperty('--indicator-rotation', `${displayedIndicatorRotation}deg`);
+
+        if (Math.abs(targetIndicatorRotation - displayedIndicatorRotation) < 0.05) {
+            displayedIndicatorRotation = targetIndicatorRotation;
+            document.documentElement.style.setProperty('--indicator-rotation', `${displayedIndicatorRotation}deg`);
+            headingIndicatorAnimationFrame = null;
+            headingIndicatorAnimationLastTs = null;
+            return;
+        }
+
+        headingIndicatorAnimationFrame = requestAnimationFrame(animate);
+    };
+
+    headingIndicatorAnimationFrame = requestAnimationFrame(animate);
+}
+
+function setHeadingMapBearing(map, bearing, options = {}) {
+    const { snap = false } = options;
+    if (!map || !Number.isFinite(bearing)) return;
+
+    const currentBearing = Number.isFinite(displayedMapBearing) ? displayedMapBearing : map.getBearing();
+    if (displayedMapBearing === null) {
+        displayedMapBearing = currentBearing;
+    }
+    targetMapBearing = unwrapDegreesNear(bearing, currentBearing);
+
+    if (snap || document.hidden) {
+        displayedMapBearing = targetMapBearing;
+        mapBearingAnimationLastTs = null;
+        if (mapBearingAnimationFrame !== null) {
+            cancelAnimationFrame(mapBearingAnimationFrame);
+            mapBearingAnimationFrame = null;
+        }
+        map.setBearing(displayedMapBearing);
+        return;
+    }
+
+    if (mapBearingAnimationFrame !== null) return;
+
+    const animate = (timestamp) => {
+        if (currentLocationState !== LOCATION_STATES.HEADING || isUserRotating || isUserInteracting || isDragging || isPitching) {
+            mapBearingAnimationFrame = null;
+            mapBearingAnimationLastTs = null;
+            displayedMapBearing = map.getBearing();
+            return;
+        }
+
+        if (mapBearingAnimationLastTs === null) {
+            mapBearingAnimationLastTs = timestamp;
+        }
+
+        const elapsed = Math.max(0, timestamp - mapBearingAnimationLastTs);
+        mapBearingAnimationLastTs = timestamp;
+        const progress = 1 - Math.exp(-elapsed / HEADING_MAP_BEARING_SMOOTHING_MS);
+        displayedMapBearing += (targetMapBearing - displayedMapBearing) * progress;
+        map.setBearing(displayedMapBearing);
+
+        if (Math.abs(targetMapBearing - displayedMapBearing) < 0.05) {
+            displayedMapBearing = targetMapBearing;
+            map.setBearing(displayedMapBearing);
+            mapBearingAnimationFrame = null;
+            mapBearingAnimationLastTs = null;
+            return;
+        }
+
+        mapBearingAnimationFrame = requestAnimationFrame(animate);
+    };
+
+    mapBearingAnimationFrame = requestAnimationFrame(animate);
+}
+
+function stopHeadingMapBearingAnimation() {
+    if (mapBearingAnimationFrame !== null) {
+        cancelAnimationFrame(mapBearingAnimationFrame);
+        mapBearingAnimationFrame = null;
+    }
+    mapBearingAnimationLastTs = null;
+    displayedMapBearing = null;
+    targetMapBearing = null;
 }
 
 function updateHeadingIndicator(map) {
@@ -533,7 +791,8 @@ function updateHeadingIndicator(map) {
         // Visual Result = -Bearing (Parent) + Heading (Child) = Heading - Bearing (Correct Screen Angle).
         const targetRotation = latestHeading;
 
-        if (lastIndicatorRotation === null) {
+        const shouldSnap = lastIndicatorRotation === null;
+        if (shouldSnap) {
             lastIndicatorRotation = targetRotation;
             cumulativeIndicatorRotation = targetRotation;
         } else {
@@ -544,7 +803,7 @@ function updateHeadingIndicator(map) {
             lastIndicatorRotation = targetRotation;
         }
 
-        document.documentElement.style.setProperty('--indicator-rotation', `${cumulativeIndicatorRotation}deg`);
+        setHeadingIndicatorRotation(cumulativeIndicatorRotation, { snap: shouldSnap });
         // No parent modification needed.
     }
 }
@@ -623,6 +882,7 @@ function startPersistentOrientationTracking(map) {
 
 // Main Setup Function
 export function setupGeolocation(map) {
+    installSmoothLocationMarkerUpdates();
     map.addControl(geolocate);
 
     const locateBtn = document.getElementById('locate-me');
@@ -659,6 +919,14 @@ export function setupGeolocation(map) {
         setTimeout(() => {
             isUserInteracting = false;
             isDragging = false;
+            scheduleFollowCameraSync(map, { delayMs: 0 });
+        }, 50);
+    }, { passive: true });
+    mapCanvas.addEventListener('touchcancel', () => {
+        setTimeout(() => {
+            isUserInteracting = false;
+            isDragging = false;
+            scheduleFollowCameraSync(map, { delayMs: 0 });
         }, 50);
     }, { passive: true });
     mapCanvas.addEventListener('mousedown', () => {
@@ -669,6 +937,7 @@ export function setupGeolocation(map) {
         setTimeout(() => {
             isUserInteracting = false;
             isDragging = false;
+            scheduleFollowCameraSync(map, { delayMs: 0 });
         }, 50);
     });
 
@@ -725,11 +994,7 @@ export function setupGeolocation(map) {
                 smoothedFollowCoords = lastUserCoords ? { ...lastUserCoords } : null;
 
                 if (lastUserCoords) {
-                    map.easeTo({
-                        center: [lastUserCoords.lng, lastUserCoords.lat],
-                        offset: getCenteringOffset(),
-                        duration: 500
-                    });
+                    centerFollowCamera(map, { force: true, duration: 500 });
                     if (isNative) {
                         refreshLocationMarker(map, {
                             activateFollow: true,
@@ -771,7 +1036,7 @@ export function setupGeolocation(map) {
                             // because we handle the element ourselves.
                             currentLocationState = LOCATION_STATES.HEADING;
                             updateLocationIcon(locateBtn);
-                            map.easeTo({ bearing: latestHeading, duration: 150, easing: (t) => t });
+                            setHeadingMapBearing(map, latestHeading);
                         } else {
                             setTimeout(checkHeading, 100);
                         }
@@ -780,7 +1045,7 @@ export function setupGeolocation(map) {
                     let timeout = setTimeout(() => {
                         if (currentLocationState !== LOCATION_STATES.HEADING) {
                             isHeadingSupported = false;
-                            map.easeTo({ center: [lastUserCoords.lng, lastUserCoords.lat], offset: getCenteringOffset(), duration: 500 });
+                            centerFollowCamera(map, { force: true, duration: 500 });
                         }
                     }, 1500);
 
@@ -803,11 +1068,17 @@ export function setupGeolocation(map) {
                         attemptHeadingTransition();
                     }
                 } else {
-                    map.easeTo({ center: [lastUserCoords.lng, lastUserCoords.lat], offset: getCenteringOffset(), duration: 500 });
+                    centerFollowCamera(map, { force: true, duration: 500 });
                 }
             } else if (currentLocationState === LOCATION_STATES.HEADING) {
                 currentLocationState = LOCATION_STATES.FOLLOW;
-                map.easeTo({ bearing: 0, duration: 500, center: [lastUserCoords.lng, lastUserCoords.lat], offset: getCenteringOffset() });
+                stopHeadingMapBearingAnimation();
+                const cameraOptions = { bearing: 0, duration: 500, essential: true };
+                if (lastUserCoords) {
+                    cameraOptions.center = [lastUserCoords.lng, lastUserCoords.lat];
+                    cameraOptions.offset = getCenteringOffset();
+                }
+                map.easeTo(cameraOptions);
                 updateLocationIcon(locateBtn);
             }
         });
@@ -841,6 +1112,7 @@ export function setupGeolocation(map) {
             map.easeTo({ bearing: 0, duration: 500 });
             if (currentLocationState === LOCATION_STATES.HEADING) {
                 currentLocationState = LOCATION_STATES.FOLLOW;
+                stopHeadingMapBearingAnimation();
                 updateLocationIcon(locateBtn);
             }
         });
@@ -855,10 +1127,16 @@ export function setupGeolocation(map) {
         }
         if (latestHeading !== null) {
             updateHeadingIndicator(map);
-            if (currentLocationState === LOCATION_STATES.HEADING && !isUserRotating && !isUserInteracting && !isDragging && !isPitching && !isReCentering) {
-                map.easeTo({ bearing: latestHeading, duration: 0, easing: (t) => t });
+            if (currentLocationState === LOCATION_STATES.HEADING && !isUserRotating && !isUserInteracting && !isDragging && !isPitching) {
+                setHeadingMapBearing(map, latestHeading);
             }
         }
+        scheduleFollowCameraSync(map, { delayMs: 80, force: true, duration: 0 });
+        scheduleFollowCameraSync(map, { delayMs: 350, force: true, duration: 250 });
+    });
+    map.on('resize', () => {
+        scheduleFollowCameraSync(map, { delayMs: 50, force: true, duration: 0 });
+        scheduleFollowCameraSync(map, { delayMs: 250, force: true, duration: 250 });
     });
 
     // Initialize bearing immediately
@@ -896,20 +1174,11 @@ export function setupGeolocation(map) {
 
         if (!wasManualInteraction || manualPixelDist < 40) {
             if (lastUserCoords && wasManualInteraction && manualPixelDist > 1) {
-                const options = {
-                    center: [lastUserCoords.lng, lastUserCoords.lat],
-                    offset: getCenteringOffset(),
-                    duration: 500
-                };
-                if (currentLocationState === LOCATION_STATES.HEADING && latestHeading !== null) {
-                    options.bearing = latestHeading;
-                }
-                isReCentering = true;
-                map.easeTo({ ...options, essential: true });
-                map.once('moveend', () => { isReCentering = false; });
+                centerFollowCamera(map, { force: true, duration: 500 });
             }
         } else {
             currentLocationState = LOCATION_STATES.OFF;
+            stopHeadingMapBearingAnimation();
             smoothedFollowCoords = null;
             updateLocationIcon(locateBtn);
         }
@@ -955,6 +1224,7 @@ export function setupGeolocation(map) {
             wasManualRotation = false;
             if (currentLocationState === LOCATION_STATES.HEADING) {
                 currentLocationState = LOCATION_STATES.FOLLOW;
+                stopHeadingMapBearingAnimation();
                 updateLocationIcon(document.getElementById('locate-me'));
             } else if (currentLocationState !== LOCATION_STATES.OFF) {
                 handleInteractionEnd();
@@ -1006,15 +1276,11 @@ export function setupGeolocation(map) {
 
         const shouldFollow = (currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING) && !isUserInteracting && !isUserRotating && !isDragging && !isPitching && !isReCentering;
         if (shouldFollow) {
-            const smoothedCoords = getSmoothedFollowCoords({ lng: coords.longitude, lat: coords.latitude });
-            map.easeTo({
-                center: [smoothedCoords.lng, smoothedCoords.lat],
-                offset: getCenteringOffset(),
-                duration: 500,
-                easing: (t) => t * (2 - t)
-            });
+            centerFollowCamera(map, { duration: 500, useSmoothing: true });
         } else {
             smoothedFollowCoords = null;
+            scheduleFollowCameraSync(map, { delayMs: 150 });
+            scheduleFollowCameraSync(map, { delayMs: 650 });
         }
     });
 
@@ -1028,6 +1294,7 @@ export function setupGeolocation(map) {
             // Ignore quick errors
         } else {
             currentLocationState = LOCATION_STATES.OFF;
+            stopHeadingMapBearingAnimation();
             const locateBtn = document.getElementById('locate-me');
             if (locateBtn) updateLocationIcon(locateBtn);
         }
@@ -1071,7 +1338,7 @@ export function setupGeolocation(map) {
                 if (perms?.location === 'denied') return;
             } catch (e) { }
 
-            await refreshLocationMarker(map);
+            await refreshLocationMarker(map, { suppressCameraUpdate: true });
             return;
         }
 
@@ -1085,7 +1352,7 @@ export function setupGeolocation(map) {
 
         if (!granted) return;
         // Prevent GeolocateControl internals from recentering before our region gate runs.
-        await refreshLocationMarker(map, { activateFollow: true });
+        await refreshLocationMarker(map, { activateFollow: true, suppressCameraUpdate: true });
     };
 
     const runInitialLocationRefresh = () => {

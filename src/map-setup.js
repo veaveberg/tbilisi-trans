@@ -131,6 +131,28 @@ function readSafeAreaInset(edge) {
     return Number.isFinite(value) ? value : 0;
 }
 
+// Suppress iOS text selection magnifier (loupe) on the map canvas.
+// - In WKWebView (Xcode build): isTextInteractionEnabled = false is set natively in Swift.
+// - In Safari / PWA: preventing selectstart and contextmenu on the canvas suppresses
+//   the loupe, which is triggered by the double-tap-and-hold zoom gesture.
+function installSelectionLoupeSuppressor() {
+    const canvas = map.getCanvas();
+    if (!canvas) return;
+
+    const prevent = (e) => e.preventDefault();
+
+    // Block the signal that triggers the iOS text-selection loupe.
+    canvas.addEventListener('selectstart', prevent, { passive: false });
+    canvas.addEventListener('contextmenu', prevent, { passive: false });
+
+    // Also cover the full map container for markers/overlays that bubble up.
+    const container = map.getContainer();
+    if (container) {
+        container.addEventListener('selectstart', prevent, { passive: false });
+        container.addEventListener('contextmenu', prevent, { passive: false });
+    }
+}
+
 function installIOSMapEdgePanGuard() {
     if (!isNativeIOS) return;
 
@@ -270,6 +292,7 @@ window.addEventListener('resize', resizeMap);
 
 map.on('load', () => {
     installIOSMapEdgePanGuard();
+    installSelectionLoupeSuppressor();
     resizeMap();
     setTimeout(resizeMap, 100);
     setTimeout(resizeMap, 500);

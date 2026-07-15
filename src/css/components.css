@@ -543,3 +543,78 @@ body.dark-mode input:checked+.slider {
         border-radius: 18px 18px 0 0;
     }
 }
+
+/* Map Directions Transfer/Boarding/Alighting Labels & Chips */
+.directions-transfer-marker {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    pointer-events: none;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.directions-transfer-marker.align-right {
+    align-items: flex-start;
+}
+
+.directions-transfer-marker.align-left {
+    align-items: flex-end;
+}
+
+.directions-transfer-label {
+    background: rgba(255, 255, 255, 0.95);
+    color: #1e293b;
+    padding: 5px 9px;
+    border-radius: 6px;
+    font-size: 16px;
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    white-space: normal;
+    max-width: 180px;
+    width: fit-content;
+    word-break: break-word;
+    line-height: 1.2;
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+/* Dark mode override */
+body.dark-mode .directions-transfer-label {
+    background: rgba(30, 41, 59, 0.95);
+    color: #f1f5f9;
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.directions-transfer-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 16px;
+    font-weight: 800;
+    line-height: 1.1;
+    color: var(--chip-color, #2563eb);
+    background-color: color-mix(in srgb, var(--chip-color, #2563eb) 12%, #ffffff);
+    border: 1px solid color-mix(in srgb, var(--chip-color, #2563eb) 30%, #ffffff);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    white-space: nowrap;
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+body.dark-mode .directions-transfer-chip {
+    background-color: color-mix(in srgb, var(--chip-color, #2563eb) 15%, #1e293b);
+    border-color: color-mix(in srgb, var(--chip-color, #2563eb) 35%, #1e293b);
+}
+
+.directions-transfer-marker.align-left .directions-transfer-label {
+    text-align: right;
+}
+
+.directions-transfer-marker.align-right .directions-transfer-label {
+    text-align: left;
+}
+
+

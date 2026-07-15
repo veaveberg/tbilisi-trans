@@ -207,7 +207,8 @@ const state = {
         result: null,
         selectedRouteIndex: 0,
         status: 'idle',
-        message: ''
+        message: '',
+        transferMarkers: []
     },
     time: {
         mode: 'leaveNow',
@@ -477,6 +478,7 @@ function ensureDirectionsRouteLayers() {
 }
 
 function clearDirectionsRoute() {
+    clearTransferMarkers();
     stopDirectionsRefreshTimer();
     state.routing.requestId += 1;
     if (state.routing.abortController) {
@@ -642,7 +644,6 @@ function fitDirectionsRoute(featureCollection) {
         bottomMargin: 16
     });
 
-    console.log('[DirectionsPlot] Fitting map bounds (fitBounds) to:', bounds.toArray(), { panelPadding });
     map.fitBounds(bounds, {
         padding: panelPadding,
         maxZoom: 15,
@@ -650,6 +651,406 @@ function fitDirectionsRoute(featureCollection) {
         retainPadding: false
     });
 }
+
+function getStopLngLat(stop) {
+    if (!stop) return null;
+    const lon = stop.lon != null ? stop.lon : stop.lng;
+    if (stop.lat != null && lon != null) {
+        return [Number(lon), Number(stop.lat)];
+    }
+    return null;
+}
+
+function getDistanceInMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; // meters
+    const phi1 = lat1 * Math.PI / 180;
+    const phi2 = lat2 * Math.PI / 180;
+    const deltaPhi = (lat2 - lat1) * Math.PI / 180;
+    const deltaLambda = (lon2 - lon1) * Math.PI / 180;
+
+    const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+              Math.cos(phi1) * Math.cos(phi2) *
+              Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c;
+}
+
+function buildTransferPoints(result, routeIndex = 0) {
+    const route = result?.routes?.[routeIndex];
+    if (!route?.segments?.length) return [];
+
+    const transitSegments = route.segments.filter(s => s.mode && s.mode !== 'WALK');
+    if (transitSegments.length === 0) return [];
+
+    const points = [];
+
+    function getResolvedStopId(stop) {
+        if (!stop) return null;
+        const lon = stop.lon != null ? stop.lon : stop.lng;
+        return resolveStopId(stop.name, stop.lat, lon) || stop.stopId || stop.id;
+    }
+
+    function isSameStop(stopA, stopB) {
+        if (!stopA || !stopB) return false;
+        if (stopA.name && stopB.name && stopA.name === stopB.name) return true;
+        const coordsA = getStopLngLat(stopA);
+        const coordsB = getStopLngLat(stopB);
+        if (coordsA && coordsB) {
+            const dist = getDistanceInMeters(coordsA[1], coordsA[0], coordsB[1], coordsB[0]);
+            return dist < 50; // within 50 meters
+        }
+        return false;
+    }
+
+    // 1. First Boarding Point
+    const firstLeg = transitSegments[0];
+    const firstLngLat = getStopLngLat(firstLeg.from);
+    if (firstLngLat) {
+        points.push({
+            lngLat: firstLngLat,
+            stopName: firstLeg.from.name || '',
+            stopId: getResolvedStopId(firstLeg.from),
+            type: 'board',
+            filterRouteShortName: firstLeg.routeShortName,
+            filterRouteMode: firstLeg.mode
+        });
+    }
+
+    // 2. Intermediate Transfer Points
+    for (let i = 0; i < transitSegments.length - 1; i++) {
+        const currentLeg = transitSegments[i];
+        const nextLeg = transitSegments[i + 1];
+
+        const alightStop = currentLeg.to;
+        const boardStop = nextLeg.from;
+
+        const alightLngLat = getStopLngLat(alightStop);
+        const boardLngLat = getStopLngLat(boardStop);
+
+        if (isSameStop(alightStop, boardStop)) {
+            // Same stop transfer
+            if (boardLngLat) {
+                points.push({
+                    lngLat: boardLngLat,
+                    stopName: boardStop.name || '',
+                    stopId: getResolvedStopId(boardStop),
+                    type: 'transfer',
+                    nextRouteShortName: nextLeg.routeShortName,
+                    nextRouteColor: nextLeg.color,
+                    nextRouteMode: nextLeg.mode,
+                    filterRouteShortName: nextLeg.routeShortName,
+                    filterRouteMode: nextLeg.mode
+                });
+            }
+        } else {
+            // Different stops transfer (walk in between)
+            if (alightLngLat) {
+                points.push({
+                    lngLat: alightLngLat,
+                    stopName: alightStop.name || '',
+                    stopId: getResolvedStopId(alightStop),
+                    type: 'alight'
+                });
+            }
+            if (boardLngLat) {
+                points.push({
+                    lngLat: boardLngLat,
+                    stopName: boardStop.name || '',
+                    stopId: getResolvedStopId(boardStop),
+                    type: 'transfer',
+                    nextRouteShortName: nextLeg.routeShortName,
+                    nextRouteColor: nextLeg.color,
+                    nextRouteMode: nextLeg.mode,
+                    filterRouteShortName: nextLeg.routeShortName,
+                    filterRouteMode: nextLeg.mode
+                });
+            }
+        }
+    }
+
+    // 3. Final Alighting Point
+    const lastLeg = transitSegments[transitSegments.length - 1];
+    const lastLngLat = getStopLngLat(lastLeg.to);
+    if (lastLngLat) {
+        const isAlreadyAdded = points.some(p => {
+            const dist = getDistanceInMeters(p.lngLat[1], p.lngLat[0], lastLngLat[1], lastLngLat[0]);
+            return dist < 10;
+        });
+        if (!isAlreadyAdded) {
+            points.push({
+                lngLat: lastLngLat,
+                stopName: lastLeg.to.name || '',
+                stopId: getResolvedStopId(lastLeg.to),
+                type: 'alight'
+            });
+        }
+    }
+
+    return points;
+}
+
+function getClosestPointOnSegment(p, a, b) {
+    const atob = { x: b.x - a.x, y: b.y - a.y };
+    const atop = { x: p.x - a.x, y: p.y - a.y };
+    const lenSq = atob.x * atob.x + atob.y * atob.y;
+    
+    let t = 0;
+    if (lenSq > 0) {
+        t = (atop.x * atob.x + atop.y * atob.y) / lenSq;
+        t = Math.max(0, Math.min(1, t));
+    }
+    
+    return {
+        x: a.x + t * atob.x,
+        y: a.y + t * atob.y
+    };
+}
+
+function determineTextAnchor(lngLat, route, pt = {}, points = []) {
+    if (!map) {
+        return 'right';
+    }
+
+    try {
+        const stopPt = map.project(lngLat);
+        const labelWidth = 150; // Estimate typical label width
+        const labelHeight = 35; // Estimate typical label height
+
+        // Define bounding boxes for 'left' and 'right' alignment relative to stopPt
+        // Alignment 'right': label is placed right of stop. Offset is [12, -14], anchor top-left.
+        // Box is [Sx + 12, Sx + 12 + labelWidth] horizontally, [Sy - 14, Sy - 14 + labelHeight] vertically.
+        const boxRight = {
+            xMin: stopPt.x + 12,
+            xMax: stopPt.x + 12 + labelWidth,
+            yMin: stopPt.y - 14,
+            yMax: stopPt.y - 14 + labelHeight
+        };
+
+        // Alignment 'left': label is placed left of stop. Offset is [-12, -14], anchor top-right.
+        // Box is [Sx - 12 - labelWidth, Sx - 12] horizontally, [Sy - 14, Sy - 14 + labelHeight] vertically.
+        const boxLeft = {
+            xMin: stopPt.x - 12 - labelWidth,
+            xMax: stopPt.x - 12,
+            yMin: stopPt.y - 14,
+            yMax: stopPt.y - 14 + labelHeight
+        };
+
+        let costLeft = 0;
+        let costRight = 0;
+
+        // 1. A and B Marker overlap costs
+        const markers = [];
+        if (state.from) markers.push({ lngLat: [state.from.lng, state.from.lat], weight: 1000 });
+        if (state.to) markers.push({ lngLat: [state.to.lng, state.to.lat], weight: 1000 });
+
+        markers.forEach(m => {
+            try {
+                const mPt = map.project(m.lngLat);
+                // Marker size is roughly 30px width, 45px height anchored bottom-center.
+                // Let's treat it as a box of [mx - 18, mx + 18], [my - 45, my + 10]
+                const mBox = {
+                    xMin: mPt.x - 18,
+                    xMax: mPt.x + 18,
+                    yMin: mPt.y - 45,
+                    yMax: mPt.y + 10
+                };
+
+                // Check intersection with boxLeft
+                if (!(boxLeft.xMax < mBox.xMin || boxLeft.xMin > mBox.xMax || boxLeft.yMax < mBox.yMin || boxLeft.yMin > mBox.yMax)) {
+                    costLeft += m.weight;
+                }
+                // Check intersection with boxRight
+                if (!(boxRight.xMax < mBox.xMin || boxRight.xMin > mBox.xMax || boxRight.yMax < mBox.yMin || boxRight.yMin > mBox.yMax)) {
+                    costRight += m.weight;
+                }
+            } catch (err) {}
+        });
+
+        // 2. Route overlap costs (sample points on route segments)
+        if (route?.segments?.length) {
+            route.segments.forEach(segment => {
+                if (!Array.isArray(segment.coordinates)) return;
+                
+                segment.coordinates.forEach(coord => {
+                    try {
+                        const rPt = map.project(coord);
+                        
+                        // Calculate distance from stopPt to rPt in pixels
+                        const distToStop = Math.hypot(stopPt.x - rPt.x, stopPt.y - rPt.y);
+                        
+                        // Ignore points extremely close to the stop (since the route passes through the stop)
+                        if (distToStop < 15) return;
+                        
+                        // Only consider points within 120 pixels of the stop for local overlap
+                        if (distToStop > 120) return;
+
+                        // Check if rPt is inside boxLeft (with 5px padding)
+                        if (rPt.x >= boxLeft.xMin - 5 && rPt.x <= boxLeft.xMax + 5 && rPt.y >= boxLeft.yMin - 5 && rPt.y <= boxLeft.yMax + 5) {
+                            costLeft += (120 - distToStop) * 2;
+                        }
+
+                        // Check if rPt is inside boxRight (with 5px padding)
+                        if (rPt.x >= boxRight.xMin - 5 && rPt.x <= boxRight.xMax + 5 && rPt.y >= boxRight.yMin - 5 && rPt.y <= boxRight.yMax + 5) {
+                            costRight += (120 - distToStop) * 2;
+                        }
+                    } catch (err) {}
+                });
+            });
+        }
+
+        // 3. Other stops overlap costs
+        if (Array.isArray(points)) {
+            points.forEach(other => {
+                if (other === pt) return;
+                try {
+                    const oPt = map.project(other.lngLat);
+                    const distToStop = Math.hypot(stopPt.x - oPt.x, stopPt.y - oPt.y);
+                    if (distToStop > 150) return;
+
+                    // If other stop is to the left, add cost to placing label on left
+                    if (oPt.x < stopPt.x) {
+                        costLeft += (150 - distToStop) * 1.5;
+                    } else {
+                        costRight += (150 - distToStop) * 1.5;
+                    }
+                } catch (err) {}
+            });
+        }
+
+        if (costLeft !== costRight) {
+            return costLeft < costRight ? 'left' : 'right';
+        }
+
+        // Fallback to screen half
+        const container = map.getContainer();
+        const width = container ? container.clientWidth : 800;
+        return stopPt.x < width / 2 ? 'right' : 'left';
+    } catch (e) {
+        console.error('[DirectionsPlot] Error in determineTextAnchor:', e);
+        return 'right';
+    }
+}
+
+function getWrappedTextWidth(text, maxAllowedWidth, fontStyle) {
+    if (typeof document === 'undefined') return 0;
+    try {
+        const canvas = getWrappedTextWidth.canvas || (getWrappedTextWidth.canvas = document.createElement('canvas'));
+        const context = canvas.getContext('2d');
+        context.font = fontStyle;
+
+        const words = String(text || '').split(' ');
+        let maxLineWidth = 0;
+        let currentLine = '';
+
+        for (const word of words) {
+            const testLine = currentLine ? currentLine + ' ' + word : word;
+            const testWidth = context.measureText(testLine).width;
+            if (testWidth > maxAllowedWidth && currentLine) {
+                maxLineWidth = Math.max(maxLineWidth, context.measureText(currentLine).width);
+                currentLine = word;
+            } else {
+                currentLine = testLine;
+            }
+        }
+        if (currentLine) {
+            maxLineWidth = Math.max(maxLineWidth, context.measureText(currentLine).width);
+        }
+        return maxLineWidth;
+    } catch (e) {
+        console.warn('[DirectionsPlot] getWrappedTextWidth error:', e);
+        return maxAllowedWidth;
+    }
+}
+
+function renderTransferMarkers(result, routeIndex = 0) {
+    clearTransferMarkers();
+
+    if (!map || !result) return;
+    const route = result.routes?.[routeIndex];
+    if (!route) return;
+
+    const points = buildTransferPoints(result, routeIndex);
+    console.log(`[DirectionsPlot] Found ${points.length} transfer/boarding/alighting points`);
+
+    points.forEach(pt => {
+        const alignment = determineTextAnchor(pt.lngLat, route);
+        
+        const el = document.createElement('div');
+        el.className = `directions-transfer-marker align-${alignment}`;
+        
+        const label = document.createElement('div');
+        label.className = 'directions-transfer-label';
+        label.textContent = pt.stopName;
+        
+        // Calculate and set precise width to avoid extra right-margin space when wrapping
+        const fontStyle = '600 16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+        const paddingOffset = 18; // 9px left + 9px right padding
+        const maxTextWidth = 180 - paddingOffset;
+        const textWidth = getWrappedTextWidth(pt.stopName, maxTextWidth, fontStyle);
+        if (textWidth > 0) {
+            label.style.width = Math.ceil(textWidth + paddingOffset + 2) + 'px';
+        }
+        
+        el.appendChild(label);
+
+        if (pt.stopId) {
+            label.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const allStops = window.allStops || [];
+                const matchedStop = allStops.find(s => String(s.id) === String(pt.stopId));
+                const stopObj = matchedStop || { id: pt.stopId, name: pt.stopName };
+                if (typeof window.showStopInfo === 'function') {
+                    window.showStopInfo(stopObj, true, true);
+                }
+            });
+        }
+
+        if (pt.type === 'transfer' && pt.nextRouteShortName) {
+            const chip = document.createElement('div');
+            chip.className = 'directions-transfer-chip';
+            chip.textContent = pt.nextRouteShortName;
+            
+            const color = getRouteColorByShortName(pt.nextRouteShortName, null, null, pt.nextRouteMode || 'BUS') 
+                          || getModeColor(pt.nextRouteMode || 'BUS', pt.nextRouteColor);
+            chip.style.setProperty('--chip-color', color);
+            el.appendChild(chip);
+
+            if (pt.stopId) {
+                chip.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const allStops = window.allStops || [];
+                    const matchedStop = allStops.find(s => String(s.id) === String(pt.stopId));
+                    const stopObj = matchedStop || { id: pt.stopId, name: pt.stopName };
+                    if (typeof window.showStopInfo === 'function') {
+                        window.showStopInfo(stopObj, true, true);
+                    }
+                });
+            }
+        }
+
+        const anchor = alignment === 'left' ? 'top-right' : 'top-left';
+        const offset = alignment === 'left' ? [-12, -14] : [12, -14];
+
+        const marker = new mapboxgl.Marker({
+            element: el,
+            anchor: anchor,
+            offset: offset
+        })
+        .setLngLat(pt.lngLat)
+        .addTo(map);
+
+        state.routing.transferMarkers.push(marker);
+    });
+}
+
+function clearTransferMarkers() {
+    if (Array.isArray(state.routing.transferMarkers)) {
+        state.routing.transferMarkers.forEach(marker => marker.remove());
+    }
+    state.routing.transferMarkers = [];
+}
+
 
 function renderDirectionsResult(result, { fit = true } = {}) {
     console.log('[DirectionsPlot] renderDirectionsResult called:', { fit, hasResult: !!result, routesCount: result?.routes?.length });
@@ -695,11 +1096,17 @@ function renderDirectionsResult(result, { fit = true } = {}) {
     } else {
         console.log('[DirectionsPlot] Skipping fitBounds:', { fit, featuresCount: featureCollection.features.length });
     }
+
+    renderTransferMarkers(result, state.routing.selectedRouteIndex);
 }
 
 function selectDirectionsRoute(index) {
     if (!state.routing.result?.routes?.[index]) return;
     state.routing.selectedRouteIndex = index;
+    const panel = document.getElementById('directions-panel');
+    if (panel) {
+        setSheetState(panel, 'half');
+    }
     renderDirectionsResult(state.routing.result, { fit: true });
     renderDirectionsStatus();
 }
@@ -707,10 +1114,10 @@ function selectDirectionsRoute(index) {
 function formatDurationShort(seconds) {
     if (seconds == null) return '';
     const mins = Math.round(seconds / 60);
-    if (mins < 60) return `${mins} min`;
+    if (mins < 60) return t('durationMin', mins);
     const hours = Math.floor(mins / 60);
     const remainder = mins % 60;
-    return remainder > 0 ? `${hours}h ${remainder}m` : `${hours}h`;
+    return remainder > 0 ? t('durationHourMin', hours, remainder) : t('durationHour', hours);
 }
 
 function formatTimeShort(isoString) {
@@ -779,7 +1186,7 @@ function resolveStopId(name, lat, lon) {
     return null;
 }
 
-function getEquivalentStopIds(stopId) {
+function getEquivalentStopIds(stopId, includeHubs = true) {
     if (!stopId) return [];
     if (!window.dataProvider) return [stopId];
 
@@ -800,17 +1207,19 @@ function getEquivalentStopIds(stopId) {
         mergedSources.forEach(s => equivalents.add(s));
     }
 
-    // 2. Check hubs for all collected IDs
-    const checkedIds = Array.from(equivalents);
-    checkedIds.forEach(id => {
-        const parentHub = hubMap.get(id) || id;
-        equivalents.add(parentHub);
-        
-        const children = hubSourcesMap.get(parentHub);
-        if (children) {
-            children.forEach(c => equivalents.add(c));
-        }
-    });
+    // 2. Check hubs for all collected IDs if requested
+    if (includeHubs) {
+        const checkedIds = Array.from(equivalents);
+        checkedIds.forEach(id => {
+            const parentHub = hubMap.get(id) || id;
+            equivalents.add(parentHub);
+            
+            const children = hubSourcesMap.get(parentHub);
+            if (children) {
+                children.forEach(c => equivalents.add(c));
+            }
+        });
+    }
 
     return Array.from(equivalents);
 }
@@ -974,8 +1383,8 @@ function getAlternativeRoutes(fromStop, toStop, currentRouteShortName, mode) {
 
     if (!fromId || !toId || fromId === toId) return [];
 
-    const fromEquivalents = getEquivalentStopIds(fromId);
-    const toEquivalents = getEquivalentStopIds(toId);
+    const fromEquivalents = getEquivalentStopIds(fromId, false);
+    const toEquivalents = getEquivalentStopIds(toId, true);
 
     const candidateRouteIds = new Set();
     for (const fid of fromEquivalents) {
@@ -1058,7 +1467,7 @@ function makeLegIcon(segment) {
         const icon = document.createElement('span');
         icon.className = 'directions-leg-icon-mask directions-leg-icon-walk';
         icon.style.setProperty('--icon-url', `url("${BASE_PATH}figure.walk.svg")`);
-        icon.setAttribute('aria-label', 'Walk');
+        icon.setAttribute('aria-label', t('walkMode'));
         return icon;
     }
 
@@ -1076,7 +1485,7 @@ function makeLegIcon(segment) {
         const icon = document.createElement('span');
         icon.className = 'directions-leg-icon-mask directions-leg-icon-bus';
         icon.style.setProperty('--icon-url', `url("${BASE_PATH}bus.fill.svg")`);
-        icon.setAttribute('aria-label', 'Bus');
+        icon.setAttribute('aria-label', t('bus'));
         primaryGroup.appendChild(icon);
 
         if (segment.routeShortName) {
@@ -1113,7 +1522,7 @@ function makeLegIcon(segment) {
         const icon = document.createElement('span');
         icon.className = 'directions-leg-icon-mask directions-leg-icon-subway';
         icon.style.setProperty('--icon-url', `url("${BASE_PATH}tram.fill.tunnel.svg")`);
-        icon.setAttribute('aria-label', 'Metro');
+        icon.setAttribute('aria-label', t('metro'));
         primaryGroup.appendChild(icon);
 
         if (segment.routeShortName) {
@@ -1247,6 +1656,7 @@ async function refreshDirectionsArrivals() {
                     const boardingStopId = resolveStopId(seg.from.name, seg.from.lat, seg.from.lon);
                     const legItem = legItems[sIdx];
                     if (boardingStopId && legItem) {
+                        legItem.setAttribute('data-stop-id', boardingStopId);
                         loadArrivalsForLeg(boardingStopId, legItem);
                     }
                 }
@@ -1514,7 +1924,7 @@ function buildRouteOptionElement(route, index, isSelected) {
     if (route.endTime) {
         const arrive = document.createElement('span');
         arrive.className = 'directions-route-arrive';
-        arrive.textContent = `arrive at ${formatTimeShort(route.endTime)}`;
+        arrive.textContent = t('arriveAt', formatTimeShort(route.endTime));
         header.appendChild(arrive);
     }
 
@@ -1568,7 +1978,7 @@ function buildRouteOptionElement(route, index, isSelected) {
                 // 1. Origin Stop Name
                 const fromSpan = document.createElement('span');
                 fromSpan.className = 'directions-leg-label';
-                fromSpan.textContent = fromName || 'Origin';
+                fromSpan.textContent = fromName || t('startingPoint');
                 item.appendChild(fromSpan);
 
                 // 2. Space (no comma)
@@ -1587,7 +1997,7 @@ function buildRouteOptionElement(route, index, isSelected) {
                 // 5. Destination Stop Name
                 const toSpan = document.createElement('span');
                 toSpan.className = 'directions-leg-label';
-                toSpan.textContent = toName || 'Destination';
+                toSpan.textContent = toName || t('destinationPoint');
                 item.appendChild(toSpan);
             }
 
@@ -1596,6 +2006,7 @@ function buildRouteOptionElement(route, index, isSelected) {
                 if (busSegmentCount <= 3 && seg.from) {
                     const boardingStopId = resolveStopId(seg.from.name, seg.from.lat, seg.from.lon);
                     if (boardingStopId) {
+                        item.setAttribute('data-stop-id', boardingStopId);
                         loadArrivalsForLeg(boardingStopId, item, section);
                     }
                 }
@@ -1642,7 +2053,7 @@ function renderDirectionsStatus() {
     }
 
     if (state.routing.status === 'loading') {
-        placeholder.textContent = 'Loading route...';
+        placeholder.textContent = t('loadingRoute');
         placeholder.classList.remove('hidden');
         if (resultsContainer) resultsContainer.classList.add('hidden');
         stopDirectionsRefreshTimer();
@@ -2253,6 +2664,15 @@ function setRouteLayersVisibility(visible) {
             console.log(`[DirectionsPlot] Set layer "${layer}" visibility to "${value}"`);
         }
     });
+
+    if (Array.isArray(state.routing.transferMarkers)) {
+        state.routing.transferMarkers.forEach((marker) => {
+            const el = marker.getElement();
+            if (el) {
+                el.style.display = visible ? '' : 'none';
+            }
+        });
+    }
 }
 
 export function updateDirectionsIconState(isActive) {
@@ -2383,19 +2803,23 @@ export function setPoint(type, point, { syncUrl = true, openSheet = true } = {})
     renderMarker(type);
 
     if (!state.hasCompletedFirstUseDefault) {
-        const otherType = type === 'from' ? 'to' : 'from';
-        if (!state[otherType]) {
-            const userCoords = getLastUserCoords();
-            if (userCoords) {
-                state.hasCompletedFirstUseDefault = true;
-                const defaultPoint = {
-                    lng: userCoords.lng,
-                    lat: userCoords.lat,
-                    label: t('myLocation')
-                };
-                state[otherType] = defaultPoint;
-                renderMarker(otherType);
+        if (type === 'to') {
+            const otherType = 'from';
+            if (!state[otherType]) {
+                const userCoords = getLastUserCoords();
+                if (userCoords) {
+                    state.hasCompletedFirstUseDefault = true;
+                    const defaultPoint = {
+                        lng: userCoords.lng,
+                        lat: userCoords.lat,
+                        label: t('myLocation')
+                    };
+                    state[otherType] = defaultPoint;
+                    renderMarker(otherType);
+                }
             }
+        } else if (type === 'from') {
+            state.hasCompletedFirstUseDefault = true;
         }
     }
 
@@ -3164,4 +3588,13 @@ export function getActiveDirectionsMetroDetails() {
     };
 }
 
+export function getActiveDirectionsTransferPoints() {
+    if (!state.routing.result || state.routing.status !== 'success') {
+        return [];
+    }
+    return buildTransferPoints(state.routing.result, state.routing.selectedRouteIndex);
+}
+
 window.getActiveDirectionsMetroDetails = getActiveDirectionsMetroDetails;
+window.getActiveDirectionsTransferPoints = getActiveDirectionsTransferPoints;
+window.isDirectionsContextActive = isDirectionsContextActive;

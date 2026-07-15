@@ -314,7 +314,7 @@ html.show-heading-indicator .mapboxgl-user-location-heading {
     margin-top: -60px !important;
     margin-left: -60px !important;
     /* Apply rotation to the element itself and override Mapbox's internal transform */
-    transition: transform 0.1s linear;
+    transition: none;
     transform: rotate(var(--indicator-rotation, 0deg)) !important;
     /* Use static gradient for the shape, centered at 0deg (Top) */
     background: conic-gradient(from 330deg,

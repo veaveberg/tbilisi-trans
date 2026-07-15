@@ -166,7 +166,13 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         codeLabel: 'Code: {0}',
         stopFallback: 'Stop {0}',
         supportMadeBy: 'Made by Sasha Berg',
-        supportForCommuters: 'for Tbilisi commuters ♥'
+        supportForCommuters: 'for Tbilisi commuters ♥',
+        loadingRoute: 'Loading route...',
+        arriveAt: 'arrive at {0}',
+        walkMode: 'Walk',
+        durationMin: '{0} min',
+        durationHourMin: '{0}h {1}m',
+        durationHour: '{0}h'
     },
     ka: {
         appTitle: 'თბილისი ტრანსი',
@@ -313,7 +319,13 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         codeLabel: 'კოდი: {0}',
         stopFallback: 'გაჩერება {0}',
         supportMadeBy: 'ავტორი: Sasha Berg',
-        supportForCommuters: 'თბილისელი მგზავრებისთვის ♥'
+        supportForCommuters: 'თბილისელი მგზავრებისთვის ♥',
+        loadingRoute: 'მარშრუტი იტვირთება...',
+        arriveAt: 'ჩამოსვლა {0}-ზე',
+        walkMode: 'სიარული',
+        durationMin: '{0} წთ',
+        durationHourMin: '{0} სთ {1} წთ',
+        durationHour: '{0} სთ'
     },
     ru: {
         appTitle: 'Тбилиси Транс',
@@ -460,7 +472,13 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         codeLabel: 'Код: {0}',
         stopFallback: 'Остановка {0}',
         supportMadeBy: 'Сделано Sasha Berg',
-        supportForCommuters: 'для пассажиров Тбилиси ♥'
+        supportForCommuters: 'для пассажиров Тбилиси ♥',
+        loadingRoute: 'Загрузка маршрута...',
+        arriveAt: 'прибытие в {0}',
+        walkMode: 'Пешком',
+        durationMin: '{0} мин',
+        durationHourMin: '{0} ч {1} мин',
+        durationHour: '{0} ч'
     }
 };
 

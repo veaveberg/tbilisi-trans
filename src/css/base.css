@@ -121,6 +121,23 @@ body {
     transition: background-color 0.3s, color 0.3s;
 }
 
+/* Disable selection and touch callouts globally on all elements (prevents iOS magnifier loupe during map drag/zoom gestures) */
+* {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+/* Re-enable text selection on form elements, editable text, and copyable items */
+input, textarea, [contenteditable="true"], .edit-original-inline {
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    user-select: text !important;
+}
+
+
+
 body.loading,
 body.loading * {
     transition: none !important;
