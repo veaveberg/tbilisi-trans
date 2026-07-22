@@ -2367,7 +2367,7 @@ id,name_en,name_en_override,name_ka,name_ka_override,name_ru_override,lat,lat_ov
 1:4335,Tevdore Mghvdeli Street,,თევდორე მღვდლის ქუჩა,,,41.720637,41.7205876227319,44.796943,44.79694700903602,247,247,,,,,
 1:4336,Tevdore Mghvdeli Street,,თევდორე მღვდლის ქუჩა,,,41.720555,41.72048749017483,44.796992,44.79702104946571,63,63,,,,,
 1:4342,"M/S ""Avlabari""",,"მ/ს ""ავლაბარი""",,,41.692179,,44.81493,,296,296,1:4343,,,,
-1:4343,მ/ს ავლაბარი  (2),,მ/ს ავლაბარი  (2),,,41.692191,41.69216,44.814741,44.814724,296,296,,HUB_1_825,,,
+1:4343,მ/ს ავლაბარი  (2),,მ/ს ავლაბარი  (2),,,41.692191,41.69221,44.814741,44.81475,296,296,,HUB_1_825,,,
 1:4344,"M/S ""Avlabari""",,"მ/ს ""ავლაბარი""",,,41.692142,,44.814909,,305,305,1:825,,,,
 1:4345,მ/ს ავლაბარი (5),,მ/ს ავლაბარი (5),,,41.692777,41.692582,44.814845,44.814694,203,203,,HUB_1_825,,,
 1:4346,მ/ს ავლაბარი (6),,მ/ს ავლაბარი (6),,,41.692761,,44.814895,,191,191,1:4347,,,,
@@ -3019,13 +3019,13 @@ id,name_en,name_en_override,name_ka,name_ka_override,name_ru_override,lat,lat_ov
 Separate ticket system!
 One-way ticket is 3₾ for residents (ID required) and 12₾ for other foreign citizens
 
-You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used for 2 people, maybe more)"
+You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used several people)"
 1:GONDOLA_MANUAL_2,,Mtatsminda Park Funicular Upper Station,,მთაწმინდის პარკის ფუნიკულიორის ზედა სადგური,,,41.69492,,44.78694,0,,,,GONDOLA,manual-gondola,"Everyday: 9:45–22:30
 
 Separate ticket system!
 One-way ticket is 3₾ for residents (ID required) and 12₾ for other foreign citizens
 
-You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used for 2 people, maybe more)"
+You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used several people)"
 1:GONDOLA_MANUAL_3,,Mtatsminda Park Cable Car,,მთაწმინდის პარკი საბაგირო სადგური,,,41.69578,,44.78643,0,,,,GONDOLA,manual-gondola,"11:00–22:30 (last checked in June 2026)
 
 Separate ticket system!
@@ -3066,20 +3066,20 @@ You also need to buy a Mtatsminda Park card for 2₾ (reusable, and can be used 
 2:88,Leonidze Str.#26,,ლეონიძეს ქუჩა №26,,,41.569622,,44.978709,,0,,,,,,
 2:91,Leonidze Str.#22,,ლეონიძეს ქუჩა №22,,,41.56872,,44.98089,,0,,,,,,
 2:94,Leonidze Str.#12,,ლეონიძეს ქუჩა №12,,,41.567206,,44.984524,,0,,,,,,
-2:106,Kldiashvili Str. N11,,კლდიაშვილის ქუჩა №11 მოპირდაპირედ (ახალგ. პარკი),,,41.557006,,44.987792,,0,,,,,,
-2:183,Kldiashvili Str. N7,,კლდიაშვილის ქუჩა №7,,,41.555455,,44.98398,,0,,,,,,
-2:186,Kldiashvili Street #15,,კლდიაშვილის ქუჩა №15,,,41.556832,,44.987832,,0,,,,,,
+2:106,Kldiashvili Str. N11,,კლდიაშვილის ქუჩა №11 მოპირდაპირედ (ახალგ. პარკი),,,41.557006,,44.987792,,0,246,,,,,
+2:183,Kldiashvili Str. N7,,კლდიაშვილის ქუჩა №7,,,41.555455,,44.98398,,0,61,,,,,
+2:186,Kldiashvili Street #15,,კლდიაშვილის ქუჩა №15,,,41.556832,,44.987832,,0,63,,,,,
 2:411,Opposite Leonidze Str. #22,,ლეონიძეს ქუჩა №22 მოპირდაპირედ,,,41.569232,,44.979979,,0,,,,,,
 2:417,Opposite Leonidze Str. #30,,ლეონიძეს ქუჩა №30 მოპირდაპირედ,,,41.570027,,44.978095,,0,,,,,,
 2:469,Opposite Leonidze Str. #12,,ლეონიძეს ქუჩა №12 (მოპირდაპირედ),,,41.567615,,44.983952,,0,,,,,,
-2:1443,Tashkenti Str.#7,,ტაშკენტის ქ. N7,,,41.567683,,44.973989,,137,137,,,,,
-2:1446,Kldiashvili Str. #7 Opposite,,კლდიაშვილის ქუჩა N7 მოპირდაპირედ,,,41.555681,,44.984182,,133,133,,,,,
-2:1569,Railway Station,,რკინიგზის სადგური,,,41.555916,,45.019168,,248,248,,,,,
-2:2583,Tavgorashvili Str. near School #26,,თავგორაშვულის ქ. 26 სკოლასთან,,,41.555234,,44.991192,,209,209,,,,,
-2:2929,Pirosmani Str. #30,,ფიროსმანის ქუჩა 30,,,41.535096,,45.015369,,102,102,,,,,
-2:2935,Tsurtaveli Str.#1,,ცურტაველის 1 ნომერი,,,41.548341,,44.990961,,89,89,,,,,
-2:3594,"Lomouri Str. (Clinic ""Rustavi"")",,"ლომოურის ქუჩა (კლინიკა ""რუსთავი"")",,,41.559317,,44.969483,,331,331,,,,,
-2:4212,People's Friendship Avenue (nearby hotel Rustavi),,ხალხთა მეგობრობის გამზირი (სასტუმრო რუსთავის მ/ტ),,,41.561596,,44.979155,,12,12,,,,,
+2:1443,Tashkenti Str.#7,,ტაშკენტის ქ. N7,,,41.567683,,44.973989,,137,27,,,,,
+2:1446,Kldiashvili Str. #7 Opposite,,კლდიაშვილის ქუჩა N7 მოპირდაპირედ,,,41.555681,,44.984182,,133,246,,,,,
+2:1569,Railway Station,,რკინიგზის სადგური,,,41.555916,,45.019168,,248,316,,,,,
+2:2583,Tavgorashvili Str. near School #26,,თავგორაშვულის ქ. 26 სკოლასთან,,,41.555234,,44.991192,,209,359,,,,,
+2:2929,Pirosmani Str. #30,,ფიროსმანის ქუჩა 30,,,41.535096,,45.015369,,102,326,,,,,
+2:2935,Tsurtaveli Str.#1,,ცურტაველის 1 ნომერი,,,41.548341,,44.990961,,89,207,,,,,
+2:3594,"Lomouri Str. (Clinic ""Rustavi"")",,"ლომოურის ქუჩა (კლინიკა ""რუსთავი"")",,,41.559317,,44.969483,,331,172,,,,,
+2:4212,People's Friendship Avenue (nearby hotel Rustavi),,ხალხთა მეგობრობის გამზირი (სასტუმრო რუსთავის მ/ტ),,,41.561596,,44.979155,,12,137,,,,,
 2:17018,ფილარმონია,,ფილარმონია,,,41.706992,,44.786944,,0,,,,,,
 2:17850,მესხიშვილის წრე,,მესხიშვილის წრე,,,41.567001,,44.985588,,0,,,,,,
 ,,,,,,,,,,,,,,,,

@@ -325,6 +325,14 @@ export function setMapFocus(active) {
 
 }
 
+export function refreshMapFocusDimTheme() {
+    const DIM_LAYER_ID = 'map-focus-dim-layer';
+    if (!map.getLayer(DIM_LAYER_ID)) return;
+
+    const isDark = document.body.classList.contains('dark-mode');
+    map.setPaintProperty(DIM_LAYER_ID, 'fill-color', isDark ? '#1e293b' : '#ffffff');
+}
+
 export function addMetroHoverLogic(map, filterManager) {
     if (!map.getLayer('metro-layer-circle')) return;
 

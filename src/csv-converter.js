@@ -174,11 +174,50 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
     });
     console.log('[CSV Converter] Created rowsMap with', rowsMap.size, 'entries');
 
+    const stopKey = (id) => {
+        const raw = String(id || '');
+        const stripped = raw.replace(/^(rustavi:|[12]:)/i, '');
+        if (/^r\d/i.test(stripped) || raw.startsWith('2:') || raw.toLowerCase().startsWith('rustavi:')) {
+            return `rustavi:${stripped.replace(/^r/i, '')}`;
+        }
+        return `tbilisi:${stripped}`;
+    };
+
+    const findRowId = (id) => {
+        const key = stopKey(id);
+        for (const rowId of rowsMap.keys()) {
+            if (stopKey(rowId) === key) return rowId;
+        }
+        return null;
+    };
+
+    const preferAppIdLast = (a, b) => {
+        const apiPrefixA = /^(rustavi:|[12]:)/i.test(String(a));
+        const apiPrefixB = /^(rustavi:|[12]:)/i.test(String(b));
+        return Number(apiPrefixB) - Number(apiPrefixA);
+    };
+
+    const getByStopId = (collection, id) => {
+        if (!collection) return undefined;
+        const key = stopKey(id);
+        let match;
+        Object.keys(collection).sort(preferAppIdLast).forEach(collectionId => {
+            if (stopKey(collectionId) === key) match = collection[collectionId];
+        });
+        return match;
+    };
+
+    const hasHubMember = (members, id) => {
+        if (!Array.isArray(members)) return false;
+        const key = stopKey(id);
+        return members.some(memberId => stopKey(memberId) === key);
+    };
+
     // Create a normalized overrides map to handle duplicates like "1:811" and "811"
-    // We prioritize non-prefixed IDs if both exist, as they likely come from recent user edits
+    // without colliding with Rustavi IDs like "2:811" or "r811".
     const normalizedOverrides = {};
-    Object.keys(overrides).forEach(key => {
-        const baseId = key.includes(':') ? key.split(':')[1] : key;
+    Object.keys(overrides).sort(preferAppIdLast).forEach(key => {
+        const baseId = stopKey(key);
         const existing = normalizedOverrides[baseId];
 
         // If we already have a prefixed one and this is a base one, or vice-versa, merge them
@@ -203,7 +242,7 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
         row.gondolaInfo_override = '';
 
         // Try to find override using normalized map
-        const baseId = id.includes(':') ? id.split(':')[1] : id;
+        const baseId = stopKey(id);
         const override = normalizedOverrides[baseId];
 
         if (override) {
@@ -224,8 +263,8 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
 
         // Apply merges (normalize incoming merges too)
         const normalizedMerges = {};
-        Object.keys(merges).forEach(k => {
-            const b = k.includes(':') ? k.split(':')[1] : k;
+        Object.keys(merges).sort(preferAppIdLast).forEach(k => {
+            const b = stopKey(k);
             normalizedMerges[b] = merges[k];
         });
 
@@ -237,11 +276,7 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
         // Apply hubs
         Object.keys(hubs).forEach(hubId => {
             const members = hubs[hubId];
-            const hasMember = members.some(m => {
-                const mb = m.includes(':') ? m.split(':')[1] : m;
-                return mb === baseId;
-            });
-            if (hasMember) {
+            if (hasHubMember(members, id)) {
                 row.hubTarget = hubId;
             }
         });
@@ -255,21 +290,12 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
     ]);
 
     allStopIds.forEach(id => {
-        const baseId = id.includes(':') ? id.split(':')[1] : id;
-
         // Find if we already have this ID or one with the same baseId
         let existingId = null;
         if (rowsMap.has(id)) {
             existingId = id;
         } else {
-            // Scan for same baseId
-            for (const rid of rowsMap.keys()) {
-                const rBaseId = rid.includes(':') ? rid.split(':')[1] : rid;
-                if (rBaseId === baseId) {
-                    existingId = rid;
-                    break;
-                }
-            }
+            existingId = findRowId(id);
         }
 
         if (!existingId) {
@@ -290,7 +316,7 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
             row.gondolaInfo_override = '';
 
             // Apply overrides
-            const override = overrides[id]; // Here the ID is from config, so direct access is likely fine if it's new
+            const override = getByStopId(overrides, id);
             if (override) {
                 if (override.name) {
                     if (override.name.en !== undefined) row.name_en_override = override.name.en;
@@ -306,25 +332,19 @@ export async function convertStopsConfigToCSV(config, existingCsvPath) {
             }
 
             // Apply merges
-            if (merges[id]) {
-                row.mergeParent = merges[id];
+            const mergeParent = getByStopId(merges, id);
+            if (mergeParent) {
+                row.mergeParent = mergeParent;
             }
 
             // Apply hubs
             Object.keys(hubs).forEach(hubId => {
-                if (hubs[hubId].includes(id)) {
+                if (hasHubMember(hubs[hubId], id)) {
                     row.hubTarget = hubId;
                 }
             });
 
             rowsMap.set(id, row);
-        } else if (existingId && existingId !== id) {
-            // Replace stripped/wrongly-prefixed ID with the correct one
-            const row = rowsMap.get(existingId);
-            row.id = id;
-            rowsMap.delete(existingId);
-            rowsMap.set(id, row);
-            console.log(`[CSV Converter] Updated existing row ID from ${existingId} to ${id}`);
         }
     });
 

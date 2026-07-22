@@ -36,6 +36,66 @@ let _map = null;
 let _dataProvider = null;
 let _uiCallbacks = null;
 
+function getStopIdVariants(id) {
+    if (!id) return [];
+
+    const raw = String(id);
+    const variants = new Set([raw]);
+    const withoutSource = raw.replace(/^(rustavi:|[12]:)/i, '');
+
+    variants.add(withoutSource);
+
+    if (/^r\d/i.test(withoutSource)) {
+        const rustaviNumeric = withoutSource.replace(/^r/i, '');
+        variants.add(`2:${rustaviNumeric}`);
+        variants.add(`rustavi:${rustaviNumeric}`);
+    } else if (raw.startsWith('2:') || raw.toLowerCase().startsWith('rustavi:')) {
+        variants.add(`r${withoutSource}`);
+        variants.add(`2:${withoutSource}`);
+    } else {
+        variants.add(`1:${withoutSource}`);
+    }
+
+    return Array.from(variants);
+}
+
+function getStopConfigValue(collection, stopId) {
+    if (!collection || !stopId) return undefined;
+
+    for (const variant of getStopIdVariants(stopId)) {
+        if (Object.prototype.hasOwnProperty.call(collection, variant)) {
+            return collection[variant];
+        }
+    }
+
+    return undefined;
+}
+
+function getStopHubTarget(hubs, stopId) {
+    if (!hubs || !stopId) return null;
+    const variants = new Set(getStopIdVariants(stopId));
+
+    for (const [hubId, members] of Object.entries(hubs)) {
+        if (Array.isArray(members) && members.some(memberId => variants.has(String(memberId)))) {
+            return hubId;
+        }
+    }
+
+    return null;
+}
+
+function getCanonicalSavedStopId(id) {
+    if (!id) return id;
+
+    const raw = String(id);
+    const withoutSource = raw.replace(/^(rustavi:|[12]:)/i, '');
+    if (/^r\d/i.test(withoutSource) || raw.startsWith('2:') || raw.toLowerCase().startsWith('rustavi:')) {
+        return `2:${withoutSource.replace(/^r/i, '')}`;
+    }
+
+    return `1:${withoutSource}`;
+}
+
 export function getEditState() {
     return editState;
 }
@@ -746,12 +806,14 @@ function startEditing(stopId) {
             hubAdds: []
         };
 
-        if (stopsConfig?.overrides?.[stopId]) {
-            editState.overrides = { ...stopsConfig.overrides[stopId] };
+        const savedOverrides = getStopConfigValue(stopsConfig?.overrides, stopId);
+        if (savedOverrides) {
+            editState.overrides = { ...savedOverrides };
         }
 
-        if (stopsConfig?.hubs?.[stopId]) {
-            editState.hubTarget = stopsConfig.hubs[stopId];
+        const savedHubTarget = getStopHubTarget(stopsConfig?.hubs, stopId);
+        if (savedHubTarget) {
+            editState.hubTarget = savedHubTarget;
         } else {
             editState.hubTarget = null;
         }
@@ -795,7 +857,7 @@ function startEditing(stopId) {
     fetchMissingName(stopId, 'en').then(val => setOriginal('en', val));
     fetchMissingName(stopId, 'ka').then(val => setOriginal('ka', val));
 
-    if (editState.overrides.lat || editState.overrides.lon) {
+    if (editState.overrides.lat !== undefined || editState.overrides.lon !== undefined) {
         toggleLoc.classList.add('active');
     } else {
         toggleLoc.classList.remove('active');
@@ -862,8 +924,8 @@ function updateEditMap() {
     if (!stop) return;
 
     let lat, lon;
-    if (editState.overrides.lat) lat = parseFloat(editState.overrides.lat);
-    if (editState.overrides.lon) lon = parseFloat(editState.overrides.lon);
+    if (editState.overrides.lat !== undefined) lat = parseFloat(editState.overrides.lat);
+    if (editState.overrides.lon !== undefined) lon = parseFloat(editState.overrides.lon);
 
     if (isNaN(lat) || isNaN(lon)) {
         lat = parseFloat(stop.lat);
@@ -1197,13 +1259,8 @@ async function saveEditChanges() {
         });
     }
 
-    const api = await import('./api.js');
-    const toSavedStopId = (id) => {
-        if (typeof id === 'string' && id.startsWith('r')) return id;
-        return api.getApiId(id);
-    };
+    const currentSavedStopId = getCanonicalSavedStopId(editState.stopId);
 
-    // Save Tbilisi stops with API IDs and preserve Rustavi's canonical r-prefixed IDs.
     const saveStopsConfig = {
         overrides: {},
         merges: {},
@@ -1211,16 +1268,21 @@ async function saveEditChanges() {
     };
 
     Object.keys(stopsConfig.overrides || {}).forEach(id => {
-        saveStopsConfig.overrides[toSavedStopId(id)] = stopsConfig.overrides[id];
+        const savedId = getCanonicalSavedStopId(id);
+        saveStopsConfig.overrides[savedId] = {
+            ...(saveStopsConfig.overrides[savedId] || {}),
+            ...stopsConfig.overrides[id]
+        };
     });
+    saveStopsConfig.overrides[currentSavedStopId] = { ...editState.overrides };
 
     Object.keys(stopsConfig.merges || {}).forEach(id => {
-        saveStopsConfig.merges[toSavedStopId(id)] = toSavedStopId(stopsConfig.merges[id]);
+        saveStopsConfig.merges[getCanonicalSavedStopId(id)] = getCanonicalSavedStopId(stopsConfig.merges[id]);
     });
 
     Object.keys(stopsConfig.hubs || {}).forEach(hubId => {
         // Hub IDs are internal (e.g. HUB_1_811), no need to getApiId for the key
-        saveStopsConfig.hubs[hubId] = (stopsConfig.hubs[hubId] || []).map(id => toSavedStopId(id));
+        saveStopsConfig.hubs[hubId] = (stopsConfig.hubs[hubId] || []).map(id => getCanonicalSavedStopId(id));
     });
 
     try {
@@ -1252,7 +1314,7 @@ async function saveEditChanges() {
         }
 
         if (editSessionCache[editState.stopId]) delete editSessionCache[editState.stopId];
-        stopEditing(true);
+        stopEditing(false);
 
         if (_uiCallbacks.refreshStopsLayer) await _uiCallbacks.refreshStopsLayer(true);
 
@@ -1278,9 +1340,9 @@ function checkDirtyState() {
     if (!applyBtn || !editState.stopId) return;
 
     const stopsConfig = window.stopsConfig || {};
-    const savedOverrides = stopsConfig.overrides?.[editState.stopId] || {};
+    const savedOverrides = getStopConfigValue(stopsConfig.overrides, editState.stopId) || {};
     const currentParent = editState.mergeParent || null;
-    const savedParent = stopsConfig.merges?.[editState.stopId] || null;
+    const savedParent = getStopConfigValue(stopsConfig.merges, editState.stopId) || null;
 
     const getVal = (v) => v === undefined || v === null ? '' : v.toString();
 

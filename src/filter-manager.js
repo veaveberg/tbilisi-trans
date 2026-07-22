@@ -51,6 +51,43 @@ export class FilterManager {
         this.destinationMarkers = new Map(); // Map<stopId, Marker>
     }
 
+    keepFilterVisualLayersAboveDimming() {
+        const moveToTop = (layerId) => {
+            try {
+                if (this.map.getLayer(layerId)) this.map.moveLayer(layerId);
+            } catch (e) {
+                console.warn(`[FilterManager] Failed to move layer ${layerId}`, e);
+            }
+        };
+
+        // Keep selected segment/context lines visible first, then draw filter paths
+        // and stops above them. Later calls to moveLayer stack subsequent layers above
+        // earlier ones.
+        [
+            'minibus-segments-layer',
+            'filter-connection-line',
+            'stops-layer-glow',
+            'stops-layer-circle',
+            'metro-layer-circle',
+            'stops-layer',
+            'stops-highlight-glow',
+            'stops-highlight',
+            'destination-markers-layer',
+            'filter-connection-label',
+            'filter-connection-label-sub',
+            'stops-label-selected',
+            'stops-layer-circle-hover',
+            'stops-layer-hover',
+            'metro-exits-glow',
+            'metro-exits-layer',
+            'metro-segment-center-label',
+            'live-buses-label',
+            'live-buses-bg',
+            'live-buses-circle',
+            'live-buses-arrow'
+        ].forEach(moveToTop);
+    }
+
     getEquivalentStops(id) {
         // Re-implementing helper from main.js using dataProvider
         const hubMap = this.dataProvider.getHubMap();
@@ -1032,6 +1069,7 @@ export class FilterManager {
             });
         }
 
+        this.keepFilterVisualLayersAboveDimming();
         this.updateDestinationMarkers();
     }
 

@@ -34,7 +34,8 @@ let deps = {
     showRouteOnMap: null,
     RouteGeometry: null,
     v3RoutesMap: null,
-    getVirtualPatterns: null
+    getVirtualPatterns: null,
+    updateStopRouteChipLiveBuses: null
 };
 
 /**
@@ -174,6 +175,7 @@ export function resetStopRouteFilter(stopId = null) {
     console.log(`[ArrivalsFilter] resetStopRouteFilter called for stopId: ${stopId}`);
     selectedStopRouteIds = new Set();
     selectedStopRouteFilterStopId = stopId ? String(stopId) : null;
+    syncStopRouteChipLiveBuses(selectedStopRouteFilterStopId);
 }
 
 export function setStopRouteFilterIds(routeIds = [], stopId = null) {
@@ -184,6 +186,7 @@ export function setStopRouteFilterIds(routeIds = [], stopId = null) {
             : []
     );
     selectedStopRouteFilterStopId = stopId ? String(stopId) : null;
+    syncStopRouteChipLiveBuses(selectedStopRouteFilterStopId);
     return getSelectedStopRouteFilterIds(stopId);
 }
 
@@ -202,6 +205,7 @@ export function pruneStopRouteFilterIds(validRouteIds = [], stopId = null) {
     }
     selectedStopRouteIds = new Set(Array.from(selectedStopRouteIds).filter(id => valid.has(String(id))));
     if (normalizedStopId) selectedStopRouteFilterStopId = normalizedStopId;
+    syncStopRouteChipLiveBuses(selectedStopRouteFilterStopId);
     return new Set(selectedStopRouteIds);
 }
 
@@ -223,7 +227,16 @@ export function toggleStopRouteFilter(routeId, stopId = null) {
         selectedStopRouteIds.add(routeKey);
     }
 
+    syncStopRouteChipLiveBuses(selectedStopRouteFilterStopId);
     return getSelectedStopRouteFilterIds(normalizedStopId);
+}
+
+function syncStopRouteChipLiveBuses(stopId = null) {
+    if (typeof deps.updateStopRouteChipLiveBuses !== 'function') return;
+    deps.updateStopRouteChipLiveBuses(
+        stopId ? String(stopId) : null,
+        Array.from(getSelectedStopRouteFilterIds(stopId))
+    );
 }
 
 // === UTILITY FUNCTIONS ===

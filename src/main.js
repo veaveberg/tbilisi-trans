@@ -17,8 +17,8 @@ import * as metro from './metro.js';
 const { handleMetroStop } = metro;
 import { setupGeolocation, isTrackingActive, stopTracking, isUserInteractingWithMap, LOCATION_STATES, refreshLocationMarker } from './geolocation.js';
 import { map, getMapHash } from './map-setup.js';
-import { setupVisuals, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, renderLiveBuses, registerLiveBusLine, clearLiveBuses, holdLiveBuses, setMapLightPreset } from './map-visuals.js';
-import { setMapFocus, setupHoverHandlers, setupClickHandlers, addMetroHoverLogic, clearStopHoverState, runMapAction, resolvePlaceClickDetails } from './map-interactions.js';
+import { setupVisuals, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, renderLiveBuses, registerLiveBusLine, clearLiveBuses, holdLiveBuses, refreshLiveBusTheme, decorateLiveBusFeatures, setMapLightPreset } from './map-visuals.js';
+import { setMapFocus, refreshMapFocusDimTheme, setupHoverHandlers, setupClickHandlers, addMetroHoverLogic, clearStopHoverState, runMapAction, resolvePlaceClickDetails } from './map-interactions.js';
 import stopRotations from './data/stop_bearings.json';
 import { db } from './db.js';
 import { historyManager, addToHistory, popHistory, clearHistory, updateBackButtons, peekHistory } from './history.js';
@@ -135,6 +135,11 @@ let trackingZoomBeforePause = null;
 let filterBusUpdateInFlight = false;
 let filterBusUpdateQueued = false;
 const filterBusThrottle = new Map(); // routeId -> { lastTs, failCount, cooldownUntil }
+let stopRouteChipLiveBusInterval = null;
+let stopRouteChipLiveBusToken = 0;
+let stopRouteChipLiveBusInFlight = false;
+let stopRouteChipLiveBusQueuedRequest = null;
+const stopRouteChipLiveBusThrottle = new Map(); // routeId -> { lastTs, failCount, cooldownUntil }
 let liveBusRequestGateTs = 0;
 const LIVE_BUS_REQUEST_INTERVAL_MS = 1000;
 const IOS_NATIVE_CACHE_VERSION_KEY = 'iosNativeCacheVersion';
@@ -668,7 +673,8 @@ arrivals.initArrivals({
     showRouteOnMap,
     RouteGeometry,
     v3RoutesMap: () => v3RoutesMap,
-    getVirtualPatterns: api.getVirtualPatterns
+    getVirtualPatterns: api.getVirtualPatterns,
+    updateStopRouteChipLiveBuses
 });
 
 // Initialize Hover Handlers
@@ -2068,6 +2074,8 @@ window.addEventListener('themeChanged', (e) => {
 
     // 1. Update the map's light preset
     setMapLightPreset(lightPreset);
+    refreshMapFocusDimTheme();
+    refreshLiveBusTheme();
 
     // 2. Update custom label colors (Metro, etc.) after a brief delay
     setTimeout(() => {
@@ -3138,6 +3146,137 @@ function getPatternPolyline(routeId, suffix) {
     return coords && Array.isArray(coords) && coords.length >= 2 ? { route, pattern, coords } : null;
 }
 
+function getRoutePatternSuffixesForLiveBuses(routeId, stopId = null) {
+    const route = allRoutes.find(r => String(r.id) === String(routeId));
+    const details = route?._details || api.getStaticRouteDetails?.(routeId) || null;
+    if (!details) return [];
+
+    const stopKey = stopId ? String(stopId) : '';
+    if (stopKey && Array.isArray(details._stopsOfPatterns)) {
+        const stopEntry = details._stopsOfPatterns.find(entry => {
+            const entryStopId = String(entry?.stop?.id || entry?.stop || '');
+            return entryStopId === stopKey || normalizeRouteId(entryStopId) === normalizeRouteId(stopKey);
+        });
+        const scoped = Array.isArray(stopEntry?.patternSuffixes) ? stopEntry.patternSuffixes.filter(Boolean) : [];
+        if (scoped.length > 0) return Array.from(new Set(scoped));
+    }
+
+    const suffixes = Array.isArray(details.patterns)
+        ? details.patterns.map(p => p?.patternSuffix || p?.suffix).filter(Boolean)
+        : [];
+    return Array.from(new Set(suffixes));
+}
+
+function buildRoutePatternMap(routeIds = [], stopId = null) {
+    const patternMap = new Map();
+    (Array.isArray(routeIds) ? routeIds : []).forEach(routeId => {
+        const rid = String(routeId || '').trim();
+        if (!rid) return;
+        const suffixes = getRoutePatternSuffixesForLiveBuses(rid, stopId);
+        if (suffixes.length > 0) patternMap.set(rid, new Set(suffixes));
+    });
+    return patternMap;
+}
+
+async function collectLiveBusFeatures(routeIds, patternMap, throttleMap) {
+    if (!Array.isArray(routeIds) || routeIds.length === 0) {
+        return { features: [], hadError: false };
+    }
+    if (!(patternMap instanceof Map)) {
+        return { features: [], hadError: false };
+    }
+
+    const features = [];
+    const tasks = [];
+    const uniqueByVehicle = new Map();
+    let hadError = false;
+
+    const nowTs = Date.now();
+    const MAX_ROUTES = 8;
+    let scheduled = 0;
+    routeIds.forEach(routeId => {
+        if (scheduled >= MAX_ROUTES) return;
+        const rid = String(routeId);
+        const throttle = throttleMap.get(rid) || { lastTs: 0, failCount: 0, cooldownUntil: 0 };
+        if (throttle.cooldownUntil && nowTs < throttle.cooldownUntil) return;
+        if (nowTs - throttle.lastTs < 2000) return;
+        throttle.lastTs = nowTs;
+        throttleMap.set(rid, throttle);
+        const suffixesSet = patternMap.get(rid);
+        if (!suffixesSet || suffixesSet.size === 0) return;
+        const suffixes = Array.from(suffixesSet);
+        const color = getFilterRouteColor(rid);
+        const routeObj = allRoutes.find(r => String(r.id) === rid);
+        const routeLabel = simplifyNumber(routeObj?.shortName || routeObj?.number || rid);
+
+        tasks.push(async () => {
+            try {
+                const data = await api.fetchBusPositionsV3Multi(rid, suffixes);
+                const throttleState = throttleMap.get(rid) || { lastTs: nowTs, failCount: 0, cooldownUntil: 0 };
+                throttleState.failCount = 0;
+                throttleState.cooldownUntil = 0;
+                throttleMap.set(rid, throttleState);
+                suffixes.forEach((suffix) => {
+                    const buses = data && data[suffix] ? data[suffix] : [];
+                    const lineInfo = getPatternPolyline(rid, suffix);
+                    const lineKey = lineInfo ? `${rid}:${suffix}` : null;
+                    if (lineInfo && lineKey) {
+                        registerLiveBusLine(lineKey, lineInfo.coords);
+                    } else if (lineInfo && lineInfo.pattern && !lineInfo.pattern._fetchingPolyline) {
+                        RouteGeometry.fetchAndCacheGeometry(lineInfo.route, lineInfo.pattern, { strategy: 'cache-only' });
+                    }
+                    buses.forEach(bus => {
+                        if (!bus || !Number.isFinite(bus.lon) || !Number.isFinite(bus.lat)) return;
+                        const key = bus.vehicleId ? String(bus.vehicleId) : `${rid}:${suffix}:${bus.lon}:${bus.lat}`;
+                        if (uniqueByVehicle.has(key)) return;
+                        uniqueByVehicle.set(key, true);
+                        const fraction = (lineInfo && lineInfo.coords)
+                            ? nearestFractionOnLine(lineInfo.coords, { lng: bus.lon, lat: bus.lat })
+                            : null;
+                        features.push({
+                            type: 'Feature',
+                            geometry: { type: 'Point', coordinates: [bus.lon, bus.lat] },
+                            properties: {
+                                heading: bus.heading,
+                                id: bus.vehicleId || key,
+                                color,
+                                routeLabel,
+                                _ts: nowTs,
+                                _lineKey: lineKey,
+                                _lineFrac: Number.isFinite(fraction) ? fraction : null
+                            }
+                        });
+                    });
+                });
+            } catch {
+                hadError = true;
+                const throttleState = throttleMap.get(rid) || { lastTs: nowTs, failCount: 0, cooldownUntil: 0 };
+                throttleState.failCount += 1;
+                if (throttleState.failCount >= 2) {
+                    throttleState.cooldownUntil = nowTs + Math.min(60000, 5000 * throttleState.failCount);
+                }
+                throttleMap.set(rid, throttleState);
+            }
+        });
+        scheduled += 1;
+    });
+
+    if (tasks.length === 0) {
+        return { features: [], hadError };
+    }
+
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    for (let i = 0; i < tasks.length; i += 1) {
+        const now = Date.now();
+        const wait = Math.max(0, liveBusRequestGateTs - now);
+        if (wait > 0) await sleep(wait);
+        liveBusRequestGateTs = Date.now() + LIVE_BUS_REQUEST_INTERVAL_MS;
+        await tasks[i]();
+    }
+
+    return { features: decorateLiveBusFeatures(features), hadError };
+}
+
 function isRoutePanelVisible() {
     const panel = document.getElementById('route-info');
     return !!(panel && !panel.classList.contains('hidden'));
@@ -3176,101 +3315,8 @@ async function updateFilteredLiveBuses(routeIds, patternMap) {
         }
         if (window.currentRoute && isRoutePanelVisible()) return;
 
-        if (!Array.isArray(routeIds) || routeIds.length === 0) {
-            clearLiveBuses();
-            return;
-        }
-        if (!(patternMap instanceof Map)) {
-            clearLiveBuses();
-            return;
-        }
-
         const requestToken = ++filterBusUpdateToken;
-        const features = [];
-        const tasks = [];
-        const uniqueByVehicle = new Map();
-        let hadError = false;
-
-        const nowTs = Date.now();
-        const MAX_ROUTES = 8;
-        let scheduled = 0;
-        routeIds.forEach(routeId => {
-            if (scheduled >= MAX_ROUTES) return;
-            const rid = String(routeId);
-            const throttle = filterBusThrottle.get(rid) || { lastTs: 0, failCount: 0, cooldownUntil: 0 };
-            if (throttle.cooldownUntil && nowTs < throttle.cooldownUntil) return;
-            if (nowTs - throttle.lastTs < 2000) return;
-            throttle.lastTs = nowTs;
-            filterBusThrottle.set(rid, throttle);
-            const suffixesSet = patternMap.get(rid);
-            if (!suffixesSet || suffixesSet.size === 0) return;
-            const suffixes = Array.from(suffixesSet);
-            const color = getFilterRouteColor(rid);
-
-            tasks.push(async () => {
-                try {
-                    const data = await api.fetchBusPositionsV3Multi(rid, suffixes);
-                    const throttleState = filterBusThrottle.get(rid) || { lastTs: nowTs, failCount: 0, cooldownUntil: 0 };
-                    throttleState.failCount = 0;
-                    throttleState.cooldownUntil = 0;
-                    filterBusThrottle.set(rid, throttleState);
-                    suffixes.forEach((suffix) => {
-                        const buses = data && data[suffix] ? data[suffix] : [];
-                        const lineInfo = getPatternPolyline(rid, suffix);
-                        const lineKey = lineInfo ? `${rid}:${suffix}` : null;
-                        if (lineInfo && lineKey) {
-                            registerLiveBusLine(lineKey, lineInfo.coords);
-                        } else if (lineInfo && lineInfo.pattern && !lineInfo.pattern._fetchingPolyline) {
-                            RouteGeometry.fetchAndCacheGeometry(lineInfo.route, lineInfo.pattern, { strategy: 'cache-only' });
-                        }
-                        buses.forEach(bus => {
-                            if (!bus || !Number.isFinite(bus.lon) || !Number.isFinite(bus.lat)) return;
-                            const key = bus.vehicleId ? String(bus.vehicleId) : `${rid}:${suffix}:${bus.lon}:${bus.lat}`;
-                            if (uniqueByVehicle.has(key)) return;
-                            uniqueByVehicle.set(key, true);
-                            const fraction = (lineInfo && lineInfo.coords)
-                                ? nearestFractionOnLine(lineInfo.coords, { lng: bus.lon, lat: bus.lat })
-                                : null;
-                            features.push({
-                                type: 'Feature',
-                                geometry: { type: 'Point', coordinates: [bus.lon, bus.lat] },
-                                properties: {
-                                    heading: bus.heading,
-                                    id: bus.vehicleId || key,
-                                    color,
-                                    _ts: nowTs,
-                                    _lineKey: lineKey,
-                                    _lineFrac: Number.isFinite(fraction) ? fraction : null
-                                }
-                            });
-                        });
-                    });
-                } catch {
-                    hadError = true;
-                    const throttleState = filterBusThrottle.get(rid) || { lastTs: nowTs, failCount: 0, cooldownUntil: 0 };
-                    throttleState.failCount += 1;
-                    if (throttleState.failCount >= 2) {
-                        throttleState.cooldownUntil = nowTs + Math.min(60000, 5000 * throttleState.failCount);
-                    }
-                    filterBusThrottle.set(rid, throttleState);
-                }
-            });
-            scheduled += 1;
-        });
-
-        if (tasks.length === 0) {
-            clearLiveBuses();
-            return;
-        }
-
-        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-        for (let i = 0; i < tasks.length; i += 1) {
-            const now = Date.now();
-            const wait = Math.max(0, liveBusRequestGateTs - now);
-            if (wait > 0) await sleep(wait);
-            liveBusRequestGateTs = Date.now() + LIVE_BUS_REQUEST_INTERVAL_MS;
-            await tasks[i]();
-        }
+        const { features, hadError } = await collectLiveBusFeatures(routeIds, patternMap, filterBusThrottle);
         if (requestToken !== filterBusUpdateToken) return;
         if (features.length === 0 && hadError) {
             holdLiveBuses();
@@ -3296,6 +3342,73 @@ function startFilterLiveBuses(routeIds, patternMap) {
         if (document.hidden) return;
         updateFilteredLiveBuses(filterManager?.state?.filteredRoutes, filterManager?.state?.filteredRoutePatterns);
     }, 5000);
+}
+
+function clearStopRouteChipLiveBuses() {
+    stopRouteChipLiveBusToken += 1;
+    stopRouteChipLiveBusQueuedRequest = null;
+    if (stopRouteChipLiveBusInterval) {
+        clearInterval(stopRouteChipLiveBusInterval);
+        stopRouteChipLiveBusInterval = null;
+    }
+    if (!window.currentRoute || !isRoutePanelVisible()) {
+        clearLiveBuses();
+    }
+}
+
+async function updateStopRouteChipLiveBuses(stopId, routeIds = []) {
+    stopRouteChipLiveBusToken += 1;
+    if (stopRouteChipLiveBusInterval) {
+        clearInterval(stopRouteChipLiveBusInterval);
+        stopRouteChipLiveBusInterval = null;
+    }
+
+    if (filterManager?.state?.active || isRoutePanelVisible()) {
+        return;
+    }
+    if (stopRouteChipLiveBusInFlight) {
+        stopRouteChipLiveBusQueuedRequest = {
+            stopId: stopId ? String(stopId) : null,
+            routeIds: Array.isArray(routeIds) ? Array.from(routeIds) : []
+        };
+        return;
+    }
+    stopRouteChipLiveBusInFlight = true;
+    try {
+        if (!Array.isArray(routeIds) || routeIds.length === 0) {
+            clearStopRouteChipLiveBuses();
+            return;
+        }
+
+        const patternMap = buildRoutePatternMap(routeIds, stopId);
+        if (!(patternMap instanceof Map) || patternMap.size === 0) {
+            clearStopRouteChipLiveBuses();
+            return;
+        }
+
+        const requestToken = ++stopRouteChipLiveBusToken;
+        const { features, hadError } = await collectLiveBusFeatures(routeIds, patternMap, stopRouteChipLiveBusThrottle);
+        if (requestToken !== stopRouteChipLiveBusToken) return;
+        if (features.length === 0 && hadError) {
+            holdLiveBuses();
+            return;
+        }
+        renderLiveBuses(features);
+
+        if (!stopRouteChipLiveBusInterval) {
+            stopRouteChipLiveBusInterval = setInterval(() => {
+                if (document.hidden) return;
+                updateStopRouteChipLiveBuses(stopId, Array.from(routeIds || []));
+            }, 5000);
+        }
+    } finally {
+        stopRouteChipLiveBusInFlight = false;
+        if (stopRouteChipLiveBusQueuedRequest) {
+            const queued = stopRouteChipLiveBusQueuedRequest;
+            stopRouteChipLiveBusQueuedRequest = null;
+            updateStopRouteChipLiveBuses(queued.stopId, queued.routeIds);
+        }
+    }
 }
 
 function resolveRouteFavoriteColor(route) {
@@ -4651,16 +4764,17 @@ async function updateRouteView(route, options = {}) {
             // 4. Start Live Bus Tracking (Only in Phase 2)
             if (!isOptimistic && route.id) {
                 const liveColor = getRouteDisplayColor(route);
+                const liveRouteLabel = simplifyNumber(route?.shortName || route?.customShortName || route?.id || '');
                 const canRenderLiveBuses = () =>
                     liveBusSessionId === activeLiveBusSession &&
                     !!window.currentRoute &&
                     String(window.currentRoute.id) === String(route.id) &&
                     isRoutePanelVisible();
                 console.log('[RoutePlot] Starting live bus tracking loop for route ID:', route.id);
-                updateLiveBuses(route.id, patternSuffix, liveColor, { shouldRender: canRenderLiveBuses });
+                updateLiveBuses(route.id, patternSuffix, liveColor, { shouldRender: canRenderLiveBuses, routeLabel: liveRouteLabel });
                 busUpdateInterval = setInterval(() => {
                     if (document.hidden) return;
-                    updateLiveBuses(route.id, patternSuffix, liveColor, { shouldRender: canRenderLiveBuses });
+                    updateLiveBuses(route.id, patternSuffix, liveColor, { shouldRender: canRenderLiveBuses, routeLabel: liveRouteLabel });
                 }, 5000);
             }
 
@@ -5350,7 +5464,7 @@ function clearRoute() {
     resetLiveBusSession();
 
     // Clear all route layers
-    ['route', 'route-stops', 'live-buses-bg', 'live-buses-circle', 'live-buses-arrow'].forEach(id => {
+    ['route', 'route-stops', 'live-buses-bg', 'live-buses-label', 'live-buses-circle', 'live-buses-arrow'].forEach(id => {
         if (map.getLayer(id)) map.removeLayer(id);
     });
     // Remove source separately if needed or just leave it
