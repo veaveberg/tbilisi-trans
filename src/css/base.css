@@ -129,11 +129,13 @@ body {
     -webkit-touch-callout: none;
 }
 
-/* Re-enable text selection on form elements, editable text, and copyable items */
-input, textarea, [contenteditable="true"], .edit-original-inline {
+/* Re-enable native touch/focus behavior on form elements, editable text, and copyable items. */
+input, textarea, select, button, label, [contenteditable="true"], .edit-original-inline {
     -webkit-user-select: text !important;
     -moz-user-select: text !important;
     user-select: text !important;
+    -webkit-touch-callout: default !important;
+    touch-action: manipulation;
 }
 
 

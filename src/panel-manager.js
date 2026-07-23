@@ -211,6 +211,10 @@ export function setupPanelDrag(panelId) {
     const handleStart = (e) => {
         const target = e.target;
 
+        if (target.closest('input, textarea, select, button, label, [contenteditable="true"]')) {
+            return;
+        }
+
         // Explicitly ignore Close Buttons and Icon Buttons
         if (target.closest('#close-panel') || target.closest('#close-route-info') || target.closest('#close-directions') || target.closest('.icon-btn')) {
             return;

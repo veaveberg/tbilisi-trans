@@ -385,7 +385,17 @@ function onRoutesLoaded(data) {
 }
 
 // Consolidated loading logic is now inside map.on('load') to avoid race conditions.
-const staticPreloadPromise = api.preloadStaticRoutesDetails(); // Preload for filtering
+const staticPreloadPromise = api.preloadStaticRoutesDetails().then(() => {
+    if (window.allStops && window.allStops.length > 0) {
+        addStopsToMap(window.allStops, { redirectMap, filterManager, updateConnectionLine });
+    }
+}); // Preload for filtering
+
+window.addEventListener('static-routes-loaded', () => {
+    if (window.allStops && window.allStops.length > 0) {
+        addStopsToMap(window.allStops, { redirectMap, filterManager, updateConnectionLine });
+    }
+});
 
 // Update URL hash when map movement ends (including inertia)
 const updateURLHash = () => {
@@ -2978,9 +2988,8 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
             const sourceToUse = isRustaviStop ? 'rustavi' : stop._source;
 
             return api.fetchStopRoutes(id, sourceToUse).then(fetchedRoutes => {
+                const currentList = [];
                 if (fetchedRoutes && Array.isArray(fetchedRoutes)) {
-                    if (!stopToRoutesMap.has(id)) stopToRoutesMap.set(id, []);
-                    const currentList = stopToRoutesMap.get(id);
                     fetchedRoutes.forEach(fr => {
                         const fetchedSource = fr._source || sourceToUse || (fr.id && String(fr.id).startsWith('r') ? 'rustavi' : 'tbilisi');
                         let canonical = allRoutes.find(r => String(r.shortName) === String(fr.shortName) && r._source === fetchedSource);
@@ -2996,9 +3005,13 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
                         const routeToAdd = canonical || fr;
                         if (!currentList.includes(routeToAdd)) currentList.push(routeToAdd);
                     });
-                    hydratedStops.add(id);
                 }
-                return stopToRoutesMap.get(id) || [];
+                stopToRoutesMap.set(id, currentList);
+                hydratedStops.add(id);
+                if (String(window.currentStopId) === String(stop.id)) {
+                    arrivals.renderArrivals(window.lastArrivals || [], stop.id);
+                }
+                return currentList;
             }).catch(err => {
                 console.warn(`[RouteFetch] Failed for ${id}:`, err);
                 return stopToRoutesMap.get(id) || [];
@@ -3155,7 +3168,7 @@ function getRoutePatternSuffixesForLiveBuses(routeId, stopId = null) {
     if (stopKey && Array.isArray(details._stopsOfPatterns)) {
         const stopEntry = details._stopsOfPatterns.find(entry => {
             const entryStopId = String(entry?.stop?.id || entry?.stop || '');
-            return entryStopId === stopKey || normalizeRouteId(entryStopId) === normalizeRouteId(stopKey);
+            return entryStopId === stopKey || arrivals.normalizeRouteId(entryStopId) === arrivals.normalizeRouteId(stopKey);
         });
         const scoped = Array.isArray(stopEntry?.patternSuffixes) ? stopEntry.patternSuffixes.filter(Boolean) : [];
         if (scoped.length > 0) return Array.from(new Set(scoped));
@@ -3471,7 +3484,16 @@ function getPatternHeadsign(route, directionIndex, defaultHeadsign) {
 }
 
 function renderAllRoutes(routesInput, arrivalsInput) {
-    // Deduplicate Routes (Prioritize Parent aka first fetched)
+    const stopId = window.currentStopId;
+    const equivalentIds = stopId ? getEquivalentStops(stopId, false) : [];
+    const blocklist = api.getArrivalsBlocklist ? api.getArrivalsBlocklist() : null;
+    const isBlocked = (shortName) => {
+        if (!blocklist || blocklist.size === 0) return false;
+        return equivalentIds.some(eqId => {
+            const blockedRoutes = blocklist.get(eqId);
+            return blockedRoutes && blockedRoutes.has(String(shortName));
+        });
+    };
 
     // Deduplicate Routes (Prioritize Parent aka first fetched)
     const uniqueRoutesMap = new Map();
@@ -3479,6 +3501,7 @@ function renderAllRoutes(routesInput, arrivalsInput) {
     if (routesInput && Array.isArray(routesInput)) {
         routesInput.forEach(r => {
             if (!r) return;
+            if (isBlocked(r.shortName)) return;
 
             // 1. Resolve Real Route (with overrides) from allRoutes
             let realRoute = r;
@@ -3509,6 +3532,7 @@ function renderAllRoutes(routesInput, arrivalsInput) {
     // Merge with arrivals for robustness
     if (arrivalsInput && arrivalsInput.length > 0) {
         arrivalsInput.forEach(arr => {
+            if (isBlocked(arr.shortName)) return;
             // Resolve Arrival to Real Route Logic (Similar to renderArrivals)
             let resolvedRoute = null;
 

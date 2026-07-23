@@ -1,5 +1,5 @@
 const DB_NAME = 'ttc-cache-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'api-cache';
 
 let dbPromise = null;
@@ -23,6 +23,7 @@ function openDB() {
 
         request.onerror = (event) => {
             console.error('[IndexedDB] Open Error:', event.target.error);
+            dbPromise = null; // Reset so future calls retry
             reject(event.target.error);
         };
     });

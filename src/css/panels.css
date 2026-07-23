@@ -4,7 +4,6 @@
     background: var(--bg-panel);
     box-shadow: var(--shadow);
     z-index: 100 !important;
-    zoom: var(--ui-scale, 1);
     transform: translateY(100%) translateZ(0);
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     will-change: transform;
@@ -432,7 +431,7 @@ body.dark-mode .more-menu-dropdown {
     background: transparent;
     color: var(--text-main);
     font: inherit;
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 500;
     text-overflow: ellipsis;
 }

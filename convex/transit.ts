@@ -55,7 +55,7 @@ async function fetchWithRetry(url: string, options: any, retries = 3) {
 // --- Mutations ---
 
 // Clear and replace stops for a source/locale
-export const saveStops = internalMutation({
+export const saveStops = mutation({
     args: {
         sourceId: v.string(),
         locale: v.string(),
@@ -84,7 +84,7 @@ export const saveStops = internalMutation({
     }
 });
 
-export const saveRoutes = internalMutation({
+export const saveRoutes = mutation({
     args: {
         sourceId: v.string(),
         locale: v.string(),
@@ -112,7 +112,7 @@ export const saveRoutes = internalMutation({
     }
 });
 
-export const saveRouteDetails = internalMutation({
+export const saveRouteDetails = mutation({
     args: {
         sourceId: v.string(),
         locale: v.string(),
@@ -219,7 +219,7 @@ export const fetchMasterData = internalAction({
             if (sRes.ok) {
                 const stops = await sRes.json();
                 console.log(`Fetched ${stops.length} stops (${locale})`);
-                await ctx.runMutation(internal.transit.saveStops, { sourceId, locale, stops });
+                await ctx.runMutation(api.transit.saveStops, { sourceId, locale, stops });
             } else {
                 console.log(`Failed to fetch stops ${stopsUrl}: ${sRes.status}`);
             }
@@ -230,7 +230,7 @@ export const fetchMasterData = internalAction({
             if (rRes.ok) {
                 const routes = await rRes.json();
                 console.log(`Fetched ${routes.length} routes (${locale})`);
-                await ctx.runMutation(internal.transit.saveRoutes, { sourceId, locale, routes });
+                await ctx.runMutation(api.transit.saveRoutes, { sourceId, locale, routes });
             } else {
                 console.log(`Failed to fetch routes ${routesUrl}: ${rRes.status}`);
             }
@@ -306,7 +306,7 @@ export const fetchRouteDetailsBatch = internalAction({
                     }
 
                     // Save Details (and side-loaded schedules/polylines)
-                    await ctx.runMutation(internal.transit.saveRouteDetails, {
+                    await ctx.runMutation(api.transit.saveRouteDetails, {
                         sourceId,
                         locale,
                         routeId,

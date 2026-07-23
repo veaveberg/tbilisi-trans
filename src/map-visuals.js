@@ -471,7 +471,9 @@ export async function loadImages() {
             { suffix: 'gondola-dark', fill: '#60A5FA', stroke: '#3B82F6' }, // Gondola default dark (blue)
             { suffix: 'gondola-light', fill: '#2563EB', stroke: '#1D4ED8' }, // Gondola default light (blue)
             { suffix: 'gondola-manual-dark', fill: '#2DD4BF', stroke: '#14B8A6' }, // Manual/provider gondola dark (teal)
-            { suffix: 'gondola-manual-light', fill: '#0D9488', stroke: '#0F766E' } // Manual/provider gondola light (teal)
+            { suffix: 'gondola-manual-light', fill: '#0D9488', stroke: '#0F766E' }, // Manual/provider gondola light (teal)
+            { suffix: 'inactive-dark', fill: '#5A5B5E', stroke: '#3A3B3D' }, // Inactive stop dark (pale grey)
+            { suffix: 'inactive-light', fill: '#B8B9BC', stroke: '#96979A' } // Inactive stop light (pale grey)
         ];
 
         themes.forEach(({ suffix, fill, stroke }) => {
@@ -630,32 +632,41 @@ export function updateMapTheme() {
         }
     });
 
+    // Pale grey colors for inactive stops (used in both updateMapTheme and updateStopHoverEffects)
+    const inactiveColor = isDark ? '#5A5B5E' : '#B8B9BC';
+    const inactiveStrokeColor = isDark ? '#3A3B3D' : '#96979A';
+
     // Update Stop Circle Layers
     if (map.getLayer('stops-layer-circle')) {
         map.setPaintProperty('stops-layer-circle', 'circle-color', [
             'case',
+            ['==', ['get', 'inactive'], 1], inactiveColor,
             manualGondolaExpr, theme.manualGondolaStop,
             ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStop,
             theme.stop
         ]);
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', [
             'case',
+            ['==', ['get', 'inactive'], 1], inactiveStrokeColor,
             manualGondolaExpr, theme.manualGondolaStopStroke,
             ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStopStroke,
             theme.stopStroke
         ]);
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-width', 1.5);
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', 1);
+        map.setPaintProperty('stops-layer-circle', 'circle-opacity', 1);
     }
     if (map.getLayer('stops-layer-circle-hover')) {
         map.setPaintProperty('stops-layer-circle-hover', 'circle-color', [
             'case',
+            ['==', ['get', 'inactive'], 1], inactiveColor,
             manualGondolaExpr, theme.manualGondolaStop,
             ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStop,
             theme.stop
         ]);
         map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-color', [
             'case',
+            ['==', ['get', 'inactive'], 1], inactiveStrokeColor,
             manualGondolaExpr, theme.manualGondolaStopStroke,
             ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStopStroke,
             theme.stopStroke
@@ -667,6 +678,7 @@ export function updateMapTheme() {
     if (map.getLayer('stops-layer-glow')) {
         map.setPaintProperty('stops-layer-glow', 'circle-color', [
             'case',
+            ['==', ['get', 'inactive'], 1], inactiveColor,
             manualGondolaExpr, theme.manualGondolaStop,
             ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStop,
             theme.glow
@@ -678,9 +690,12 @@ export function updateMapTheme() {
         map.setPaintProperty('stops-highlight-glow', 'circle-opacity', 0.1);
     }
 
-    // Update Symbol Layers (Close-up)
+    // Update Symbol Layers (Close-up) — inactive stops get their own grey icon
+    const inactiveSuffix = `inactive-${theme.suffix}`;
     const iconImage = [
         'case',
+        ['==', ['get', 'inactive'], 1],
+        ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${inactiveSuffix}`, `stop-close-up-icon-${inactiveSuffix}`],
         manualGondolaExpr,
         ['case', ['==', ['get', 'rotation'], 0], `stop-icon-gondola-manual-${theme.suffix}`, `stop-close-up-icon-gondola-manual-${theme.suffix}`],
         ['==', ['get', 'mode'], 'GONDOLA'],
@@ -689,6 +704,7 @@ export function updateMapTheme() {
     ];
     if (map.getLayer('stops-layer')) {
         map.setLayoutProperty('stops-layer', 'icon-image', iconImage);
+        map.setPaintProperty('stops-layer', 'icon-opacity', 1);
     }
     if (map.getLayer('stops-layer-hover')) {
         // Hover image update handled in updateStopHoverEffects
@@ -1747,6 +1763,8 @@ export function updateStopHoverEffects(hoveredId) {
     const colors = {
         base: isDark ? '#FFED74' : '#3C3C3C',
         baseStroke: isDark ? '#D4C45A' : '#5C5C5C',
+        inactiveBase: isDark ? '#5A5B5E' : '#B8B9BC',
+        inactiveStroke: isDark ? '#3A3B3D' : '#96979A',
         gondolaBase: isDark ? '#60A5FA' : '#2563EB',
         gondolaStroke: isDark ? '#3B82F6' : '#1D4ED8',
         manualGondolaBase: isDark ? '#2DD4BF' : '#0D9488',
@@ -1756,12 +1774,14 @@ export function updateStopHoverEffects(hoveredId) {
         glowBase: 0.05,
         glowHover: 0.7
     };
+    const inactiveExpr = ['==', ['get', 'inactive'], 1];
 
-    // Update Circle Layers
+    // Update Circle Layers — inactive stops always render as pale grey regardless of hover/filter opacity
     if (map.getLayer('stops-layer-circle')) {
         map.setPaintProperty('stops-layer-circle', 'circle-color', [
             'case',
             ['==', ['get', 'id'], safeHoveredId], colors.hover,
+            inactiveExpr, colors.inactiveBase,
             manualGondolaExpr, colors.manualGondolaBase,
             ['==', ['get', 'mode'], 'GONDOLA'], colors.gondolaBase,
             colors.base
@@ -1769,6 +1789,7 @@ export function updateStopHoverEffects(hoveredId) {
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-color', [
             'case',
             ['==', ['get', 'id'], safeHoveredId], colors.hoverStroke,
+            inactiveExpr, colors.inactiveStroke,
             manualGondolaExpr, colors.manualGondolaStroke,
             ['==', ['get', 'mode'], 'GONDOLA'], colors.gondolaStroke,
             colors.baseStroke
@@ -1780,6 +1801,7 @@ export function updateStopHoverEffects(hoveredId) {
         map.setPaintProperty('stops-layer-circle-hover', 'circle-color', [
             'case',
             ['==', ['get', 'id'], safeHoveredId], colors.hover,
+            inactiveExpr, colors.inactiveBase,
             manualGondolaExpr, colors.manualGondolaBase,
             ['==', ['get', 'mode'], 'GONDOLA'], colors.gondolaBase,
             colors.base
@@ -1787,6 +1809,7 @@ export function updateStopHoverEffects(hoveredId) {
         map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-color', [
             'case',
             ['==', ['get', 'id'], safeHoveredId], colors.hoverStroke,
+            inactiveExpr, colors.inactiveStroke,
             manualGondolaExpr, colors.manualGondolaStroke,
             ['==', ['get', 'mode'], 'GONDOLA'], colors.gondolaStroke,
             colors.baseStroke
@@ -1799,6 +1822,7 @@ export function updateStopHoverEffects(hoveredId) {
         map.setPaintProperty('stops-layer-glow', 'circle-color', [
             'case',
             ['==', ['get', 'id'], safeHoveredId], colors.hover,
+            inactiveExpr, colors.inactiveBase,
             manualGondolaExpr, colors.manualGondolaBase,
             ['==', ['get', 'mode'], 'GONDOLA'], colors.gondolaBase,
             colors.base

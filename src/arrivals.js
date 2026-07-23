@@ -42,7 +42,7 @@ let deps = {
  * Normalize a route ID for comparison across different formats.
  * Handles: "1:R835" -> "R835", "rR835" -> "R835", "2:R835" -> "R835"
  */
-function normalizeRouteId(id) {
+export function normalizeRouteId(id) {
     if (!id) return '';
     let s = String(id);
     // Strip numeric prefixes like "1:", "2:"
@@ -1698,6 +1698,24 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         return;
     }
 
+    // --- ARRIVALS BLOCKLIST ---
+    // Filter out any arrivals (live or scheduled, cached or fresh) for (stop, route)
+    // pairs that have been manually removed from the schedule. Applied here so that
+    // all downstream caches (scheduledArrivalsByStop, scheduledArrivalsCache) are clean.
+    if (Array.isArray(arrivalsData) && arrivalsData.length > 0) {
+        const blocklist = api.getArrivalsBlocklist ? api.getArrivalsBlocklist() : null;
+        if (blocklist && blocklist.size > 0) {
+            arrivalsData = arrivalsData.filter(arrival => {
+                const srcStopId = arrival._sourceStopId;
+                if (!srcStopId) return true;
+                const blockedRoutes = blocklist.get(srcStopId);
+                if (!blockedRoutes) return true;
+                const sn = arrival.shortName || arrival.routeShortName;
+                return !blockedRoutes.has(sn);
+            });
+        }
+    }
+
     // --- STOP CHANGE DETECTION ---
     // If we've switched stops, we MUST clear the list immediately to avoid
     // showing old stop's arrivals and to prevent ID collisions.
@@ -1969,6 +1987,16 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     }
 
     uniqueRoutesMap.forEach(r => {
+        // Skip any routes that are blocklisted for this stop
+        const _blocklist = api.getArrivalsBlocklist ? api.getArrivalsBlocklist() : null;
+        if (_blocklist && _blocklist.size > 0) {
+            const blocked = equivalentIds.some(eqId => {
+                const blockedRoutes = _blocklist.get(eqId);
+                return blockedRoutes && blockedRoutes.has(String(r.shortName));
+            });
+            if (blocked) return;
+        }
+
         // Apply Global Filters (User selection & Minibus settings)
         if (shouldFilterArrivals) {
             const rId = String(r.id);
@@ -2129,9 +2157,27 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             // Use setTimeout to ensure it's in the DOM before animating
             setTimeout(() => { if (emptyDiv) emptyDiv.style.opacity = '1'; }, 10);
         }
-        const msg = (deps.filterManager && deps.filterManager.state.active)
-            ? t('noArrivalsForSelectedDestination')
-            : t('noUpcomingArrivals');
+        const equivalentIds = stopId ? deps.getEquivalentStops(stopId, false) : [];
+        const blocklist = api.getArrivalsBlocklist ? api.getArrivalsBlocklist() : null;
+        const hasAnyRoutesInDb = equivalentIds.some(eqId => {
+            const staticRoutes = (api.getRoutesForStopStatic ? api.getRoutesForStopStatic(eqId) : []).filter(rId => {
+                const r = deps.allRoutes().find(x => x.id === rId);
+                return !blocklist || !blocklist.get(eqId) || !r || !blocklist.get(eqId).has(String(r.shortName));
+            });
+            const mappedRoutes = (deps.stopToRoutesMap ? (deps.stopToRoutesMap.get(eqId) || []) : []).filter(r => {
+                return !blocklist || !blocklist.get(eqId) || !blocklist.get(eqId).has(String(r.shortName));
+            });
+            return staticRoutes.length > 0 || mappedRoutes.length > 0;
+        });
+
+        let msg;
+        if (deps.filterManager && deps.filterManager.state.active) {
+            msg = t('noArrivalsForSelectedDestination');
+        } else if (!hasAnyRoutesInDb) {
+            msg = t('stopNotOperatingCurrently');
+        } else {
+            msg = t('noUpcomingArrivals');
+        }
         if (emptyDiv.textContent !== msg) emptyDiv.textContent = msg;
 
         // Position it

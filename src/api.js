@@ -774,23 +774,28 @@ export async function fetchWithCache(url, options = {}) {
             return data;
         }
 
-        if (age < 7 * 24 * 60 * 60 * 1000) {
-            // console.log(`[Cache] Hit (Stale): ${url} - Background refresh...`);
-            // Only background refresh if not explicitly cache-only
-            if (options.strategy !== 'cache-only') {
-                fetch(url, { ...options, credentials: 'omit' }).then(async (res) => {
-                    if (res.ok) {
-                        const newData = await res.json();
-                        await db.set(cacheKey, { timestamp: now, data: newData });
-                    }
-                }).catch(e => {
-                    console.warn(`[Cache] Background Update Error: ${url}`, e);
-                });
+        // If cache is stale but not older than 7 days, try network first with a 1.5s timeout.
+        // This ensures fresh data is shown if online, while maintaining instant load/offline support.
+        if (age < 7 * 24 * 60 * 60 * 1000 && options.strategy !== 'cache-only' && options.strategy !== 'cache-first') {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 1500);
+                const res = await fetch(url, { ...options, signal: controller.signal, credentials: 'omit' });
+                clearTimeout(timeoutId);
+                if (res.ok) {
+                    const newData = await res.json();
+                    await db.set(cacheKey, { timestamp: now, data: newData });
+                    return newData;
+                }
+            } catch (e) {
+                console.warn(`[Cache] Stale refresh failed, falling back to cached data: ${url}`, e);
             }
             return data;
         }
 
-        if (options.strategy === 'cache-only' || options.strategy === 'cache-first') return cached.data;
+        if (options.strategy === 'cache-only' || options.strategy === 'cache-first' || age < 7 * 24 * 60 * 60 * 1000) {
+            return cached.data;
+        }
     }
 
     // Force Cache Only (Structural Data and Filter mode)
@@ -1340,6 +1345,27 @@ async function fetchWithSourceHint(configFn, id, knownSourceId, options = {}) {
 
 
 export async function fetchStopRoutes(stopId, sourceId = null, options = {}) {
+    // For Rustavi stops, always prefer local static data over the live API.
+    // The live Rustavi API returns routes that may have been manually overridden
+    // (removed from the local schedule), so we use our static index as the source of truth.
+    const isRustaviStop = /^r\d/.test(stopId) || sourceId === 'rustavi';
+    if (isRustaviStop) {
+        await preloadStaticRoutesDetails();
+        if (staticStopToRoutes.has(stopId)) {
+            const routeIds = Array.from(staticStopToRoutes.get(stopId));
+            if (routeIds.length > 0) {
+                const rustaviSource = sources.find(s => s.id === 'rustavi');
+                const routes = routeIds
+                    .map(rid => staticRouteDetails.get(rid))
+                    .filter(Boolean)
+                    .map(rd => processRoute(rd, rustaviSource));
+                routes._sourceId = 'rustavi';
+                return routes;
+            }
+        }
+        return [];
+    }
+
     // Note: Routes from Convex getRoutes don't include stops arrays.
     // We must use the V2 API endpoint which returns routes for a specific stop.
     const urlGen = (s, id) => `${getApiBaseUrl(s)}/stops/${encodeURIComponent(id)}/routes?locale=${getActiveLocale()}`;
@@ -1355,6 +1381,7 @@ export async function fetchStopRoutes(stopId, sourceId = null, options = {}) {
         return [];
     }
 }
+
 
 // Metro (PisGateway V3)
 export async function fetchMetroSchedule(routeId) {
@@ -1553,6 +1580,23 @@ export async function fetchRouteStopsV3(routeId, patternSuffix, options = {}) {
             if (pattern && pattern.stops) {
                 const source = sources.find(s => s.id === details._sourceId);
                 return pattern.stops.map(s => processStop(s, source));
+            }
+        }
+    }
+
+    // 2b. For Rustavi routes, always prefer static data over live API.
+    // The Rustavi live API may return stops that have been manually overridden
+    // in the local static files. _stopsOfPatterns is the authoritative source.
+    const isRustaviRoute = routeId.startsWith('r') || routeId.toLowerCase().startsWith('rustavi:');
+    if (isRustaviRoute && staticRouteDetails.has(routeId)) {
+        const details = staticRouteDetails.get(routeId);
+        if (details._stopsOfPatterns && Array.isArray(details._stopsOfPatterns)) {
+            const source = sources.find(s => s.id === (details._sourceId || 'rustavi'));
+            const stopsForPattern = details._stopsOfPatterns
+                .filter(entry => !realSuffix || entry.patternSuffixes?.includes(realSuffix))
+                .map(entry => processStop(entry.stop, source));
+            if (stopsForPattern.length > 0) {
+                return stopsForPattern;
             }
         }
     }
@@ -1985,9 +2029,63 @@ export async function fetchArrivalsForStopIds(ids, options = {}) {
     });
 
     const results = await Promise.all(promises);
-    return results.flat();
+    const flat = results.flat();
+
+    // --- Arrivals Blocklist ---
+    // Filter out live arrivals for (stop, route) combos that have been manually
+    // removed from the schedule in static data. The live Rustavi API will still
+    // report real-time positions for these buses, but we suppress them here.
+    const arrivalsBlocklist = getArrivalsBlocklist();
+    if (arrivalsBlocklist.size > 0) {
+        return flat.filter(arrival => {
+            const stopId = arrival._sourceStopId;
+            if (!stopId) return true;
+            const blockedRoutes = arrivalsBlocklist.get(stopId) ||
+                arrivalsBlocklist.get(processId(stopId, sources.find(s => s.id === 'rustavi')));
+            if (!blockedRoutes) return true;
+            const shortName = arrival.shortName || arrival.routeShortName;
+            return !blockedRoutes.has(shortName);
+        });
+    }
+
+    return flat;
 }
 
+/**
+ * Returns a Map<stopId, Set<shortName>> of route arrivals to suppress.
+ * Built from staticStopToRoutes: if a stop no longer has a route in the
+ * static index, any live arrivals for that route at that stop are blocked.
+ * Also contains hardcoded overrides for manually removed route-stop pairs.
+ */
+export function getArrivalsBlocklist() {
+    // Hardcoded blocklist: Rustavi bus 23 (shortName '23') and bus 24 (shortName '24')
+    // stops that were manually removed from their schedules.
+    // Stop IDs in normalized 'r...' format (prefix stripped from '1:XXXXX').
+    // Each entry: stopId -> Set of route short names to suppress at that stop.
+    const blocklist = new Map([
+        // ოპერის თეატრი — two IDs exist for this name
+        ['r17017', new Set(['23', '24'])],
+        ['r17025', new Set(['23', '24'])],
+        // მ/ს "თავისუფლების მოედანი" / თავისუფლების მოედანი
+        ['r17042', new Set(['23', '24'])],
+        ['r17102', new Set(['23', '24'])],
+        // მ/ს "რუსთაველი" — two IDs
+        ['r17068', new Set(['23', '24'])],
+        ['r17107', new Set(['23', '24'])],
+        // ფილარმონია — three IDs
+        ['r17024', new Set(['23', '24'])],
+        ['r17098', new Set(['23', '24'])],
+        ['r17106', new Set(['23', '24'])],
+        // პირველი კლასიკური გიმნაზია — two IDs
+        ['r17087', new Set(['23', '24'])],
+        ['r17100', new Set(['23', '24'])],
+        // სიმონ ჯანაშიას ქუჩა — two IDs (Bus 24 only)
+        ['r17099', new Set(['24'])],
+        ['r17112', new Set(['24'])],
+    ]);
+    return blocklist;
+
+}
 
 // Helper to manage V3 in-flight promises
 const v3InFlight = {

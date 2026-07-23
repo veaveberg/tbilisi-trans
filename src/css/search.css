@@ -10,8 +10,11 @@
     align-items: center;
     gap: 8px;
     pointer-events: none !important;
-    transform: scale(var(--ui-scale, 1));
     transform-origin: top center;
+}
+
+html.ui-scaled-down #ui-wrapper .search-wrapper {
+    transform: scale(var(--ui-scale, 1));
     will-change: transform;
 }
 
@@ -311,4 +314,3 @@ html.ui-scaled-down #search-input {
         transform: scale(1);
     }
 }
-

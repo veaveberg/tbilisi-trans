@@ -696,6 +696,8 @@ export function processMetroStops(stops, stopBearings = {}) {
                 }
             });
         } else {
+            const staticRoutes = api.getRoutesForStopStatic ? api.getRoutesForStopStatic(stop.id) : [];
+            const hasRoutes = staticRoutes.length > 0;
             busStops.push({
                 type: 'Feature',
                 geometry: {
@@ -711,7 +713,8 @@ export function processMetroStops(stops, stopBearings = {}) {
                     source: stop._source || '',
                     provider: stop.provider || '',
                     ticketProvider: stop.ticketProvider || '',
-                    gondolaInfo: stop.gondolaInfo || ''
+                    gondolaInfo: stop.gondolaInfo || '',
+                    inactive: hasRoutes ? 0 : 1
                 }
             });
         }
