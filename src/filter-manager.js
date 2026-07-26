@@ -864,12 +864,12 @@ export class FilterManager {
             this.map.setPaintProperty('stops-layer-glow', 'circle-opacity', 0);
         }
 
-        // Hide active-stop overlay layers when filter is cleared
+        // Restore default active-stop overlay: always show non-inactive stops above dimmed ones
         if (this.map.getLayer('stops-layer-circle-active')) {
-            this.map.setFilter('stops-layer-circle-active', ['==', ['get', 'id'], '']);
+            this.map.setFilter('stops-layer-circle-active', ['!=', ['get', 'inactive'], 1]);
         }
         if (this.map.getLayer('stops-layer-glow-active')) {
-            this.map.setFilter('stops-layer-glow-active', ['==', ['get', 'id'], '']);
+            this.map.setFilter('stops-layer-glow-active', ['!=', ['get', 'inactive'], 1]);
         }
 
         // Reset Highlight Layer (Opacity back to 1, source determines visibility)
