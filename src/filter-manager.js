@@ -841,7 +841,10 @@ export class FilterManager {
         }
 
         // Reset Map Layers
-        if (this.map.getLayer('stops-layer')) this.map.setPaintProperty('stops-layer', 'icon-opacity', 1);
+        if (this.map.getLayer('stops-layer')) {
+            this.map.setPaintProperty('stops-layer', 'icon-opacity', 1);
+            this.map.setLayoutProperty('stops-layer', 'symbol-sort-key', ['case', ['==', ['get', 'inactive'], 1], 0, 100]);
+        }
 
         if (this.map.getLayer('stops-label-selected')) {
             this.map.setFilter('stops-label-selected', ['in', ['get', 'id'], ['literal', []]]);

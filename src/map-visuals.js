@@ -999,6 +999,7 @@ function ensureStopsLayerStack() {
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
             'symbol-z-order': 'source',
+            'symbol-sort-key': ['case', ['==', ['get', 'inactive'], 1], 0, 100],
             'icon-image': [
                 'case',
                 ['all',
