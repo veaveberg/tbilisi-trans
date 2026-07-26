@@ -714,7 +714,13 @@ export function processMetroStops(stops, stopBearings = {}) {
                     provider: stop.provider || '',
                     ticketProvider: stop.ticketProvider || '',
                     gondolaInfo: stop.gondolaInfo || '',
-                    inactive: hasRoutes ? 0 : 1
+                    inactive: (hasRoutes || (
+                        stop.vehicleMode === 'GONDOLA' && (
+                            stop._source === 'config' ||
+                            stop.provider === 'manual-gondola' ||
+                            stop.ticketProvider === 'manual-gondola'
+                        )
+                    )) ? 0 : 1
                 }
             });
         }
