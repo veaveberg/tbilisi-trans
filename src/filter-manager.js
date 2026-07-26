@@ -1016,7 +1016,11 @@ export class FilterManager {
         }
 
         if (this.map.getLayer('metro-layer-label')) {
-            this.map.setPaintProperty('metro-layer-label', 'text-opacity', dimmedOpacity);
+            this.map.setPaintProperty('metro-layer-label', 'text-opacity', [
+                'case',
+                ['==', ['get', 'segmentId'], 'metro_2_1'], 0,
+                dimmedOpacity
+            ]);
         }
         if (this.map.getLayer('metro-transfer-layer')) {
             this.map.setPaintProperty('metro-transfer-layer', 'text-opacity', dimmedOpacity);
