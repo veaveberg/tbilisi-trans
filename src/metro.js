@@ -983,6 +983,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
                 slot: 'top',
                 minzoom: 13,
                 maxzoom: 15.2,  // Hide at 15.2+ when segment labels appear
+                filter: ['!=', 'segmentId', 'metro_2_1'],  // Permanently hide duplicate Station Square label for green line
                 layout: {
                     'text-field': ['get', 'name'],
                     'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
@@ -1122,6 +1123,7 @@ export function addMetroLayers(map, metroFeaturesRef, { redLineCoords, greenLine
             slot: 'top',
             minzoom: 12,
             maxzoom: 15.2,  // Hide at 15.2+ when segment labels appear
+            filter: ['!=', 'segmentId', 'metro_2_1'],  // Permanently hide duplicate Station Square label for green line
             layout: {
                 'text-field': ['get', 'name'],
                 'text-size': [
