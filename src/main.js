@@ -5443,6 +5443,7 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
 
         try { clearFilter(getActiveStopId(), { restoreStop: false }); } catch (err) { console.error('Clear Filter Error', err); }
         try { clearFilterLiveBuses(); } catch (err) { console.error('Clear Live Buses Error', err); }
+        try { clearStopRouteChipLiveBuses(); } catch (err) { console.error('Clear Stop Route Chip Buses Error', err); }
         try { renderLiveBuses([]); } catch (err) { console.error('Render Live Buses Error', err); }
 
         // Always try to reset map focus

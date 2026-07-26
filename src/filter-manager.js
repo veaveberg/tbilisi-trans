@@ -774,10 +774,14 @@ export class FilterManager {
 
     clearFilter(currentStopId, options = {}) {
         const { restoreStop = false } = options;
+        // Clear active state BEFORE calling resetStopRouteFilter so that
+        // the downstream updateStopRouteChipLiveBuses call doesn't bail out
+        // early (it checks filterManager.state.active as a guard), ensuring
+        // the stop-route-chip polling interval is properly torn down.
+        this.state.active = false;
         if (currentStopId && typeof window.resetStopRouteFilter === 'function') {
             window.resetStopRouteFilter(currentStopId);
         }
-        this.state.active = false;
         this.state.picking = false;
         this.state.originId = null;
         this.state.originIdsOverride = null;
