@@ -864,6 +864,14 @@ export class FilterManager {
             this.map.setPaintProperty('stops-layer-glow', 'circle-opacity', 0);
         }
 
+        // Hide active-stop overlay layers when filter is cleared
+        if (this.map.getLayer('stops-layer-circle-active')) {
+            this.map.setFilter('stops-layer-circle-active', ['==', ['get', 'id'], '']);
+        }
+        if (this.map.getLayer('stops-layer-glow-active')) {
+            this.map.setFilter('stops-layer-glow-active', ['==', ['get', 'id'], '']);
+        }
+
         // Reset Highlight Layer (Opacity back to 1, source determines visibility)
         if (this.map.getLayer('stops-highlight')) {
             this.map.setPaintProperty('stops-highlight', 'icon-opacity', 1);
@@ -1003,6 +1011,24 @@ export class FilterManager {
             glowExpression.push(0);
 
             this.map.setPaintProperty('stops-layer-glow', 'circle-opacity', glowExpression);
+        }
+
+        // Active-stop overlay layers: filter to show only non-dimmed stops,
+        // so they paint above dimmed stops in the main circle/glow layers.
+        if (this.map.getLayer('stops-layer-circle-active')) {
+            const allActive = new Set([...selectedArray, ...reachableArray]);
+            if (allActive.size > 0) {
+                this.map.setFilter('stops-layer-circle-active', ['in', ['get', 'id'], ['literal', Array.from(allActive)]]);
+            } else {
+                this.map.setFilter('stops-layer-circle-active', ['==', ['get', 'id'], '']);
+            }
+        }
+        if (this.map.getLayer('stops-layer-glow-active')) {
+            if (highOpacityIds.size > 0) {
+                this.map.setFilter('stops-layer-glow-active', ['in', ['get', 'id'], ['literal', Array.from(highOpacityIds)]]);
+            } else {
+                this.map.setFilter('stops-layer-glow-active', ['==', ['get', 'id'], '']);
+            }
         }
 
         if (this.map.getLayer('stops-label-selected')) {
