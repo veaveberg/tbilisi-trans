@@ -104,7 +104,7 @@ function escapeHtml(value) {
 
 async function setNativeBoardStatusBarHidden(hidden) {
     const cap = window.Capacitor;
-    if (!cap?.isNativePlatform?.() || cap?.getPlatform?.() !== 'ios') return;
+    if (!cap?.isNativePlatform?.()) return;
     const plugin = getNativeSettingsPlugin();
     if (!plugin?.setStatusBarHidden) return;
     try {
@@ -356,6 +356,7 @@ export class StreetScreenController {
         });
         document.addEventListener('visibilitychange', () => {
             if (this.isOpen && !document.hidden) {
+                setNativeBoardStatusBarHidden(true);
                 this.fetchTemperature();
                 this.syncModel();
             }

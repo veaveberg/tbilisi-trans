@@ -96,8 +96,14 @@ export function setSheetState(panel, state) {
         panel.style.display = '';
     }
 
+    // Clear any stale inline transform left over from an interrupted drag
+    // gesture. On Android WebView, touchcancel can fire without touchend,
+    // leaving the inline transform stuck — which would override the
+    // CSS-class-based positioning below. (Inline styles beat class rules.)
+    panel.style.transform = '';
+
     // Initialize CSS variables for transition sync
-    // These are also defined in CSS, but setting them here ensures JS logic 
+    // These are also defined in CSS, but setting them here ensures JS logic
     // (like startTransformY) is in sync with the visual state immediately.
     const screenH = window.innerHeight;
     const panelH = panel.offsetHeight || (screenH * 0.92);
@@ -325,6 +331,17 @@ export function setupPanelDrag(panelId) {
     panel.addEventListener('touchstart', handleStart, { passive: true });
     panel.addEventListener('touchmove', handleMove, { passive: false });
     panel.addEventListener('touchend', handleEnd);
+    panel.addEventListener('touchcancel', () => {
+        // Android system gestures (notification shade, app switcher, etc.)
+        // can cancel a touch mid-drag. Clean up so a stale inline transform
+        // doesn't persist and break panel positioning on the next open.
+        if (!isDragging) return;
+        isDragging = false;
+        panel.classList.remove('is-dragging');
+        panel.style.transition = '';
+        // Snap to the nearest valid state instead of leaving the panel mid-drag.
+        snapSheet(panel, 0, 0);
+    });
 
     // Mouse Listeners
     panel.addEventListener('mousedown', handleStart);

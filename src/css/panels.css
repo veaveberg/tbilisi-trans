@@ -1,4 +1,15 @@
 /* --- Panels (Bottom Sheet / Sidebar) --- */
+
+/*
+ * dvh (dynamic viewport height) is not supported on Chrome < 108 (Android
+ * WebView < 108). On those older engines calc(…) with dvh becomes invalid and
+ * the entire declaration is dropped — often without falling back to a
+ * preceding vh-based declaration.  We use @supports (height: 1dvh) to
+ * quarantine dvh so that older engines only ever see vh-based values.
+ *
+ * Sheet-state offsets are stored in CSS custom properties so that the
+ * transforms themselves never contain dvh directly.
+ */
 .panel {
     position: absolute;
     background: var(--bg-panel);
@@ -11,6 +22,18 @@
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid rgba(0, 0, 0, 0.08);
+
+    /* vh-based fallbacks for sheet-state offsets (overridden below if dvh is supported) */
+    --sheet-peek-offset: calc(25vh * var(--inv-page-scale, 1));
+    --sheet-half-offset: calc(48vh * var(--inv-page-scale, 1));
+}
+
+/* Modern browsers: use dvh-based offsets */
+@supports (height: 1dvh) {
+    .panel {
+        --sheet-peek-offset: calc(25dvh * var(--inv-page-scale, 1));
+        --sheet-half-offset: calc(48.3dvh * var(--inv-page-scale, 1));
+    }
 }
 
 .panel.hidden {
@@ -24,7 +47,8 @@
     .panel {
         transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         will-change: transform;
-        height: 90vh;
+        /* vh fallback — modern browsers get the dvh value below */
+        height: calc(90vh * var(--inv-page-scale, 1));
         max-height: none;
         transform: translateY(100%) translateZ(0);
         bottom: 0;
@@ -32,7 +56,6 @@
         width: 100%;
         border-radius: var(--bottom-sheet-radius);
         overflow: hidden;
-        height: calc(92dvh * var(--inv-page-scale, 1));
         display: flex;
         flex-direction: column;
     }
@@ -42,16 +65,24 @@
     }
 }
 
+@supports (height: 1dvh) {
+    @media (max-width: 600px) {
+        .panel {
+            height: calc(92dvh * var(--inv-page-scale, 1));
+        }
+    }
+}
+
 .panel.sheet-collapsed {
     transform: translateY(calc(100% - (80px * var(--inv-page-scale, 1)) - env(safe-area-inset-bottom))) translateZ(0);
 }
 
 .panel.sheet-peek {
-    transform: translateY(calc(100% - (25dvh * var(--inv-page-scale, 1)))) translateZ(0);
+    transform: translateY(calc(100% - var(--sheet-peek-offset))) translateZ(0);
 }
 
 .panel.sheet-half {
-    transform: translateY(calc(100% - (48.3dvh * var(--inv-page-scale, 1)))) translateZ(0);
+    transform: translateY(calc(100% - var(--sheet-half-offset))) translateZ(0);
 }
 
 .panel.sheet-full {
@@ -70,12 +101,21 @@
         border-radius: 20px 20px 0 0;
         transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         will-change: transform;
-        height: calc(92dvh * var(--inv-page-scale, 1));
+        /* vh fallback — modern browsers get the dvh value below */
+        height: calc(90vh * var(--inv-page-scale, 1));
         max-height: none;
         display: flex;
         flex-direction: column;
         overflow: hidden;
         padding: 0;
+    }
+}
+
+@supports (height: 1dvh) {
+    @media (min-width: 601px) {
+        .panel {
+            height: calc(92dvh * var(--inv-page-scale, 1));
+        }
     }
 }
 

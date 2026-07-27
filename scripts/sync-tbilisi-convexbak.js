@@ -69,15 +69,10 @@ async function processSource(source) {
             const sRes = await fetch(`${API_BASE_URL}/stops?locale=${locale}`, { headers });
             if (!sRes.ok) throw new Error(`Failed to fetch stops: ${sRes.status}`);
             const stops = await sRes.json();
-            console.log(`Fetched ${stops.length} stops. Pushing to Convex in batches...`);
+            console.log(`Fetched ${stops.length} stops. Pushing to Convex...`);
 
-            const BATCH_SIZE = 500;
-            for (let i = 0; i < stops.length; i += BATCH_SIZE) {
-                const batch = stops.slice(i, i + BATCH_SIZE);
-                await client.mutation("transit:saveStops", { sourceId: source.id, locale, stops: batch });
-                process.stdout.write(`\r  Stops batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(stops.length / BATCH_SIZE)}...`);
-            }
-            console.log(`\n✓ Saved Stops [${locale}]`);
+            await client.mutation("transit:saveStops", { sourceId: source.id, locale, stops });
+            console.log(`✓ Saved Stops [${locale}]`);
         } catch (e) {
             console.error(`Error processing stops [${locale}]:`, e.message);
         }
@@ -112,13 +107,16 @@ async function processSource(source) {
 
     console.log(`\nSyncing Details for ${guideRoutes.length} routes...`);
 
-    // Process one route: fetch details for both locales + push to Convex
-    async function processRoute(route) {
+    for (const [index, route] of guideRoutes.entries()) {
+        if (index % 5 === 0) process.stdout.write(`\rProcessing ${index}/${guideRoutes.length}...`);
+
+        // Parallelize Locales? No, rate limit.
         const schedules = [];
         const polylines = [];
 
         for (const locale of LOCALES) {
             try {
+                // Details
                 const detailsUrl = `${v3Base}/routes/${route.id}?locale=${locale}`;
                 const detailsRes = await fetchWithRetry(detailsUrl, { headers });
                 if (!detailsRes.ok) continue;
@@ -140,10 +138,12 @@ async function processSource(source) {
                     if (locale === 'en') {
                         for (const suffix of uniqueSuffixes) {
                             const key = `${route.id}_${suffix.replace(/:/g, '_').replace(/,/g, '-')}`;
+                            // Schedule
                             try {
                                 const sRes = await fetchWithRetry(`${v3Base}/routes/${route.id}/schedule?patternSuffix=${suffix}&locale=en`, { headers });
                                 if (sRes.ok) schedules.push({ key, suffix, data: await sRes.json() });
                             } catch (e) { }
+                            // Polyline
                             try {
                                 const pRes = await fetchWithRetry(`${v3Base}/routes/${route.id}/polylines?patternSuffixes=${suffix}`, { headers });
                                 if (pRes.ok) polylines.push({ key, suffix, data: await pRes.json() });
@@ -153,6 +153,7 @@ async function processSource(source) {
                     }
                 }
 
+                // Push to Convex
                 await client.mutation("transit:saveRouteDetails", {
                     sourceId: source.id,
                     locale,
@@ -161,20 +162,12 @@ async function processSource(source) {
                     schedules: locale === 'en' ? schedules : [],
                     polylines: locale === 'en' ? polylines : []
                 });
+
             } catch (e) {
-                // ignore individual route failures
+                // ignore
             }
         }
-    }
-
-    // Process routes with limited concurrency
-    const CONCURRENCY = 5;
-    let completed = 0;
-    for (let i = 0; i < guideRoutes.length; i += CONCURRENCY) {
-        const batch = guideRoutes.slice(i, i + CONCURRENCY);
-        await Promise.all(batch.map(route => processRoute(route)));
-        completed += batch.length;
-        process.stdout.write(`\rProcessing ${completed}/${guideRoutes.length}...`);
+        await sleep(100);
     }
     console.log("\nDone!");
 }

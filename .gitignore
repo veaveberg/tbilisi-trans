@@ -1,6 +1,7 @@
 node_modules
 dist
 dist-ios
+data-archive/
 /ios/
 /android/
 .DS_Store
