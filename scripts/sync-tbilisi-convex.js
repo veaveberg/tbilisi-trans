@@ -112,16 +112,13 @@ async function processSource(source) {
 
     console.log(`\nSyncing Details for ${guideRoutes.length} routes...`);
 
-    for (const [index, route] of guideRoutes.entries()) {
-        if (index % 5 === 0) process.stdout.write(`\rProcessing ${index}/${guideRoutes.length}...`);
-
-        // Parallelize Locales? No, rate limit.
+    // Process one route: fetch details for both locales + push to Convex
+    async function processRoute(route) {
         const schedules = [];
         const polylines = [];
 
         for (const locale of LOCALES) {
             try {
-                // Details
                 const detailsUrl = `${v3Base}/routes/${route.id}?locale=${locale}`;
                 const detailsRes = await fetchWithRetry(detailsUrl, { headers });
                 if (!detailsRes.ok) continue;
@@ -143,12 +140,10 @@ async function processSource(source) {
                     if (locale === 'en') {
                         for (const suffix of uniqueSuffixes) {
                             const key = `${route.id}_${suffix.replace(/:/g, '_').replace(/,/g, '-')}`;
-                            // Schedule
                             try {
                                 const sRes = await fetchWithRetry(`${v3Base}/routes/${route.id}/schedule?patternSuffix=${suffix}&locale=en`, { headers });
                                 if (sRes.ok) schedules.push({ key, suffix, data: await sRes.json() });
                             } catch (e) { }
-                            // Polyline
                             try {
                                 const pRes = await fetchWithRetry(`${v3Base}/routes/${route.id}/polylines?patternSuffixes=${suffix}`, { headers });
                                 if (pRes.ok) polylines.push({ key, suffix, data: await pRes.json() });
@@ -158,7 +153,6 @@ async function processSource(source) {
                     }
                 }
 
-                // Push to Convex
                 await client.mutation("transit:saveRouteDetails", {
                     sourceId: source.id,
                     locale,
@@ -167,12 +161,20 @@ async function processSource(source) {
                     schedules: locale === 'en' ? schedules : [],
                     polylines: locale === 'en' ? polylines : []
                 });
-
             } catch (e) {
-                // ignore
+                // ignore individual route failures
             }
         }
-        await sleep(100);
+    }
+
+    // Process routes with limited concurrency
+    const CONCURRENCY = 5;
+    let completed = 0;
+    for (let i = 0; i < guideRoutes.length; i += CONCURRENCY) {
+        const batch = guideRoutes.slice(i, i + CONCURRENCY);
+        await Promise.all(batch.map(route => processRoute(route)));
+        completed += batch.length;
+        process.stdout.write(`\rProcessing ${completed}/${guideRoutes.length}...`);
     }
     console.log("\nDone!");
 }
