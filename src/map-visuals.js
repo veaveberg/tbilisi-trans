@@ -860,6 +860,22 @@ function moveStopLayerStackToExpectedOrder() {
     if (map.getLayer('metro-exits-layer')) {
         map.moveLayer('metro-exits-layer');
     }
+    // Metro station layers — always above bus stops
+    if (map.getLayer('metro-layer-glow')) {
+        map.moveLayer('metro-layer-glow', 'metro-layer-circle');
+    }
+    if (map.getLayer('metro-layer-circle')) {
+        map.moveLayer('metro-layer-circle');
+    }
+    if (map.getLayer('metro-layer-overlay')) {
+        map.moveLayer('metro-layer-overlay');
+    }
+    if (map.getLayer('metro-layer-label')) {
+        map.moveLayer('metro-layer-label');
+    }
+    if (map.getLayer('metro-transfer-layer')) {
+        map.moveLayer('metro-transfer-layer');
+    }
     if (map.getLayer('metro-segment-center-label')) {
         map.moveLayer('metro-segment-center-label');
     }
