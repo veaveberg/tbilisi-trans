@@ -177,6 +177,7 @@ export function setMapFocus(active) {
                     ['case',
                         ['==', ['get', 'id'], selectedId], (isMetroSelected ? 0 : 1.0),
                         ['in', ['get', 'segmentId'], ['literal', metroDetails.terminalIds]], 1.0,
+                        ['==', ['get', 'segmentId'], 'metro_2_1'], 0,
                         baseOpacity
                     ],
                     15.2, 0
@@ -185,7 +186,11 @@ export function setMapFocus(active) {
                 labelOpacity = [
                     'step',
                     ['zoom'],
-                    ['case', ['==', ['get', 'id'], selectedId], (isMetroSelected ? 0 : 1.0), baseOpacity],
+                    ['case',
+                        ['==', ['get', 'id'], selectedId], (isMetroSelected ? 0 : 1.0),
+                        ['==', ['get', 'segmentId'], 'metro_2_1'], 0,
+                        baseOpacity
+                    ],
                     15.2, 0
                 ];
             }

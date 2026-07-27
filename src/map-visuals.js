@@ -673,6 +673,36 @@ export function updateMapTheme() {
         ]);
         map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-width', 1.5);
     }
+    // Active-stop overlay layers — same colors as main layers (shown only for non-dimmed stops)
+    if (map.getLayer('stops-layer-circle-active')) {
+        map.setPaintProperty('stops-layer-circle-active', 'circle-color', [
+            'case',
+            ['==', ['get', 'inactive'], 1], inactiveColor,
+            manualGondolaExpr, theme.manualGondolaStop,
+            ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStop,
+            theme.stop
+        ]);
+        map.setPaintProperty('stops-layer-circle-active', 'circle-stroke-color', [
+            'case',
+            ['==', ['get', 'inactive'], 1], inactiveStrokeColor,
+            manualGondolaExpr, theme.manualGondolaStopStroke,
+            ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStopStroke,
+            theme.stopStroke
+        ]);
+        map.setPaintProperty('stops-layer-circle-active', 'circle-stroke-width', 1.5);
+        map.setPaintProperty('stops-layer-circle-active', 'circle-stroke-opacity', 1);
+        map.setPaintProperty('stops-layer-circle-active', 'circle-opacity', 1);
+    }
+    if (map.getLayer('stops-layer-glow-active')) {
+        map.setPaintProperty('stops-layer-glow-active', 'circle-color', [
+            'case',
+            ['==', ['get', 'inactive'], 1], inactiveColor,
+            manualGondolaExpr, theme.manualGondolaStop,
+            ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStop,
+            theme.glow
+        ]);
+        map.setPaintProperty('stops-layer-glow-active', 'circle-opacity', 0.05);
+    }
 
     // Update Glow Layers
     if (map.getLayer('stops-layer-glow')) {
@@ -749,6 +779,8 @@ const STOP_STACK_LAYER_IDS = [
     'stops-layer-hit-target',
     'stops-layer-glow',
     'stops-layer-circle',
+    'stops-layer-circle-active',
+    'stops-layer-glow-active',
     'stops-layer-circle-hover',
     'stops-layer',
     'stops-layer-hover',
@@ -812,6 +844,13 @@ function moveStopLayerStackToExpectedOrder() {
     if (map.getLayer('stops-layer-circle-hover')) {
         map.moveLayer('stops-layer-circle-hover');
     }
+    // Ensure active-stop overlays render above the main circle layers
+    if (map.getLayer('stops-layer-circle-active')) {
+        map.moveLayer('stops-layer-circle-active');
+    }
+    if (map.getLayer('stops-layer-glow-active')) {
+        map.moveLayer('stops-layer-glow-active');
+    }
     if (map.getLayer('stops-layer-hover')) {
         map.moveLayer('stops-layer-hover');
     }
@@ -820,6 +859,22 @@ function moveStopLayerStackToExpectedOrder() {
     }
     if (map.getLayer('metro-exits-layer')) {
         map.moveLayer('metro-exits-layer');
+    }
+    // Metro station layers — always above bus stops
+    if (map.getLayer('metro-layer-glow')) {
+        map.moveLayer('metro-layer-glow', 'metro-layer-circle');
+    }
+    if (map.getLayer('metro-layer-circle')) {
+        map.moveLayer('metro-layer-circle');
+    }
+    if (map.getLayer('metro-layer-overlay')) {
+        map.moveLayer('metro-layer-overlay');
+    }
+    if (map.getLayer('metro-layer-label')) {
+        map.moveLayer('metro-layer-label');
+    }
+    if (map.getLayer('metro-transfer-layer')) {
+        map.moveLayer('metro-transfer-layer');
     }
     if (map.getLayer('metro-segment-center-label')) {
         map.moveLayer('metro-segment-center-label');
@@ -885,6 +940,46 @@ function ensureStopsLayerStack() {
     });
     }
 
+    if (!map.getLayer('stops-layer-circle-active')) {
+        // Active-stop overlay: renders above stops-layer-circle so non-dimmed stops
+        // always paint over dimmed stops when filter mode is active.
+        map.addLayer({
+        id: 'stops-layer-circle-active',
+        type: 'circle',
+        source: 'stops',
+        maxzoom: 15.2,
+        slot: 'top',
+        filter: ['!=', ['get', 'inactive'], 1], // Always show active stops above inactive ones
+        paint: {
+            'circle-color': '#000000',
+            'circle-stroke-color': '#555555',
+            'circle-stroke-width': 1.5,
+            'circle-stroke-opacity': 1,
+            'circle-radius': getCircleRadiusExpression(1),
+            'circle-opacity': 1,
+            'circle-emissive-strength': 1
+        }
+    });
+    }
+
+    if (!map.getLayer('stops-layer-glow-active')) {
+        // Active-stop glow overlay: same purpose as stops-layer-circle-active.
+        map.addLayer({
+        id: 'stops-layer-glow-active',
+        type: 'circle',
+        source: 'stops',
+        slot: 'top',
+        filter: ['!=', ['get', 'inactive'], 1], // Always show active stops above inactive ones
+        paint: {
+            'circle-color': '#000000',
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 12, 16, 25, 20, 60],
+            'circle-opacity': 0,
+            'circle-blur': 0.9,
+            'circle-emissive-strength': 1
+        }
+    });
+    }
+
     if (!map.getLayer('stops-layer-circle-hover')) {
         // Hover layer: renders above stops-layer-circle to pop hovered stop to top
         map.addLayer({
@@ -920,6 +1015,7 @@ function ensureStopsLayerStack() {
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
             'symbol-z-order': 'source',
+            'symbol-sort-key': ['case', ['==', ['get', 'inactive'], 1], 0, 100],
             'icon-image': [
                 'case',
                 ['all',
