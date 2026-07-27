@@ -222,65 +222,6 @@ export function getMapHash() {
     return `#${zoom.toFixed(2)}/${center.lat.toFixed(5)}/${center.lng.toFixed(5)}`;
 }
 
-// Debug: Trace Map Movement and Viewport/Padding changes
-const traceMapCall = (methodName, originalFunc) => {
-    return function(...args) {
-        let padding = null;
-        if (methodName === 'setPadding' && args[0]) {
-            padding = args[0];
-        } else if (args[0] && typeof args[0] === 'object' && 'padding' in args[0]) {
-            padding = args[0].padding;
-        } else if (args[1] && typeof args[1] === 'object' && 'padding' in args[1]) {
-            padding = args[1].padding;
-        }
-
-        if (padding) {
-            console.log(`[Viewport] ${methodName}() -> padding:`, padding);
-        } else if (methodName === 'resize') {
-            console.log(`[Viewport] resize()`);
-        } else {
-            console.log(`[Viewport] ${methodName}()`);
-        }
-
-        try {
-            const res = originalFunc.apply(this, args);
-            if (methodName === 'resize') {
-                const container = typeof this.getContainer === 'function' ? this.getContainer() : null;
-                const rect = container ? container.getBoundingClientRect() : null;
-                if (rect) {
-                    console.log(`[Viewport] resize() -> size: ${Math.round(rect.width)}x${Math.round(rect.height)}`);
-                }
-            }
-            return res;
-        } catch (e) {
-            console.error(`[Viewport] Error in ${methodName}:`, e);
-            throw e;
-        }
-    };
-};
-
-const mapMethodsToTrace = ['flyTo', 'easeTo', 'fitBounds', 'jumpTo', 'setCenter', 'setZoom', 'setPadding', 'resize'];
-for (const methodName of mapMethodsToTrace) {
-    if (typeof map[methodName] === 'function') {
-        const original = map[methodName].bind(map);
-        map[methodName] = traceMapCall(methodName, original);
-    }
-}
-
-map.on('resize', () => {
-    const container = map.getContainer();
-    const rect = container ? container.getBoundingClientRect() : null;
-    console.log('[Viewport] Event "resize" triggered. Current dimensions:', rect ? { width: rect.width, height: rect.height } : null, 'Padding:', map.getPadding());
-});
-
-map.on('movestart', () => {
-    console.log('[Viewport] Event "movestart" triggered. Center:', map.getCenter().toArray(), 'Zoom:', map.getZoom(), 'Padding:', map.getPadding());
-});
-
-map.on('moveend', () => {
-    console.log('[Viewport] Event "moveend" triggered. Center:', map.getCenter().toArray(), 'Zoom:', map.getZoom(), 'Padding:', map.getPadding());
-});
-
 // Aggressive Resize Logic for iOS PWA
 function resizeMap() {
     map.resize();
