@@ -77,17 +77,6 @@ export function getSheetAwarePadding(panelId, options = {}) {
         right
     };
 
-    console.log('[Viewport] getSheetAwarePadding:', {
-        panelId,
-        innerWidth: window.innerWidth,
-        innerHeight: window.innerHeight,
-        panelClasses,
-        rectInfo,
-        panelHeight,
-        bottomExtra,
-        computedPadding: padding
-    });
-
     return padding;
 }
 
@@ -123,24 +112,12 @@ export function getBandPadding({
         right: 40
     };
 
-    console.log('[Viewport] getBandPadding:', {
-        topAnchorSelector,
-        bottomAnchorSelector,
-        viewportHeight,
-        topAnchorBottom,
-        bottomAnchorElExists: !!bottomAnchorEl,
-        bottomAnchorClasses: bottomAnchorEl ? Array.from(bottomAnchorEl.classList) : null,
-        bottomAnchorTop,
-        computedPadding: padding
-    });
-
     return padding;
 }
 
 export function getBandCenterOffset(options = {}) {
     const padding = getBandPadding(options);
     const offset = [0, (padding.bottom - padding.top) / 2];
-    console.log('[Viewport] getBandCenterOffset:', { padding, offset });
     return offset;
 }
 
@@ -158,14 +135,6 @@ export function flyToPointInView(center, options = {}) {
     const padding = getBandPadding({
         topAnchorSelector,
         bottomAnchorSelector
-    });
-    console.log('[Viewport] flyToPointInView:', {
-        intentId,
-        center,
-        zoom,
-        padding,
-        duration,
-        radiusMeters
     });
     map.fitBounds(target.toBounds(radiusMeters), {
         padding,

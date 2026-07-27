@@ -22,7 +22,6 @@ export function updateMapPadding() {
 // Helper for Sheet State (Mobile)
 export function setSheetState(panel, state) {
     if (!panel) return;
-    console.log(`[Viewport] setSheetState: panel="${panel.id}", state="${state}"`);
 
     // Handle directions sheet auto-collapse/restore when other sheets open/close
     if (panel.id !== 'directions-panel') {
@@ -123,7 +122,6 @@ export function setSheetState(panel, state) {
 
 // Helper to toggle panel open class on body
 export function setPanelState(isOpen) {
-    console.log(`[Viewport] setPanelState: isOpen=${isOpen}`);
     if (isOpen) {
         document.body.classList.add('panel-open');
     } else {

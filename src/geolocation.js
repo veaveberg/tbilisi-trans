@@ -548,7 +548,6 @@ function getCenteringOffset() {
     }
 
     if (!visiblePanel) {
-        console.log('[Viewport] getCenteringOffset: No visible panel. Offset is [0, 0]');
         return [0, 0];
     }
 
@@ -578,14 +577,6 @@ function getCenteringOffset() {
     }
 
     const offset = [0, -(bottomPadding / 2)];
-    console.log('[Viewport] getCenteringOffset:', {
-        visiblePanelId: visiblePanel.id,
-        visiblePanelClasses: Array.from(visiblePanel.classList),
-        innerHeight: window.innerHeight,
-        bottomPadding,
-        method,
-        offset
-    });
 
     return offset;
 }
