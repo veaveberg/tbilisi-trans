@@ -69,10 +69,15 @@ async function processSource(source) {
             const sRes = await fetch(`${API_BASE_URL}/stops?locale=${locale}`, { headers });
             if (!sRes.ok) throw new Error(`Failed to fetch stops: ${sRes.status}`);
             const stops = await sRes.json();
-            console.log(`Fetched ${stops.length} stops. Pushing to Convex...`);
+            console.log(`Fetched ${stops.length} stops. Pushing to Convex in batches...`);
 
-            await client.mutation("transit:saveStops", { sourceId: source.id, locale, stops });
-            console.log(`✓ Saved Stops [${locale}]`);
+            const BATCH_SIZE = 500;
+            for (let i = 0; i < stops.length; i += BATCH_SIZE) {
+                const batch = stops.slice(i, i + BATCH_SIZE);
+                await client.mutation("transit:saveStops", { sourceId: source.id, locale, stops: batch });
+                process.stdout.write(`\r  Stops batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(stops.length / BATCH_SIZE)}...`);
+            }
+            console.log(`\n✓ Saved Stops [${locale}]`);
         } catch (e) {
             console.error(`Error processing stops [${locale}]:`, e.message);
         }
