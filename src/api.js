@@ -2,6 +2,7 @@ import { db } from './db.js';
 import { sources } from './data/sources.js';
 import { RouteGeometry } from './route-geometry.js';
 import { getTransitDataLocale } from './i18n.ts';
+import { getOtaDataFileJson, getOtaDataFileText } from './ota-data.js';
 
 // Export sources for external usage (e.g. main.js normalization)
 export { sources };
@@ -493,6 +494,12 @@ async function getStaticCache(sourceId, type) {
     const promise = (async () => {
         try {
             // console.log(`[Fallback] Loading monolithic file: ${filename}`);
+            const otaData = await getOtaDataFileJson(filename);
+            if (otaData) {
+                staticCache[sourceId][type] = otaData;
+                return otaData;
+            }
+
             const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
             const res = await fetch(`${basePath}data/${filename}`);
             if (!res.ok) throw new Error(`Failed to load ${filename}`);
@@ -1323,16 +1330,19 @@ export async function fetchAllOverrides() {
     overridesPromise = (async () => {
         try {
             console.log('[API] Fetching route overrides from CSV...');
-            const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-            const response = await fetch(`${basePath}data/routes_overrides.csv`);
-            if (!response.ok) {
-                if (response.status === 404) {
-                    globalOverridesCache = new Map();
-                    return globalOverridesCache;
+            let csvText = await getOtaDataFileText('routes_overrides.csv');
+            if (!csvText) {
+                const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+                const response = await fetch(`${basePath}data/routes_overrides.csv`);
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        globalOverridesCache = new Map();
+                        return globalOverridesCache;
+                    }
+                    throw new Error(`Failed to load routes_overrides.csv: ${response.status}`);
                 }
-                throw new Error(`Failed to load routes_overrides.csv: ${response.status}`);
+                csvText = await response.text();
             }
-            const csvText = await response.text();
             const { parseCSV, extractOverrides } = await import('./csv-parser.js');
             const overrides = extractOverrides(parseCSV(csvText), 'id');
             globalOverridesCache = new Map(Object.entries(overrides));

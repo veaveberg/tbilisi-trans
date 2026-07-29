@@ -379,6 +379,20 @@ function getModeColor(mode, fallbackColor) {
     }
 }
 
+function moveDirectionsRouteLayersAboveStops() {
+    [
+        DIRECTIONS_ROUTE_LAYER_ID,
+        DIRECTIONS_ROUTE_WALK_LAYER_ID,
+        DIRECTIONS_ROUTE_STOPS_LAYER_ID
+    ].forEach((layerId) => {
+        try {
+            if (map.getLayer(layerId)) map.moveLayer(layerId);
+        } catch (err) {
+            console.warn(`[DirectionsPlot] Failed to move layer "${layerId}" above stops`, err);
+        }
+    });
+}
+
 function ensureDirectionsRouteLayers() {
     if (!map) {
         console.warn('[DirectionsPlot] ensureDirectionsRouteLayers called, but map is null');
@@ -395,9 +409,6 @@ function ensureDirectionsRouteLayers() {
             data: EMPTY_FEATURE_COLLECTION
         });
     }
-
-    const beforeLayer = map.getLayer('stops-layer') ? 'stops-layer' : undefined;
-    console.log(`[DirectionsPlot] beforeLayer for placement: ${beforeLayer}`);
 
     if (!map.getLayer(DIRECTIONS_ROUTE_LAYER_ID)) {
         console.log(`[DirectionsPlot] Creating layer: ${DIRECTIONS_ROUTE_LAYER_ID}`);
@@ -426,7 +437,7 @@ function ensureDirectionsRouteLayers() {
                 ],
                 'line-emissive-strength': 1
             }
-        }, beforeLayer);
+        });
     }
 
     if (!map.getLayer(DIRECTIONS_ROUTE_WALK_LAYER_ID)) {
@@ -446,7 +457,7 @@ function ensureDirectionsRouteLayers() {
                 'line-dasharray': [2, 2],
                 'line-emissive-strength': 1
             }
-        }, beforeLayer);
+        });
     }
 
     if (!map.getSource(DIRECTIONS_ROUTE_STOPS_SOURCE_ID)) {
@@ -471,8 +482,10 @@ function ensureDirectionsRouteLayers() {
                 'circle-opacity': 1,
                 'circle-emissive-strength': 1
             }
-        }, beforeLayer);
+        });
     }
+
+    moveDirectionsRouteLayersAboveStops();
 
     return true;
 }
