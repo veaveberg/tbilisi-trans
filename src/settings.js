@@ -238,7 +238,7 @@ function applyNativeSetting(key, value) {
                 window.dispatchEvent(new CustomEvent('routeDataRefreshResult', { detail: result }));
                 routeDataManifestInfoPromise = null;
                 setNativeRouteDataStatus({
-                    status: result?.status || 'upToDate',
+                    status: result?.status === 'appTooOld' ? 'failed' : (result?.status || 'upToDate'),
                     generatedAt: result?.generatedAt || ''
                 });
             }).catch((err) => {

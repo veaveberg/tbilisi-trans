@@ -9,6 +9,7 @@ const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
 const DATA_DIR = path.join(ROOT_DIR, 'public/data');
 const MANIFEST_PATH = path.join(DATA_DIR, 'manifest.json');
+const DEFAULT_MIN_APP_VERSION = '26.5.3';
 
 function sha256(buffer) {
     return crypto.createHash('sha256').update(buffer).digest('hex');
@@ -53,7 +54,7 @@ function buildManifest() {
         generatedAt,
         baseDatasetVersion,
         correctionsVersion,
-        minAppVersion: process.env.MIN_APP_VERSION || null,
+        minAppVersion: process.env.MIN_APP_VERSION || DEFAULT_MIN_APP_VERSION,
         files
     };
 }
@@ -63,4 +64,3 @@ fs.writeFileSync(MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
 
 console.log(`[Data Manifest] Wrote ${path.relative(ROOT_DIR, MANIFEST_PATH)}`);
 console.log(`[Data Manifest] Version ${manifest.baseDatasetVersion}, ${Object.keys(manifest.files).length} files`);
-

@@ -38,7 +38,7 @@ import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.
 
 import { initSettings, settings, simplifyNumber, shouldShowRoute, openNativeFavoritesMenu, openSheetForCurrentPath, getNativeSettingsPlugin } from './settings.js';
 import { initICloudHistorySync } from './icloud-sync.js';
-import { getOtaDataFileText } from './ota-data.js';
+import { checkRouteDataUpdates, getOtaDataFileText } from './ota-data.js';
 import { favoritesManager } from './favorites.js';
 import {
     applyStaticText,
@@ -327,8 +327,34 @@ document.addEventListener('sheet:closed', (event) => {
     resetLiveBusSession();
 });
 
+function canApplyRouteDataRefreshImmediately() {
+    const infoPanel = document.getElementById('info-panel');
+    const routePanel = document.getElementById('route-info');
+    const directionsPanel = document.getElementById('directions-panel');
+    const infoHidden = !infoPanel || infoPanel.classList.contains('hidden');
+    const routeHidden = !routePanel || routePanel.classList.contains('hidden');
+    const directionsHidden = !directionsPanel || directionsPanel.classList.contains('hidden');
+
+    return infoHidden
+        && routeHidden
+        && directionsHidden
+        && !window.currentStopId
+        && !window.currentRoute
+        && !isDirectionsContextActive();
+}
+
 window.addEventListener('routeDataRefreshResult', (event) => {
     if (event.detail?.status === 'updated') {
+        if (canApplyRouteDataRefreshImmediately()) {
+            void (async () => {
+                const didReload = await reloadActiveTransitData('ota-idle-map', { invalidateStaticCaches: true });
+                if (!didReload) {
+                    hasPendingOtaTransitDataRefresh = true;
+                }
+            })();
+            return;
+        }
+
         hasPendingOtaTransitDataRefresh = true;
         console.log('[OTA] Route data update will be applied on the next UI transition');
     }
@@ -339,6 +365,22 @@ document.addEventListener('sheet:state-changed', (event) => {
     const state = event.detail?.state || 'unknown';
     void consumePendingOtaTransitDataRefresh(`sheet:${panelId}:${state}`);
 });
+
+async function checkNativeRouteDataOnStartup() {
+    try {
+        const result = await checkRouteDataUpdates();
+        if (result?.status === 'updated') {
+            console.log('[OTA] Startup route data update downloaded', result);
+            window.dispatchEvent(new CustomEvent('routeDataRefreshResult', { detail: result }));
+        } else if (result?.status === 'upToDate') {
+            console.log('[OTA] Startup route data check: up to date', result);
+        }
+    } catch (err) {
+        console.warn('[OTA] Startup route data check failed', err);
+    }
+}
+
+void checkNativeRouteDataOnStartup();
 
 // Initial Router State Handling
 Router.init();
