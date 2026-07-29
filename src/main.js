@@ -38,6 +38,7 @@ import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.
 
 import { initSettings, settings, simplifyNumber, shouldShowRoute, openNativeFavoritesMenu, openSheetForCurrentPath, getNativeSettingsPlugin } from './settings.js';
 import { initICloudHistorySync } from './icloud-sync.js';
+import { getOtaDataFileText } from './ota-data.js';
 import { favoritesManager } from './favorites.js';
 import {
     applyStaticText,
@@ -212,9 +213,19 @@ function shouldShowMinibusSegmentsLayer() {
 function resetLiveBusSession({ clear = true } = {}) {
     activeLiveBusSession += 1;
     filterBusUpdateToken += 1;
+    stopRouteChipLiveBusToken += 1;
+    stopRouteChipLiveBusQueuedRequest = null;
     if (busUpdateInterval) {
         clearInterval(busUpdateInterval);
         busUpdateInterval = null;
+    }
+    if (filterBusUpdateInterval) {
+        clearInterval(filterBusUpdateInterval);
+        filterBusUpdateInterval = null;
+    }
+    if (stopRouteChipLiveBusInterval) {
+        clearInterval(stopRouteChipLiveBusInterval);
+        stopRouteChipLiveBusInterval = null;
     }
     if (clear) {
         clearLiveBuses();
@@ -309,6 +320,11 @@ document.addEventListener('sheet:closed', () => {
         clearSelectedMinibusSegments();
         try { setMapFocus(false); } catch (err) { console.error('Reset Focus Error', err); }
     }
+});
+
+document.addEventListener('sheet:closed', (event) => {
+    if (event.detail?.panelId !== 'directions-panel') return;
+    resetLiveBusSession();
 });
 
 // Initial Router State Handling
@@ -3816,16 +3832,18 @@ async function refreshStopsLayer(useLocalConfig = false) {
     } else {
         // Reload from files (Standard Load)
         try {
-            const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-            const file = `${basePath}data/stops_overrides.csv`;
+            let csvText = await getOtaDataFileText('stops_overrides.csv');
+            if (!csvText) {
+                const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+                const file = `${basePath}data/stops_overrides.csv`;
 
-            const res = await fetch(`${file}?t=${Date.now()}`);
-            let csvText = null;
-            if (res.ok) {
-                csvText = await res.text();
-                console.log(`[Main] Fetched ${file}: ${csvText.length} chars, Type: ${res.headers.get('content-type')}`);
-            } else {
-                console.warn(`[Main] Failed to fetch ${file}: ${res.status}`);
+                const res = await fetch(`${file}?t=${Date.now()}`);
+                if (res.ok) {
+                    csvText = await res.text();
+                    console.log(`[Main] Fetched ${file}: ${csvText.length} chars, Type: ${res.headers.get('content-type')}`);
+                } else {
+                    console.warn(`[Main] Failed to fetch ${file}: ${res.status}`);
+                }
             }
 
             // Parse CSV and extract overrides
@@ -6221,12 +6239,24 @@ window.routesConfig = routesConfig;
 
 async function loadRoutesConfig() {
     try {
-        const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-        // Add cache buster to ensure fresh config on reload
-        const response = await fetch(`${basePath}data/routes_overrides.csv?v=${Date.now()}`);
-        if (response.ok) {
-            const csvText = await response.text();
+        let csvText = await getOtaDataFileText('routes_overrides.csv');
+        let foundConfig = !!csvText;
 
+        if (!csvText) {
+            const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+            // Add cache buster to ensure fresh config on reload
+            const response = await fetch(`${basePath}data/routes_overrides.csv?v=${Date.now()}`);
+            if (response.ok) {
+                csvText = await response.text();
+                foundConfig = true;
+            } else if (response.status === 404) {
+                foundConfig = false;
+            } else {
+                throw new Error(`Failed to load routes_overrides.csv: ${response.status}`);
+            }
+        }
+
+        if (foundConfig && csvText) {
             // Parse CSV and extract overrides
             const { parseCSV, extractOverrides } = await import('./csv-parser.js');
             const rows = parseCSV(csvText);
@@ -6255,7 +6285,7 @@ async function loadRoutesConfig() {
 
             console.log('[Config] Loaded routes config from CSV', Object.keys(overrides).length, 'overrides');
             if (allRoutes && allRoutes.length > 0) applyRouteOverrides();
-        } else if (response.status === 404) {
+        } else {
             routesConfig = { routeOverrides: {} };
             window.routesConfig = routesConfig;
         }

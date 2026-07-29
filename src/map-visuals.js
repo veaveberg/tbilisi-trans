@@ -949,7 +949,7 @@ function ensureStopsLayerStack() {
         source: 'stops',
         maxzoom: 15.2,
         slot: 'top',
-        filter: ['!=', ['get', 'inactive'], 1], // Always show active stops above inactive ones
+        filter: ['==', ['get', 'id'], ''],
         paint: {
             'circle-color': '#000000',
             'circle-stroke-color': '#555555',
@@ -969,7 +969,7 @@ function ensureStopsLayerStack() {
         type: 'circle',
         source: 'stops',
         slot: 'top',
-        filter: ['!=', ['get', 'inactive'], 1], // Always show active stops above inactive ones
+        filter: ['==', ['get', 'id'], ''],
         paint: {
             'circle-color': '#000000',
             'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 12, 16, 25, 20, 60],

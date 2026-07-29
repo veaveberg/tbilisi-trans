@@ -12,6 +12,7 @@ import {
     t
 } from './i18n.ts';
 import { getVisibleBasePath } from './router.js';
+import { checkRouteDataUpdates, getActiveRouteDataManifest } from './ota-data.js';
 
 export const settings = {
     simplifyNumbers: false,
@@ -63,6 +64,13 @@ function isIOSNativePlatform() {
 
 function shouldAvoidProgrammaticFocus() {
     return isIOSNativePlatform();
+}
+
+function setNativeRouteDataStatus(status) {
+    if (!isIOSNativePlatform()) return;
+    NativeSettingsPlugin.setRouteDataStatus?.(status).catch((err) => {
+        console.warn('[NativeSettings] Failed to set route data status', err);
+    });
 }
 
 function syncCheckbox(id, value) {
@@ -214,6 +222,24 @@ function applyNativeSetting(key, value) {
                     window.dispatchEvent(new CustomEvent('favoritesUpdateIconRequest', { detail: { key, icon } }));
                 }
             }
+            break;
+        case 'routeDataRefresh':
+            window.dispatchEvent(new CustomEvent('routeDataRefreshRequest', { detail: value }));
+            setNativeRouteDataStatus({ status: 'checking', progress: 20 });
+            checkRouteDataUpdates().then((result) => {
+                window.dispatchEvent(new CustomEvent('routeDataRefreshResult', { detail: result }));
+                routeDataManifestInfoPromise = null;
+                setNativeRouteDataStatus({
+                    status: result?.status || 'upToDate',
+                    progress: 100,
+                    generatedAt: result?.generatedAt || ''
+                });
+            }).catch((err) => {
+                window.dispatchEvent(new CustomEvent('routeDataRefreshResult', {
+                    detail: { status: 'failed', message: err?.message || String(err) }
+                }));
+                setNativeRouteDataStatus({ status: 'failed' });
+            });
             break;
         default:
             break;
@@ -566,6 +592,38 @@ function initLanguageMenu() {
     });
 }
 
+let routeDataManifestInfoPromise = null;
+
+async function getRouteDataManifestInfo() {
+    if (routeDataManifestInfoPromise) return routeDataManifestInfoPromise;
+
+    routeDataManifestInfoPromise = (async () => {
+        try {
+            const activeManifest = await getActiveRouteDataManifest();
+            if (activeManifest) {
+                return {
+                    routeDataManifestGeneratedAt: activeManifest.generatedAt || '',
+                    routeDataBaseDatasetVersion: activeManifest.baseDatasetVersion || ''
+                };
+            }
+
+            const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+            const response = await fetch(`${basePath}data/manifest.json`);
+            if (!response.ok) return {};
+            const manifest = await response.json();
+            return {
+                routeDataManifestGeneratedAt: manifest.generatedAt || '',
+                routeDataBaseDatasetVersion: manifest.baseDatasetVersion || ''
+            };
+        } catch (err) {
+            console.warn('[NativeSettings] Failed to load route data manifest info', err);
+            return {};
+        }
+    })();
+
+    return routeDataManifestInfoPromise;
+}
+
 async function openNativeSettings(options = {}) {
     const plugin = getNativeSettingsPlugin();
     if (!plugin) return false;
@@ -586,6 +644,7 @@ async function openNativeSettings(options = {}) {
         routeColor: item.routeColor || '',
         stopIcon: item.stopIcon || ''
     }));
+    const routeDataManifestInfo = await getRouteDataManifestInfo();
 
     const payload = {
         uiLanguage: getCurrentUiLanguage(),
@@ -602,7 +661,8 @@ async function openNativeSettings(options = {}) {
         theme: localStorage.getItem('theme') || 'system',
         pageScale: currentScale,
         icloudSyncEnabled: getStoredBoolean('icloudSyncEnabled', true),
-        favoritesList
+        favoritesList,
+        ...routeDataManifestInfo
     };
 
     try {
