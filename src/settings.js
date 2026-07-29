@@ -11,6 +11,7 @@ import {
     setUiLanguage,
     t
 } from './i18n.ts';
+import { getVisibleBasePath } from './router.js';
 
 export const settings = {
     simplifyNumbers: false,
@@ -320,8 +321,7 @@ function getSupportUrl() {
 }
 
 function getBasePath() {
-    const base = import.meta.env.BASE_URL || '/';
-    return base.endsWith('/') ? base : `${base}/`;
+    return getVisibleBasePath();
 }
 
 function getCurrentAppSubpath() {

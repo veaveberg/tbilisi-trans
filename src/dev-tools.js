@@ -272,6 +272,25 @@ function updateEditedOverrides() {
     checkRouteDirtyState();
 }
 
+function getRouteOverrideVariants(routeId) {
+    const raw = String(routeId || '');
+    const stripped = raw.replace(/^[12]:/, '').replace(/^r(?=R)/, '');
+    const variants = new Set([raw, stripped, `1:${stripped}`, `2:${stripped}`]);
+    if (raw.startsWith('r')) variants.add(raw.slice(1));
+    if (stripped.startsWith('R')) variants.add(`r${stripped}`);
+    return Array.from(variants).filter(Boolean);
+}
+
+function getRouteOverrideForId(routeId) {
+    const overrides = window.routesConfig?.routeOverrides || {};
+    for (const variant of getRouteOverrideVariants(routeId)) {
+        if (Object.prototype.hasOwnProperty.call(overrides, variant)) {
+            return { id: variant, override: overrides[variant] };
+        }
+    }
+    return { id: routeId, override: null };
+}
+
 async function startEditingRoute(routeId) {
     // 1. Identify Valid ID (Prefix handling)
     const allRoutes = _dataProvider.getAllRoutes();
@@ -286,68 +305,32 @@ async function startEditingRoute(routeId) {
     routeEditState.routeId = stableId;
     routeEditState.routeObj = routeObj;
 
-    // Fetch overrides from Convex
-    let convexOverrides = {};
+    let routeOverrides = {};
     try {
-        // Use route's _source if available, or infer from ID prefix
         let sourceId = routeObj._source || 'tbilisi';
         if (stableId.startsWith('r') && stableId.length > 1 && stableId[1] === 'R') {
             sourceId = 'rustavi';
         }
 
-        const { convex, restoreApiId, sources } = await import('./api.js');
+        const { restoreApiId, sources } = await import('./api.js');
         const source = sources.find(s => s.id === sourceId) || sources[0];
         const dbRouteId = restoreApiId(stableId, source);
         routeEditState.dbRouteId = dbRouteId;
 
-        const override = await convex.query("transit:getOverride", { routeId: dbRouteId });
-
-        if (override) {
-            console.log('[Edit] Found override in Convex:', override);
-            // Map Convex field names to internal field names
-            // Convex has both base values (longName_en) and override values (longName_en_override)
-            convexOverrides = {
-                isLoop: override.isLoop,
-                invertDirection: override.invertDirection,
-                // Base values (from CSV import)
-                longNameEn: override.longName_en,
-                longNameKa: override.longName_ka,
-                longNameRu: override.longName_ru,
-                dest0En: override.dest0_en,
-                dest0Ka: override.dest0_ka,
-                dest0Ru: override.dest0_ru,
-                dest1En: override.dest1_en,
-                dest1Ka: override.dest1_ka,
-                dest1Ru: override.dest1_ru,
-                terminusStopId: override.terminusStopId,
-                terminusStopName: override.terminusStopName,
-                // Override values (user edits)
-                terminusStopIdOverride: override.terminusStopId_override,
-                longNameEnOverride: override.longName_en_override,
-                longNameKaOverride: override.longName_ka_override,
-                longNameRuOverride: override.longName_ru_override,
-                dest0EnOverride: override.dest0_en_override,
-                dest0KaOverride: override.dest0_ka_override,
-                dest0RuOverride: override.dest0_ru_override,
-                dest1EnOverride: override.dest1_en_override,
-                dest1KaOverride: override.dest1_ka_override,
-                dest1RuOverride: override.dest1_ru_override,
-                virtualTerminusStopId: override.virtualTerminusStopId,
-            };
-            // Clean undefined values
-            Object.keys(convexOverrides).forEach(k => {
-                if (convexOverrides[k] === undefined) delete convexOverrides[k];
-            });
-        } else {
-            console.log('[Edit] No override found in Convex for', dbRouteId);
+        const match = getRouteOverrideForId(dbRouteId);
+        routeEditState.csvRouteId = match.id || dbRouteId;
+        routeOverrides = { ...(match.override || {}) };
+        if (routeOverrides.terminusStopId_override && !routeOverrides.terminusStopIdOverride) {
+            routeOverrides.terminusStopIdOverride = routeOverrides.terminusStopId_override;
         }
+        console.log('[Edit] Loaded route overrides from CSV:', routeOverrides);
     } catch (e) {
-        console.warn('[Edit] Failed to fetch override from Convex:', e);
+        console.warn('[Edit] Failed to resolve route override CSV data:', e);
     }
 
-    routeEditState.csvRouteId = stableId;
-    routeEditState.csvOverrides = JSON.parse(JSON.stringify(convexOverrides));
-    routeEditState.editedOverrides = JSON.parse(JSON.stringify(convexOverrides));
+    routeEditState.csvRouteId = routeEditState.csvRouteId || stableId;
+    routeEditState.csvOverrides = JSON.parse(JSON.stringify(routeOverrides));
+    routeEditState.editedOverrides = JSON.parse(JSON.stringify(routeOverrides));
 
     const setVal = (id, v) => {
         const el = document.getElementById(id);
@@ -361,25 +344,24 @@ async function startEditingRoute(routeId) {
         }
     };
 
-    console.log('[Edit] Loading route data from Convex overrides:', convexOverrides);
+    console.log('[Edit] Loading route data from CSV overrides:', routeOverrides);
 
     // --- Debug Info ---
     const debugId = document.getElementById('route-edit-debug-id');
     const debugShort = document.getElementById('route-edit-debug-short');
-    if (debugId) debugId.textContent = routeEditState.dbRouteId || routeId;
+    if (debugId) debugId.textContent = routeEditState.csvRouteId || routeEditState.dbRouteId || routeId;
     if (debugShort) debugShort.textContent = routeObj.shortName || '-';
 
     // --- Inline Original Values ---
     const getOrig = (csvKey, routeVal) => {
-        // Prefer explicit base value from Convex if available, else use current route object value
-        return convexOverrides[csvKey] || routeVal || '';
+        // Prefer explicit base value from the route override CSV if available.
+        return routeOverrides[csvKey] || routeVal || '';
     };
 
     // Helper to get base destinations from various possible sources
     const getBaseDest = (dirIndex, lang) => {
-        // 1. Try Convex Override
         const csvKey = `dest${dirIndex}${lang.charAt(0).toUpperCase()}${lang.slice(1)}`;
-        if (convexOverrides[csvKey]) return convexOverrides[csvKey];
+        if (routeOverrides[csvKey]) return routeOverrides[csvKey];
 
         // 2. Try window.currentRoute (most likely to have patterns if active on map)
         const curRoute = window.currentRoute;
@@ -423,13 +405,13 @@ async function startEditingRoute(routeId) {
     setOriginal('route-orig-dest1-ka', getBaseDest(1, 'ka'));
     setOriginal('route-orig-dest1-ru', getBaseDest(1, 'ru'));
 
-    // --- Populate UI from Convex Overrides ---
+    // --- Populate UI from CSV Overrides ---
 
     // Loop settings
     const isLoopBtn = document.getElementById('route-edit-isloop');
     const terminusGroup = document.getElementById('route-edit-terminus-group');
     if (isLoopBtn) {
-        const isLoop = convexOverrides.isLoop === true || convexOverrides.isLoop === 'true';
+            const isLoop = routeOverrides.isLoop === true || routeOverrides.isLoop === 'true';
         isLoopBtn.classList.toggle('active', isLoop);
         if (terminusGroup) terminusGroup.style.display = isLoop ? 'flex' : 'none';
 
@@ -448,7 +430,7 @@ async function startEditingRoute(routeId) {
     // Invert Direction
     const invertBtn = document.getElementById('route-edit-invert');
     if (invertBtn) {
-        const invert = convexOverrides.invertDirection === true || convexOverrides.invertDirection === 'true';
+            const invert = routeOverrides.invertDirection === true || routeOverrides.invertDirection === 'true';
         invertBtn.classList.toggle('active', invert);
 
         if (!invertBtn._hasToggleListener) {
@@ -471,25 +453,25 @@ async function startEditingRoute(routeId) {
     }
     routeEditState.autoTerminusId = autoTerminusId;
 
-    setVal('route-edit-terminus', convexOverrides.terminusStopIdOverride || convexOverrides.terminusStopId || convexOverrides.virtualTerminusStopId || autoTerminusId);
+    setVal('route-edit-terminus', routeOverrides.terminusStopIdOverride || routeOverrides.terminusStopId || routeOverrides.virtualTerminusStopId || autoTerminusId);
 
     const terminusNameEl = document.getElementById('route-edit-terminus-name');
     if (terminusNameEl) {
-        terminusNameEl.textContent = convexOverrides.terminusStopName || '';
+        terminusNameEl.textContent = routeOverrides.terminusStopName || '';
     }
 
     // Long name overrides (only overrides, not base values)
-    setVal('route-edit-long-en', convexOverrides.longNameEnOverride || '');
-    setVal('route-edit-long-ka', convexOverrides.longNameKaOverride || '');
-    setVal('route-edit-long-ru', convexOverrides.longNameRuOverride || '');
+    setVal('route-edit-long-en', routeOverrides.longNameEnOverride || '');
+    setVal('route-edit-long-ka', routeOverrides.longNameKaOverride || '');
+    setVal('route-edit-long-ru', routeOverrides.longNameRuOverride || '');
 
     // Destinations (only show override values, not base values - those are in the "original" display)
-    setVal('route-edit-dest0-en', convexOverrides.dest0EnOverride || '');
-    setVal('route-edit-dest0-ka', convexOverrides.dest0KaOverride || '');
-    setVal('route-edit-dest0-ru', convexOverrides.dest0RuOverride || '');
-    setVal('route-edit-dest1-en', convexOverrides.dest1EnOverride || '');
-    setVal('route-edit-dest1-ka', convexOverrides.dest1KaOverride || '');
-    setVal('route-edit-dest1-ru', convexOverrides.dest1RuOverride || '');
+    setVal('route-edit-dest0-en', routeOverrides.dest0EnOverride || '');
+    setVal('route-edit-dest0-ka', routeOverrides.dest0KaOverride || '');
+    setVal('route-edit-dest0-ru', routeOverrides.dest0RuOverride || '');
+    setVal('route-edit-dest1-en', routeOverrides.dest1EnOverride || '');
+    setVal('route-edit-dest1-ka', routeOverrides.dest1KaOverride || '');
+    setVal('route-edit-dest1-ru', routeOverrides.dest1RuOverride || '');
 
     checkRouteDirtyState();
 }
@@ -525,76 +507,43 @@ async function saveRouteOverrides() {
     }
 
     try {
-        // Build the update payload for Convex
-        const updates = {};
+        const updates = {
+            isLoop: editedOverrides.isLoop ? 'true' : '',
+            invertDirection: editedOverrides.invertDirection ? 'true' : '',
+            terminusStopId_override: editedOverrides.terminusStopIdOverride || '',
+            virtualTerminusStopId: routeEditState.autoTerminusId || editedOverrides.virtualTerminusStopId || '',
+            longName_en_override: editedOverrides.longNameEnOverride || '',
+            longName_ka_override: editedOverrides.longNameKaOverride || '',
+            longName_ru_override: editedOverrides.longNameRuOverride || '',
+            dest0_en_override: editedOverrides.dest0EnOverride || '',
+            dest0_ka_override: editedOverrides.dest0KaOverride || '',
+            dest0_ru_override: editedOverrides.dest0RuOverride || '',
+            dest1_en_override: editedOverrides.dest1EnOverride || '',
+            dest1_ka_override: editedOverrides.dest1KaOverride || '',
+            dest1_ru_override: editedOverrides.dest1RuOverride || ''
+        };
 
-        if (editedOverrides.isLoop !== undefined) {
-            updates.isLoop = editedOverrides.isLoop;
-        }
-        if (editedOverrides.invertDirection !== undefined) {
-            updates.invertDirection = editedOverrides.invertDirection;
-        }
-        if (editedOverrides.terminusStopIdOverride !== undefined) {
-            updates.terminusStopId_override = editedOverrides.terminusStopIdOverride;
-        }
-        if (routeEditState.autoTerminusId) {
-            updates.virtualTerminusStopId = routeEditState.autoTerminusId;
-        }
-        if (editedOverrides.longNameEnOverride !== undefined) {
-            updates.longName_en_override = editedOverrides.longNameEnOverride;
-        }
-        if (editedOverrides.longNameKaOverride !== undefined) {
-            updates.longName_ka_override = editedOverrides.longNameKaOverride;
-        }
-        if (editedOverrides.longNameRuOverride !== undefined) {
-            updates.longName_ru_override = editedOverrides.longNameRuOverride;
-        }
-        if (editedOverrides.dest0EnOverride !== undefined) {
-            updates.dest0_en_override = editedOverrides.dest0EnOverride;
-        }
-        if (editedOverrides.dest0KaOverride !== undefined) {
-            updates.dest0_ka_override = editedOverrides.dest0KaOverride;
-        }
-        if (editedOverrides.dest0RuOverride !== undefined) {
-            updates.dest0_ru_override = editedOverrides.dest0RuOverride;
-        }
-        if (editedOverrides.dest1EnOverride !== undefined) {
-            updates.dest1_en_override = editedOverrides.dest1EnOverride;
-        }
-        if (editedOverrides.dest1KaOverride !== undefined) {
-            updates.dest1_ka_override = editedOverrides.dest1KaOverride;
-        }
-        if (editedOverrides.dest1RuOverride !== undefined) {
-            updates.dest1_ru_override = editedOverrides.dest1RuOverride;
-        }
+        console.log('[DevTools] Saving route overrides to CSV:', { routeId, updates });
 
-        // Use route's _source if available, or infer from ID prefix
-        let sourceId = routeEditState.routeObj?._source || 'tbilisi';
-        if (String(routeId).startsWith('r') && String(routeId).length > 1 && String(routeId)[1] === 'R') {
-            sourceId = 'rustavi';
-        }
-
-        const { convex, restoreApiId, sources } = await import('./api.js');
-        const source = sources.find(s => s.id === sourceId) || sources[0];
-        const dbRouteId = restoreApiId(String(routeId), source);
-
-        console.log('[DevTools] Saving route overrides to Convex:', { routeId: dbRouteId, updates });
-
-        // Call Convex mutation
-        const result = await convex.mutation("transit:updateOverride", {
-            routeId: dbRouteId,
-            updates
+        const result = await fetch('/api/update-route-override', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: routeId, updates })
         });
 
-        console.log('[DevTools] Route override saved successfully:', result);
+        if (!result.ok) {
+            const text = await result.text();
+            throw new Error(`Save failed: ${result.status} ${text}`);
+        }
+
+        console.log('[DevTools] Route override saved successfully');
 
         if (applyBtn) {
             applyBtn.textContent = 'Saved!';
             applyBtn.classList.add('success');
         }
 
-        // Format the _overrides object for the frontend (specifically getPatternHeadsign)
-        // to match the structure returned by the Convex backend.
+        // Format the _overrides object for consumers such as getPatternHeadsign.
         const formatted = {
             isLoop: editedOverrides.isLoop,
             invertDirection: editedOverrides.invertDirection,
@@ -613,15 +562,27 @@ async function saveRouteOverrides() {
                         ru: editedOverrides.dest1RuOverride || editedOverrides.dest1Ru
                     }
                 }
-            ]
+            ],
+            terminusStopId: editedOverrides.terminusStopId,
+            terminusStopId_override: editedOverrides.terminusStopIdOverride || '',
+            terminusStopIdOverride: editedOverrides.terminusStopIdOverride || '',
+            virtualTerminusStopId: routeEditState.autoTerminusId || editedOverrides.virtualTerminusStopId || ''
         };
 
         if (routeEditState.routeObj) {
             routeEditState.routeObj._overrides = formatted;
         }
 
+        if (!window.routesConfig.routeOverrides) window.routesConfig.routeOverrides = {};
+        window.routesConfig.routeOverrides[routeId] = {
+            ...(window.routesConfig.routeOverrides[routeId] || {}),
+            ...editedOverrides,
+            terminusStopId_override: editedOverrides.terminusStopIdOverride || ''
+        };
+
         // Invalidate frontend cache to force re-fetch on next access (if user closes/reopens)
-        const { invalidateRouteCache } = await import('./api.js');
+        const { invalidateRouteCache, invalidateRouteOverridesCache } = await import('./api.js');
+        invalidateRouteOverridesCache();
         invalidateRouteCache(String(routeId));
 
         // Update csvOverrides to match edited (so dirty state is cleared)
@@ -1821,7 +1782,7 @@ async function saveAllRoutesChanges() {
 export async function populateAllVirtualTermini() {
     console.log('[DevTools] Starting batch population of virtual termini...');
     const allRoutes = _dataProvider.getAllRoutes();
-    const { convex, fetchRouteStopsV3, fetchRouteDetailsV3, restoreApiId, sources } = await import('./api.js');
+    const { fetchRouteStopsV3, fetchRouteDetailsV3, restoreApiId, sources } = await import('./api.js');
 
     let processed = 0;
     let loopsFound = 0;
@@ -1883,10 +1844,15 @@ export async function populateAllVirtualTermini() {
                 const source = sources.find(s => s.id === sourceId) || sources[0];
                 const dbRouteId = restoreApiId(String(routeId), source);
 
-                await convex.mutation("transit:updateOverride", {
-                    routeId: dbRouteId,
-                    updates: { virtualTerminusStopId: autoTerminusId }
+                const res = await fetch('/api/update-route-override', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: dbRouteId,
+                        updates: { virtualTerminusStopId: autoTerminusId }
+                    })
                 });
+                if (!res.ok) throw new Error(await res.text());
                 saved++;
                 console.log(`[Batch] Saved virtual terminus ${autoTerminusId} for route ${routeWithPatterns.shortName}`);
             } catch (e) {

@@ -1,13 +1,60 @@
 import { buildDirectionsPath, parseDirectionsPath } from './directions-url.js';
 
+const CUSTOM_DOMAIN_HOST = 'tbilisi-trans.samshabrg.org';
+
+function normalizeBasePath(base) {
+    const value = typeof base === 'string' && base ? base : '/';
+    const withLeadingSlash = value.startsWith('/') ? value : `/${value}`;
+    return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`;
+}
+
+function getBuildBasePath() {
+    return normalizeBasePath(import.meta.env.BASE_URL);
+}
+
+export function getVisibleBasePath() {
+    const configured = import.meta.env.VITE_PUBLIC_WEB_BASE_URL;
+    if (configured && typeof configured === 'string') {
+        try {
+            const publicUrl = new URL(configured);
+            if (publicUrl.host === window.location.host) {
+                return normalizeBasePath(publicUrl.pathname || '/');
+            }
+        } catch (e) {
+            console.warn('[Router] Ignoring invalid VITE_PUBLIC_WEB_BASE_URL:', configured);
+        }
+    }
+
+    if (window.location.hostname === CUSTOM_DOMAIN_HOST) {
+        return '/';
+    }
+
+    return getBuildBasePath();
+}
+
+function stripBasePath(path, base) {
+    if (!base || base === '/') {
+        return path.startsWith('/') ? path.slice(1) : path;
+    }
+    if (path === base.slice(0, -1)) {
+        return '';
+    }
+    if (path.startsWith(base)) {
+        return path.slice(base.length);
+    }
+    return null;
+}
+
 export const Router = {
-    // Detect base path from vite.config/document base or default
-    base: import.meta.env.BASE_URL,
+    // Address-bar base path. It can differ from Vite's asset base behind the custom-domain proxy.
+    base: getVisibleBasePath(),
+    buildBase: getBuildBasePath(),
     _lastParsedPath: null,
     _lastParsedState: null,
 
     init() {
         console.log('[Router] Initializing...');
+        this.canonicalizeLegacyBasePath();
         // Handle Back/Forward buttons
         window.addEventListener('popstate', (e) => {
             console.log('[Router] PopState:', e.state, location.pathname);
@@ -19,6 +66,18 @@ export const Router = {
 
     // Callback for external handler
     onPopState: null,
+
+    canonicalizeLegacyBasePath() {
+        if (this.base !== '/' || this.buildBase === '/') return;
+
+        const stripped = stripBasePath(location.pathname, this.buildBase);
+        if (stripped === null) return;
+
+        const nextPath = `/${stripped}`.replace(/\/{2,}/g, '/');
+        history.replaceState(history.state, '', `${nextPath}${location.search}${location.hash}`);
+        this._lastParsedPath = null;
+        this._lastParsedState = null;
+    },
 
     /**
      * Parse current URL into state object
@@ -33,8 +92,12 @@ export const Router = {
             return this._lastParsedState;
         }
         console.log(`[Router] Parsing path: "${path}" (Base: "${this.base}")`);
-        if (path.startsWith(this.base)) {
-            path = path.substring(this.base.length);
+        const visiblePath = stripBasePath(path, this.base);
+        const buildPath = stripBasePath(path, this.buildBase);
+        if (visiblePath !== null) {
+            path = visiblePath;
+        } else if (buildPath !== null) {
+            path = buildPath;
         } else if (path.startsWith('/')) {
             // Localhost handling where base might be root or different
             // If we are developing locally on root, base is '/'
@@ -311,7 +374,9 @@ export const Router = {
 
     isDirectionsPath(pathname = location.pathname) {
         const path = String(pathname || '');
-        const normalized = path.startsWith(this.base) ? path.substring(this.base.length) : path.replace(/^\//, '');
+        const visiblePath = stripBasePath(path, this.base);
+        const buildPath = stripBasePath(path, this.buildBase);
+        const normalized = visiblePath ?? buildPath ?? path.replace(/^\//, '');
         return normalized.startsWith('directions/');
     }
 };

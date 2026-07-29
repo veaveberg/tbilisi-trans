@@ -233,9 +233,14 @@ const saveStopsPlugin = () => ({
                         }
 
                         if (!found) {
-                            res.statusCode = 404;
-                            res.end(`Route ${id} not found in CSV`);
-                            return;
+                            const cols = new Array(headerCols.length).fill('');
+                            if (colIndices.id !== undefined) cols[colIndices.id] = id;
+                            for (const [field, value] of Object.entries(updates)) {
+                                const colIdx = colIndices[field];
+                                if (colIdx !== undefined) cols[colIdx] = value;
+                            }
+                            lines.push(cols.map(escapeCSV).join(','));
+                            console.log(`[Middleware] Added new row for route ${id}`);
                         }
 
                         // Write back
@@ -350,9 +355,24 @@ const saveStopsPlugin = () => ({
 // detect mkcert files
 const hasCert = fs.existsSync('./localhost+3.pem') && fs.existsSync('./localhost+3-key.pem');
 
+const copyOtaPlugin = () => ({
+    name: 'copy-ota-files',
+    closeBundle() {
+        const sourceDir = path.resolve(__dirname, 'ota');
+        if (!fs.existsSync(sourceDir)) return;
+
+        const outDir = process.env.VITE_OUT_DIR || 'dist';
+        const targetDir = path.resolve(__dirname, outDir, 'ota');
+        fs.rmSync(targetDir, { recursive: true, force: true });
+        fs.cpSync(sourceDir, targetDir, { recursive: true });
+        console.log(`[OTA] Copied ota/ to ${path.relative(__dirname, targetDir)}`);
+    }
+});
+
 export default defineConfig({
     plugins: [
         hasCert ? null : basicSsl(),
+        copyOtaPlugin(),
         saveStopsPlugin(),
         disablePwa ? null : VitePWA({
             registerType: 'autoUpdate',

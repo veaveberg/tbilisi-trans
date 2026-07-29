@@ -75,19 +75,40 @@ function run(command, args) {
     });
 }
 
+function getSourceArg() {
+    const sourceFlag = process.argv.find(arg => arg.startsWith('--source='));
+    if (sourceFlag) return sourceFlag.split('=')[1];
+    if (process.argv.includes('--tbilisi')) return 'tbilisi';
+    if (process.argv.includes('--rustavi')) return 'rustavi';
+    return null;
+}
+
+function getPrefetchScript(source) {
+    if (!source) return 'prefetch';
+    if (source === 'tbilisi') return 'prefetch:tbilisi';
+    if (source === 'rustavi') return 'prefetch:rustavi';
+    throw new Error(`Unknown source "${source}". Expected "tbilisi" or "rustavi".`);
+}
+
 async function main() {
     const skipArchive = process.argv.includes('--skip-archive');
     const skipFetch = process.argv.includes('--skip-fetch');
+    const source = getSourceArg();
 
     if (!skipArchive) archiveCurrentData();
 
     if (!skipFetch) {
-        console.log('[Data Update] Regenerating public/data from upstream APIs...');
-        await run('npm', ['run', 'prefetch']);
+        const prefetchScript = getPrefetchScript(source);
+        const scope = source ? `${source} public/data` : 'public/data';
+        console.log(`[Data Update] Regenerating ${scope} from upstream APIs...`);
+        await run('npm', ['run', prefetchScript]);
     }
 
     console.log('[Data Update] Writing public/data/manifest.json...');
     await run('node', ['scripts/write-data-manifest.js']);
+
+    console.log('[Data Update] Syncing ota files...');
+    await run('node', ['scripts/sync-ota-files.js']);
 
     console.log('[Data Update] Done');
 }
@@ -96,4 +117,3 @@ main().catch((error) => {
     console.error(`[Data Update] Failed: ${error.message}`);
     process.exit(1);
 });
-
