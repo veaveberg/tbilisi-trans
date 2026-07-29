@@ -137,7 +137,7 @@ export async function convertRoutesConfigToCSV(config, existingCsvPath) {
         'dest1_en', 'dest1_en_override',
         'dest1_ka', 'dest1_ka_override',
         'dest1_ru_override',
-        'isLoop', 'terminusStopId', 'terminusStopId_override', 'terminusStopName',
+        'isLoop', 'terminusStopId', 'terminusStopId_override', 'terminusStopName', 'virtualTerminusStopId',
         'invertDirection'
     ];
 

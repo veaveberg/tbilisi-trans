@@ -17,6 +17,7 @@ export const DATA_FILES = [
     { name: 'rustavi_polylines.json', category: 'base', source: 'rustavi' },
     { name: 'rustavi_schedules.json', category: 'base', source: 'rustavi' },
 
+    { name: 'routes_overrides.csv', category: 'corrections' },
     { name: 'stops_overrides.csv', category: 'corrections' },
     { name: 'route_intervals.json', category: 'base' },
     { name: 'long_segments.geojson', category: 'base' },
@@ -25,4 +26,3 @@ export const DATA_FILES = [
     { name: 'metro_segments.json', category: 'base' },
     { name: 'metro_shapes.geojson', category: 'base' }
 ];
-

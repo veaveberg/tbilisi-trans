@@ -1038,60 +1038,18 @@ function processRoute(route, source) {
 // --- Multi-Source Aggregation Wrappers ---
 
 /**
- * Fetches stops from ALL sources, tags them with `_source`, and merges results.
- */
-import { ConvexClient } from "convex/browser";
-
-// ... (existing imports)
-
-// Initialize Convex Client
-export const convex = new ConvexClient(import.meta.env.VITE_CONVEX_URL);
-
-// ...
-
-/**
- * Fetches stops from ALL sources via Convex, tags them with `_source`, and merges results.
+ * Fetches stops from bundled/static data files, tags them with `_source`, and merges results.
  */
 export async function fetchStops(options = {}) {
-    // console.debug('[API DEBUG] fetchStops called with options:', options);
+    // Keep options for API compatibility with older cache/network callers.
     const locale = getActiveLocale();
     const promises = sources.map(async (source) => {
-        const cacheKey = `convex_stops_${source.id}_${locale}`;
-        let data = null;
+        let filename = `${source.id}_stops_${locale}.json`;
+        let data = await getStaticCache(source.id, filename);
 
-        // 1. Try Cache
-        try {
-            const cached = await db.get(cacheKey);
-            if (cached) {
-                const age = Date.now() - cached.timestamp;
-                if (age < CACHE_DURATION && options.strategy !== 'network-only') {
-                    data = cached.data;
-                }
-                // If stale, we'll fetch in background if not cache-only? 
-                // Creating simplified logic for now: Cache First if available and valid.
-                // Or Stale-While-Revalidate? 
-                // Let's stick to "If cache good, return it. If cache old or missing, fetch."
-                // But options.strategy='cache-only' MUST be respected for fast load.
-                if (options.strategy === 'cache-only' && cached) return cached.data.map(item => processStop(item, source));
-            }
-        } catch (e) { console.warn('Cache Read Error', e); }
-
-        // 2. Fetch Network (if needed)
-        if (!data && options.strategy !== 'cache-only') {
-            try {
-                // console.debug(`[API DEBUG] fetchStops: Calling Convex for ${source.id}...`);
-                data = await convex.query("transit:getStops", { sourceId: source.id, locale });
-                // console.debug(`[API DEBUG] fetchStops: Got ${data?.length || 0} stops from Convex for ${source.id}`);
-                // Save to Cache
-                await db.set(cacheKey, { timestamp: Date.now(), data });
-            } catch (e) {
-                console.warn(`[API] Failed to fetch stops from Convex (${source.id}):`, e);
-                // Fallback to cache even if stale?
-                if (!data) {
-                    const fallback = await db.get(cacheKey);
-                    if (fallback) data = fallback.data;
-                }
-            }
+        if (!Array.isArray(data) && locale !== 'en') {
+            filename = `${source.id}_stops_en.json`;
+            data = await getStaticCache(source.id, filename);
         }
 
         if (!Array.isArray(data)) return [];
@@ -1145,68 +1103,18 @@ export async function fetchStops(options = {}) {
 
 
 /**
- * Fetches routes from ALL sources via Convex, tags them with `_source`, and merges results.
+ * Fetches routes from bundled/static data files, tags them with `_source`, and merges results.
  */
 export async function fetchRoutes(options = {}) {
-    // console.debug('[API DEBUG] fetchRoutes called with options:', options);
+    // Keep options for API compatibility with older cache/network callers.
     const locale = getActiveLocale();
     const promises = sources.map(async (source) => {
-        const cacheKey = `convex_routes_${source.id}_${locale}`;
-        let data = null;
+        let filename = `${source.id}_routes_${locale}.json`;
+        let data = await getStaticCache(source.id, filename);
 
-        // 1. Try Cache
-        try {
-            const cached = await db.get(cacheKey);
-            if (cached) {
-                const age = Date.now() - cached.timestamp;
-                const forceRefresh = import.meta.env.DEV && options.strategy !== 'cache-only';
-
-                if (age < CACHE_DURATION && options.strategy !== 'network-only' && !forceRefresh) {
-                    data = cached.data;
-                }
-
-                if (options.strategy === 'cache-only' && cached) return cached.data.map(item => processRoute(item, source));
-            }
-        } catch (e) { console.warn('Cache Read Error', e); }
-
-        // 2. Fetch Network
-        if (!data && options.strategy !== 'cache-only') {
-            try {
-                // Fetch EN for now, usually structural data is shared or EN is primary. 
-                // Overrides logic in backend handles localization merging if we passed locale?
-                // Backend 'getRoutes' takes locale.
-                // Validated overrides were fetched with 'en'.
-                // Ideally we should pass the current locale? 
-                // But the app might switch locales partially?
-                // Static Data usually preload EN.
-                // Let's stick to 'en' for structural data as per previous static files.
-                // console.debug(`[API DEBUG] fetchRoutes: Calling Convex for ${source.id}...`);
-                const response = await convex.query("transit:getRoutes", { sourceId: source.id, locale });
-
-                if (response && response._convex_meta) {
-                    // console.debug(`[API DEBUG] fetchRoutes: Got response from Convex at ${new Date(response._convex_meta.timestamp).toLocaleTimeString()}. Overrides in DB: ${response._convex_meta.totalOverrides}`);
-                    data = response.routes;
-                } else {
-                    // console.warn(`[API DEBUG] fetchRoutes: Convex returned unexpected format or no meta for ${source.id}`, response);
-                    data = Array.isArray(response) ? response : [];
-                }
-
-                // console.debug(`[API DEBUG] fetchRoutes: Got ${data?.length || 0} routes from Convex for ${source.id}`);
-
-                const r497 = data.find(r => r.id === 'minibusR24335' || r.id === '497' || r.shortName === '497');
-                if (r497) {
-                    // console.debug(`[API DEBUG] Route 497 raw data from Convex:`, JSON.stringify(r497));
-                }
-
-                await db.set(cacheKey, { timestamp: Date.now(), data });
-            } catch (e) {
-                console.warn(`[API] Failed to fetch routes from Convex (${source.id}):`, e);
-                // Fallback to cache even if stale?
-                if (!data) {
-                    const fallback = await db.get(cacheKey);
-                    if (fallback) data = fallback.data;
-                }
-            }
+        if (!Array.isArray(data) && locale !== 'en') {
+            filename = `${source.id}_routes_en.json`;
+            data = await getStaticCache(source.id, filename);
         }
 
         if (!Array.isArray(data)) return [];
@@ -1394,7 +1302,7 @@ export async function fetchMetroSchedulePattern(routeId, patternSuffix) {
     return fetchFromSmartSource(urlGen, routeId);
 }
 
-// V3 Routes List - Now uses Convex-backed fetchRoutes
+// V3 Routes List - uses file-backed fetchRoutes
 export async function fetchV3Routes() {
     // console.debug('[API DEBUG] fetchV3Routes: Delegating to fetchRoutes()');
     return fetchRoutes({ strategy: 'cache-first' });
@@ -1403,25 +1311,70 @@ export async function fetchV3Routes() {
 let globalOverridesCache = null;
 let overridesPromise = null;
 
+export function invalidateRouteOverridesCache() {
+    globalOverridesCache = null;
+    overridesPromise = null;
+}
+
 export async function fetchAllOverrides() {
     if (globalOverridesCache) return globalOverridesCache;
     if (overridesPromise) return overridesPromise;
 
     overridesPromise = (async () => {
         try {
-            console.log('[API] Fetching all global overrides...');
-            const data = await convex.query("transit:getAllOverrides");
-            globalOverridesCache = new Map(data.map(o => [o.routeId, o]));
+            console.log('[API] Fetching route overrides from CSV...');
+            const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+            const response = await fetch(`${basePath}data/routes_overrides.csv`);
+            if (!response.ok) {
+                if (response.status === 404) {
+                    globalOverridesCache = new Map();
+                    return globalOverridesCache;
+                }
+                throw new Error(`Failed to load routes_overrides.csv: ${response.status}`);
+            }
+            const csvText = await response.text();
+            const { parseCSV, extractOverrides } = await import('./csv-parser.js');
+            const overrides = extractOverrides(parseCSV(csvText), 'id');
+            globalOverridesCache = new Map(Object.entries(overrides));
             console.log(`[API] Loaded ${globalOverridesCache.size} overrides.`);
             return globalOverridesCache;
         } catch (e) {
-            console.error('[API] Failed to fetch global overrides', e);
-            throw e;
+            console.warn('[API] Failed to fetch route overrides CSV', e);
+            globalOverridesCache = new Map();
+            return globalOverridesCache;
         } finally {
             overridesPromise = null;
         }
     })();
     return overridesPromise;
+}
+
+function formatRouteOverrides(overrides) {
+    if (!overrides) return null;
+    return {
+        isLoop: overrides.isLoop,
+        invertDirection: overrides.invertDirection,
+        destinations: [
+            {
+                headsign: {
+                    en: overrides.dest0EnOverride || overrides.dest0En || overrides.destinations?.[0]?.headsign?.en,
+                    ka: overrides.dest0KaOverride || overrides.dest0Ka || overrides.destinations?.[0]?.headsign?.ka,
+                    ru: overrides.dest0RuOverride || overrides.dest0Ru || overrides.destinations?.[0]?.headsign?.ru
+                }
+            },
+            {
+                headsign: {
+                    en: overrides.dest1EnOverride || overrides.dest1En || overrides.destinations?.[1]?.headsign?.en,
+                    ka: overrides.dest1KaOverride || overrides.dest1Ka || overrides.destinations?.[1]?.headsign?.ka,
+                    ru: overrides.dest1RuOverride || overrides.dest1Ru || overrides.destinations?.[1]?.headsign?.ru
+                }
+            }
+        ],
+        terminusStopId: overrides.terminusStopId,
+        terminusStopId_override: overrides.terminusStopIdOverride || overrides.terminusStopId_override,
+        terminusStopIdOverride: overrides.terminusStopIdOverride || overrides.terminusStopId_override,
+        virtualTerminusStopId: overrides.virtualTerminusStopId
+    };
 }
 
 function matchOverride(routeId) {
@@ -1430,18 +1383,13 @@ function matchOverride(routeId) {
     // Exact match
     if (globalOverridesCache.has(routeId)) return globalOverridesCache.get(routeId);
 
-    // Stripped ID match (for "1:520" vs "520")
-    // Try variations:
+    const stripped = String(routeId).replace(/^[12]:/, '').replace(/^r(?=R)/, '');
     const variations = [
-        String(routeId).replace(/^[12]:/, ''), // 1:520 -> 520
-        `1:${String(routeId).replace(/^[12]:/, '')}`, // 520 -> 1:520
-        `2:${String(routeId).replace(/^[12]:/, '')}`  // 520 -> 2:520
+        stripped,
+        `1:${stripped}`,
+        `2:${stripped}`,
+        `r${stripped}`
     ];
-
-    // Handle 'r' prefix for Rustavi
-    if (String(routeId).includes('r')) {
-        // ... logic already covered by exact match if IDs match, but in case of mismatches
-    }
 
     for (const v of variations) {
         if (globalOverridesCache.has(v)) return globalOverridesCache.get(v);
@@ -1482,40 +1430,17 @@ export async function fetchRouteDetailsV3(routeId, options = {}) {
         const overrides = matchOverride(routeId);
         if (overrides) {
             // console.log(`[API] Applied overrides for ${routeId}`, overrides);
-            if (overrides.shortName_override) route.shortName = overrides.shortName_override;
+            if (overrides.shortName) route.shortName = overrides.shortName;
             if (overrides.isLoop !== undefined) route.isLoop = overrides.isLoop;
             if (overrides.invertDirection !== undefined) route.invertDirection = overrides.invertDirection;
 
             // Locale specific names
             const locale = options.locale || getActiveLocale();
-            if (locale === 'en' && overrides.longName_en_override) route.longName = overrides.longName_en_override;
-            else if (locale === 'ka' && overrides.longName_ka_override) route.longName = overrides.longName_ka_override;
-            else if (locale === 'ru' && overrides.longName_ru_override) route.longName = overrides.longName_ru_override;
+            if (locale === 'en' && overrides.longNameEnOverride) route.longName = overrides.longNameEnOverride;
+            else if (locale === 'ka' && overrides.longNameKaOverride) route.longName = overrides.longNameKaOverride;
+            else if (locale === 'ru' && overrides.longNameRuOverride) route.longName = overrides.longNameRuOverride;
 
-            // Attach _overrides object
-            route._overrides = {
-                isLoop: overrides.isLoop,
-                invertDirection: overrides.invertDirection,
-                destinations: [
-                    {
-                        headsign: {
-                            en: overrides.dest0_en_override || overrides.dest0_en,
-                            ka: overrides.dest0_ka_override || overrides.dest0_ka,
-                            ru: overrides.dest0_ru_override || overrides.dest0_ru
-                        }
-                    },
-                    {
-                        headsign: {
-                            en: overrides.dest1_en_override || overrides.dest1_en,
-                            ka: overrides.dest1_ka_override || overrides.dest1_ka,
-                            ru: overrides.dest1_ru_override || overrides.dest1_ru
-                        }
-                    }
-                ],
-                terminusStopId: overrides.terminusStopId,
-                terminusStopId_override: overrides.terminusStopId_override,
-                virtualTerminusStopId: overrides.virtualTerminusStopId
-            };
+            route._overrides = formatRouteOverrides(overrides);
         }
     }
 

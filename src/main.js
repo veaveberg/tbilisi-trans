@@ -6220,14 +6220,6 @@ let routesConfig = { routeOverrides: {} };
 window.routesConfig = routesConfig;
 
 async function loadRoutesConfig() {
-    // Route overrides are now applied server-side in Convex (transit:getRoutes query).
-    // This CSV loading is kept for backwards compatibility but disabled.
-    console.log('[Config] Route overrides now handled by Convex - skipping CSV load');
-    routesConfig = { routeOverrides: {} };
-    window.routesConfig = routesConfig;
-    return;
-
-    // --- LEGACY CSV LOADING (disabled) ---
     try {
         const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
         // Add cache buster to ensure fresh config on reload
@@ -6263,6 +6255,9 @@ async function loadRoutesConfig() {
 
             console.log('[Config] Loaded routes config from CSV', Object.keys(overrides).length, 'overrides');
             if (allRoutes && allRoutes.length > 0) applyRouteOverrides();
+        } else if (response.status === 404) {
+            routesConfig = { routeOverrides: {} };
+            window.routesConfig = routesConfig;
         }
     } catch (e) {
         console.warn('Failed to load routes_overrides.csv', e);
@@ -6346,6 +6341,9 @@ function applyRouteOverrides() {
 
         if (override) {
             updateCount++;
+            if (override.terminusStopIdOverride && !override.terminusStopId_override) {
+                override.terminusStopId_override = override.terminusStopIdOverride;
+            }
             route._overrides = override; // Attach for reference
             if (override.shortName) route.customShortName = override.shortName; // Display Alias
             // Do NOT overwrite route.shortName to preserve URLs and linking logic

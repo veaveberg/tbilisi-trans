@@ -155,7 +155,10 @@ export function extractOverrides(rows, idColumn = 'id') {
                 const fieldName = key.replace('_override', '');
 
                 // Handle nested fields (e.g., dest0_en -> destinations.0.headsign.en)
-                if (fieldName.startsWith('dest')) {
+                if (fieldName === 'terminusStopId') {
+                    override.terminusStopId_override = value;
+                    override.terminusStopIdOverride = value;
+                } else if (fieldName.startsWith('dest')) {
                     const match = fieldName.match(/^dest(\d+)_(\w+)$/);
                     if (match) {
                         const [, direction, lang] = match;
@@ -198,7 +201,7 @@ export function extractOverrides(rows, idColumn = 'id') {
                         override[keyName] = value;
                     }
                 }
-            } else if (key === 'mergeParent' || key === 'hubTarget' || key === 'rotation' || key === 'invertDirection' || key === 'isLoop' || key === 'terminusStopId' || key === 'terminusStopName') {
+            } else if (key === 'mergeParent' || key === 'hubTarget' || key === 'rotation' || key === 'invertDirection' || key === 'isLoop' || key === 'terminusStopId' || key === 'terminusStopName' || key === 'virtualTerminusStopId') {
                 // Special non-override fields that should be included
                 if (key === 'rotation') {
                     override[key] = parseFloat(value);
