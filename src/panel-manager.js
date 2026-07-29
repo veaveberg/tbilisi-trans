@@ -118,6 +118,13 @@ export function setSheetState(panel, state) {
     panel.style.setProperty('--sheet-y', `${targetY}px`);
     panel.style.setProperty('--sheet-hidden-h', `${hiddenH}px`);
     updateMapPadding();
+    document.dispatchEvent(new CustomEvent('sheet:state-changed', {
+        detail: {
+            panelId: panel.id,
+            state,
+            wasHidden
+        }
+    }));
 }
 
 // Helper to toggle panel open class on body

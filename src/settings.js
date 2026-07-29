@@ -225,13 +225,20 @@ function applyNativeSetting(key, value) {
             break;
         case 'routeDataRefresh':
             window.dispatchEvent(new CustomEvent('routeDataRefreshRequest', { detail: value }));
-            setNativeRouteDataStatus({ status: 'checking', progress: 20 });
-            checkRouteDataUpdates().then((result) => {
+            setNativeRouteDataStatus({ status: 'checking' });
+            checkRouteDataUpdates({
+                onProgress: (progress) => {
+                    setNativeRouteDataStatus({
+                        status: progress?.status || 'downloading',
+                        completed: Number.isFinite(progress?.completed) ? progress.completed : 0,
+                        total: Number.isFinite(progress?.total) ? progress.total : 0
+                    });
+                }
+            }).then((result) => {
                 window.dispatchEvent(new CustomEvent('routeDataRefreshResult', { detail: result }));
                 routeDataManifestInfoPromise = null;
                 setNativeRouteDataStatus({
                     status: result?.status || 'upToDate',
-                    progress: 100,
                     generatedAt: result?.generatedAt || ''
                 });
             }).catch((err) => {

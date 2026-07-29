@@ -171,6 +171,20 @@ export function initArrivals(dependencies) {
     });
 }
 
+export function invalidateArrivalBottomInfo() {
+    scheduledArrivalsCache.clear();
+    scheduledArrivalsByStop.clear();
+
+    document.querySelectorAll('.arrival-card-bottom').forEach((bottomEl) => {
+        bottomEl.innerHTML = '&nbsp;';
+        delete bottomEl.dataset.baseHtml;
+        delete bottomEl.dataset.lateWarningIndices;
+        delete bottomEl.dataset.schedulePatternSuffix;
+        delete bottomEl.dataset.firstScheduledMinutes;
+        delete bottomEl.dataset.lastScheduledMinutes;
+    });
+}
+
 export function resetStopRouteFilter(stopId = null) {
     console.log(`[ArrivalsFilter] resetStopRouteFilter called for stopId: ${stopId}`);
     selectedStopRouteIds = new Set();
@@ -1239,7 +1253,10 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
         routeId = v3RoutesMap && v3RoutesMap.get(String(routeShortName));
     }
 
-    if (!routeId) return null;
+    if (!routeId) {
+        console.warn('[ScheduleDebug] Full schedule route ID missing', { routeShortName, stopId, explicitRouteId, explicitSuffix, options });
+        return null;
+    }
 
     const stopIds = deps.getEquivalentStops ? deps.getEquivalentStops(stopId) : [stopId];
     if (deps.mergeSourcesMap?.has(stopId)) {
@@ -1247,9 +1264,23 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
     }
 
     const result = await api.fetchScheduleForStop(routeId, stopIds, explicitSuffix, options);
-    if (!result || !result.schedule) return null;
+    let schedule = result?.schedule || null;
+    if (!schedule && explicitSuffix) {
+        console.warn('[ScheduleDebug] Full schedule association lookup failed; trying direct static lookup', {
+            routeShortName,
+            routeId,
+            stopId,
+            stopIds,
+            explicitSuffix,
+            options
+        });
+        schedule = await api.getStaticScheduleForRouteSuffix(routeId, explicitSuffix);
+    }
+    if (!schedule) {
+        console.warn('[ScheduleDebug] Full schedule missing', { routeShortName, routeId, stopId, stopIds, explicitSuffix, options });
+        return null;
+    }
 
-    const { schedule } = result;
     const { todayStr, todayIdx } = getTbilisiDayInfo();
 
     // Build entries for tabs
@@ -1327,7 +1358,20 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
     }
 
     const daySchedule = schedule[activeIndex];
-    if (!daySchedule || !daySchedule.stops) return null;
+    if (!daySchedule || !daySchedule.stops) {
+        console.warn('[ScheduleDebug] Full schedule active entry missing stops', {
+            routeShortName,
+            routeId,
+            stopId,
+            stopIds,
+            explicitSuffix,
+            activeIndex,
+            scheduleEntries: Array.isArray(schedule) ? schedule.length : null,
+            todayStr,
+            todayIdx
+        });
+        return null;
+    }
 
     const matchedStops = daySchedule.stops.filter((s, idx) => {
         const isTerminus = idx === daySchedule.stops.length - 1;
@@ -1342,7 +1386,28 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
         });
     });
 
-    if (matchedStops.length === 0) return null;
+    if (matchedStops.length === 0) {
+        console.warn('[ScheduleDebug] Full schedule stop match failed', {
+            routeShortName,
+            routeId,
+            stopId,
+            stopIds,
+            explicitSuffix,
+            activeIndex,
+            activeEntry: {
+                fromDay: daySchedule.fromDay,
+                toDay: daySchedule.toDay,
+                serviceDates: daySchedule.serviceDates?.slice?.(0, 5),
+                stopCount: daySchedule.stops.length
+            },
+            sampleStops: daySchedule.stops.slice(0, 12).map(s => ({
+                id: s.id,
+                code: s.code,
+                name: s.name
+            }))
+        });
+        return null;
+    }
 
     const grouped = {};
     matchedStops.forEach(stop => {
@@ -1361,6 +1426,33 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
     Object.keys(grouped).forEach(hour => {
         grouped[hour].sort((a, b) => parseInt(a) - parseInt(b));
     });
+
+    if (Object.keys(grouped).length === 0) {
+        console.warn('[ScheduleDebug] Full schedule matched stop but grouped output empty', {
+            routeShortName,
+            routeId,
+            stopId,
+            stopIds,
+            explicitSuffix,
+            activeIndex,
+            matchedStops: matchedStops.map(s => ({
+                id: s.id,
+                code: s.code,
+                hasArrivalTimes: !!s.arrivalTimes,
+                arrivalTimesPreview: s.arrivalTimes?.slice?.(0, 80)
+            }))
+        });
+    } else {
+        console.log('[ScheduleDebug] Full schedule grouped', {
+            routeShortName,
+            routeId,
+            stopId,
+            explicitSuffix,
+            activeIndex,
+            hours: Object.keys(grouped),
+            matchedStops: matchedStops.map(s => s.id)
+        });
+    }
 
     return { grouped, entries, activeIndex };
 }
@@ -2375,6 +2467,13 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
         if (routeObj) {
             div.onclick = () => {
+                console.log('[ScheduleDebug] Arrival card opening route', {
+                    routeId: routeObj.id,
+                    shortName: routeObj.shortName,
+                    stopId,
+                    directionIndex: item.directionIndex,
+                    headsign
+                });
                 deps.showRouteOnMap(routeObj, true, {
                     preserveBounds: false,
                     fromStopId: stopId,
