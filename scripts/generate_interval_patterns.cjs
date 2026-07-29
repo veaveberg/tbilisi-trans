@@ -1,3 +1,4 @@
+'use strict';
 
 const fs = require('fs');
 const path = require('path');
@@ -18,9 +19,18 @@ const sources = [
 ];
 
 function timeToMinutes(timeStr) {
-    let [h, m] = timeStr.split(':').map(Number);
+    let [h, m] = String(timeStr).trim().split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
     if (h < 4) h += 24; // Late night hours
     return h * 60 + m;
+}
+
+function resolveRouteForScheduleKey(key, routeIds, idToRoute) {
+    const directMatch = idToRoute[key];
+    if (directMatch) return directMatch;
+
+    const matchedId = routeIds.find(routeId => key === routeId || key.startsWith(`${routeId}_`));
+    return matchedId ? idToRoute[matchedId] : null;
 }
 
 function analyzeRoute(times) {
@@ -144,35 +154,33 @@ try {
             const parts = r.id.split(':');
             if (parts.length > 1) idToRoute[parts[1]] = r;
         });
+        const routeIdsByLength = routesData
+            .map(r => r.id)
+            .filter(Boolean)
+            .sort((a, b) => b.length - a.length);
 
-        // Find best schedule key per base route ID
+        // Find best schedule key per route ID. Match against real route IDs because
+        // route IDs can contain underscores (e.g. 1:Metro_Metro_1).
         const routeIdToBestKey = {};
         Object.keys(schedules).forEach(key => {
-            const baseId = key.split('_')[0];
+            const route = resolveRouteForScheduleKey(key, routeIdsByLength, idToRoute);
+            if (!route) return;
+
             const data = schedules[key];
             if (!data || !Array.isArray(data)) return;
             const monday = data.find(s => s.fromDay === 'MONDAY') || data[0];
             if (!monday || !monday.stops || !monday.stops[0] || !monday.stops[0].arrivalTimes) return;
 
             const count = monday.stops[0].arrivalTimes.split(',').length;
-            if (!routeIdToBestKey[baseId] || count > routeIdToBestKey[baseId].count) {
-                routeIdToBestKey[baseId] = { key, count };
+            if (!routeIdToBestKey[route.id] || count > routeIdToBestKey[route.id].count) {
+                routeIdToBestKey[route.id] = { key, count };
             }
         });
 
         // Process each route
-        Object.values(routeIdToBestKey).forEach(({ key }) => {
-            let route = idToRoute[key];
-            if (!route) {
-                for (const rId in idToRoute) {
-                    if (key.startsWith(rId)) {
-                        route = idToRoute[rId];
-                        break;
-                    }
-                }
-            }
+        Object.entries(routeIdToBestKey).forEach(([routeId, { key }]) => {
+            const route = idToRoute[routeId];
             if (!route) return;
-
             const routeData = schedules[key];
             if (!routeData || !Array.isArray(routeData)) return;
             const schedule = routeData.find(s => s.fromDay === 'MONDAY') || routeData[0];
@@ -180,6 +188,7 @@ try {
 
             const times = firstStop.arrivalTimes.split(',')
                 .map(timeToMinutes)
+                .filter(Number.isFinite)
                 .sort((a, b) => a - b);
 
             const analysis = analyzeRoute(times);

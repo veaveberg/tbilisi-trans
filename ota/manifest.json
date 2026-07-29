@@ -1,8 +1,8 @@
 {
   "manifestVersion": 1,
-  "generatedAt": "2026-07-29T10:49:04.676Z",
-  "baseDatasetVersion": "260729-1449",
-  "correctionsVersion": "260729-1449",
+  "generatedAt": "2026-07-29T11:19:55.024Z",
+  "baseDatasetVersion": "260729-1519",
+  "correctionsVersion": "260729-1519",
   "minAppVersion": null,
   "files": {
     "tbilisi_stops_en.json": {
@@ -137,14 +137,14 @@
     },
     "stops_overrides.csv": {
       "category": "corrections",
-      "sha256": "a85b014fd96b6e60e78bf657d4e4ab6abf506880164a8cf4af0305d56e487a8f",
-      "size": 467460,
+      "sha256": "d19adc6cbdf760e0a9a53805e038259f5917fa7e7acb51df411df8ba97117920",
+      "size": 467480,
       "url": "files/stops_overrides.csv"
     },
     "route_intervals.json": {
       "category": "base",
-      "sha256": "9a9a789c1c45961ceff988687b1ee28ce88bc537a7a89f2330f388cca36eed43",
-      "size": 167909,
+      "sha256": "0c3366cf7c9cdae738e21f77398614aaee958fbbeee9306cf1a5a0caa5a070e2",
+      "size": 166730,
       "url": "files/route_intervals.json"
     },
     "long_segments.geojson": {

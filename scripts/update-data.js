@@ -104,6 +104,9 @@ async function main() {
         await run('npm', ['run', prefetchScript]);
     }
 
+    console.log('[Data Update] Regenerating route interval summaries...');
+    await run('npm', ['run', 'data:intervals']);
+
     console.log('[Data Update] Writing public/data/manifest.json...');
     await run('node', ['scripts/write-data-manifest.js']);
 

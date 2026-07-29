@@ -1,11 +1,19 @@
 // Route interval pattern descriptions
 import { t } from './i18n.ts';
+import { getOtaDataFileJson } from './ota-data.js';
 
 let intervalData = null;
 
 export async function loadIntervalData() {
     if (intervalData) return intervalData;
     try {
+        const otaData = await getOtaDataFileJson('route_intervals.json');
+        if (otaData) {
+            intervalData = otaData;
+            console.log(`[Intervals] Loaded OTA data for ${Object.keys(intervalData).length} routes`);
+            return intervalData;
+        }
+
         const basePath = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.BASE_URL)
             ? (import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`)
             : './';
@@ -17,6 +25,10 @@ export async function loadIntervalData() {
         console.warn('Could not load interval data:', e);
         return null;
     }
+}
+
+export function invalidateIntervalDataCache() {
+    intervalData = null;
 }
 
 export function getIntervalData(routeId) {

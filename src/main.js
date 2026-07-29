@@ -26,7 +26,7 @@ import { hydrateRouteDetails } from './fetch.js';
 import { setupEditTools, getEditState, setEditPickMode } from './dev-tools.js';
 import * as arrivals from './arrivals.js';
 import { arrivalsController } from './arrivals-controller.js';
-import { getIntervalDescription } from './intervals.js';
+import { getIntervalDescription, invalidateIntervalDataCache, loadIntervalData } from './intervals.js';
 import { initMinibusSegmentsEditor, loadMinibusSegmentEditsFromFile } from './minibus-segments-editor.js';
 import { StreetScreenController } from './street-screen.js';
 import { applyDirectionsUrlState, initDirectionsUI, isDirectionsContextActive, redrawActiveDirections, setPoint } from './directions.js';
@@ -325,6 +325,19 @@ document.addEventListener('sheet:closed', () => {
 document.addEventListener('sheet:closed', (event) => {
     if (event.detail?.panelId !== 'directions-panel') return;
     resetLiveBusSession();
+});
+
+window.addEventListener('routeDataRefreshResult', (event) => {
+    if (event.detail?.status === 'updated') {
+        hasPendingOtaTransitDataRefresh = true;
+        console.log('[OTA] Route data update will be applied on the next UI transition');
+    }
+});
+
+document.addEventListener('sheet:state-changed', (event) => {
+    const panelId = event.detail?.panelId || 'sheet';
+    const state = event.detail?.state || 'unknown';
+    void consumePendingOtaTransitDataRefresh(`sheet:${panelId}:${state}`);
 });
 
 // Initial Router State Handling
@@ -1117,6 +1130,8 @@ let isSearchInitialized = false;
 let areImagesLoaded = false;
 let isDeepLinkHandled = false;
 let isLanguageRefreshInFlight = false;
+let hasPendingOtaTransitDataRefresh = false;
+let isTransitDataRefreshInFlight = false;
 
 async function initializeMapData(stopsData, routesData) {
     if (!stopsData || !routesData) return;
@@ -1294,12 +1309,26 @@ async function initializeMapData(stopsData, routesData) {
     // console.log('[Main] Initialization Complete');
 } // End of initializeMapData
 
-async function refreshLanguageData() {
-    if (isLanguageRefreshInFlight) return;
-    isLanguageRefreshInFlight = true;
+function findStopById(stopId) {
+    if (!stopId) return null;
+    const target = String(stopId);
+    return allStops.find((stop) => String(stop.id) === target) || null;
+}
 
+function findRouteByIdentity(routeId, routeShortName, routes = allRoutes) {
+    return routes.find((route) =>
+        (routeId && String(route.id) === String(routeId)) ||
+        (routeShortName && String(route.shortName) === String(routeShortName))
+    ) || null;
+}
+
+async function reloadActiveTransitData(reason = 'manual', options = {}) {
+    if (isTransitDataRefreshInFlight) return false;
+    isTransitDataRefreshInFlight = true;
     try {
-        applyStaticText();
+        if (options.applyStaticText) {
+            applyStaticText();
+        }
         syncFavoriteButtonState();
 
         const stopPanelVisible = !document.getElementById('info-panel')?.classList.contains('hidden');
@@ -1308,19 +1337,31 @@ async function refreshLanguageData() {
         const activeRouteId = window.currentRoute?.id ? String(window.currentRoute.id) : null;
         const activeRouteShortName = window.currentRoute?.shortName ? String(window.currentRoute.shortName) : null;
 
+        if (options.invalidateStaticCaches) {
+            api.invalidateStaticTransitDataCaches();
+            invalidateIntervalDataCache();
+            arrivals.invalidateArrivalBottomInfo();
+            cachedStopsConfig = null;
+            window.stopsConfig = null;
+            routesConfig = { routeOverrides: {} };
+            window.routesConfig = routesConfig;
+            await loadRoutesConfig();
+            await loadIntervalData();
+        }
+
         const [stops, routes] = await Promise.all([
             api.fetchStops({ strategy: 'network-only' }),
             api.fetchRoutes({ strategy: 'network-only' })
         ]);
 
         await initializeMapData(stops, routes);
+        if (options.invalidateStaticCaches) {
+            await api.preloadStaticRoutesDetails();
+        }
         onRoutesLoaded(routes);
 
         if (routePanelVisible && (activeRouteId || activeRouteShortName)) {
-            const nextRoute = routes.find((route) =>
-                (activeRouteId && String(route.id) === activeRouteId) ||
-                (activeRouteShortName && String(route.shortName) === activeRouteShortName)
-            );
+            const nextRoute = findRouteByIdentity(activeRouteId, activeRouteShortName, routes);
             if (nextRoute) {
                 await showRouteOnMap(nextRoute, false, { preserveBounds: true, suppressPanel: false, fitToRoute: false });
             }
@@ -1330,8 +1371,43 @@ async function refreshLanguageData() {
                 await showStopInfo(nextStop, false, false, false, { forceRoutesRefresh: true });
             }
         }
+        console.log(`[Data] Reloaded active transit data (${reason})`);
+        return true;
     } catch (error) {
-        console.error('[Language] Failed to refresh localized data', error);
+        console.error(`[Data] Failed to reload active transit data (${reason})`, error);
+        return false;
+    } finally {
+        isTransitDataRefreshInFlight = false;
+    }
+}
+
+async function consumePendingOtaTransitDataRefresh(reason) {
+    if (!hasPendingOtaTransitDataRefresh || isTransitDataRefreshInFlight) return false;
+    hasPendingOtaTransitDataRefresh = false;
+    const didReload = await reloadActiveTransitData(reason, { invalidateStaticCaches: true });
+    if (!didReload) {
+        hasPendingOtaTransitDataRefresh = true;
+    }
+    return didReload;
+}
+
+async function refreshLanguageData() {
+    if (isLanguageRefreshInFlight) return;
+    isLanguageRefreshInFlight = true;
+
+    try {
+        if (hasPendingOtaTransitDataRefresh) {
+            hasPendingOtaTransitDataRefresh = false;
+            const didReload = await reloadActiveTransitData('language-change:ota', {
+                applyStaticText: true,
+                invalidateStaticCaches: true
+            });
+            if (!didReload) {
+                hasPendingOtaTransitDataRefresh = true;
+            }
+        } else {
+            await reloadActiveTransitData('language-change', { applyStaticText: true });
+        }
     } finally {
         isLanguageRefreshInFlight = false;
     }
@@ -2537,6 +2613,11 @@ function areStopIdsEquivalent(idA, idB) {
 }
 
 async function showStopInfo(stop, addToStack = true, flyToStop = false, updateURL = true, options = {}) {
+    const didApplyOtaRefresh = await consumePendingOtaTransitDataRefresh('open-stop-card');
+    if (didApplyOtaRefresh && stop?.id) {
+        stop = findStopById(stop.id) || stop;
+    }
+
     closeAllMoreMenus();
     invalidateScheduledMapCamera();
     invalidateMapCameraIntent();
@@ -4188,6 +4269,11 @@ let currentPatternIndex = 0;
 // busUpdateInterval declared at top scope
 
 async function showRouteOnMap(route, addToStack = true, options = {}) {
+    const didApplyOtaRefresh = await consumePendingOtaTransitDataRefresh('open-route-card');
+    if (didApplyOtaRefresh && route) {
+        route = findRouteByIdentity(route.id, route.shortName) || route;
+    }
+
     console.log('[RoutePlot] showRouteOnMap called:', { routeShortName: route?.shortName, routeId: route?.id, addToStack, options });
     invalidateScheduledMapCamera();
     // Stop location tracking if we are selecting something specific
@@ -4223,8 +4309,9 @@ async function showRouteOnMap(route, addToStack = true, options = {}) {
     await updateRouteView(route, options);
 
     // Update URL
-    if (window.currentStopId) {
-        Router.updateNested(window.currentStopId, route.shortName, currentPatternIndex);
+    const nestedStopId = options.fromStopId || window.currentStopId;
+    if (nestedStopId) {
+        Router.updateNested(nestedStopId, route.shortName, currentPatternIndex);
     } else {
         Router.updateRoute(route.shortName, currentPatternIndex);
     }
@@ -4508,12 +4595,18 @@ async function updateRouteView(route, options = {}) {
             if (processedPatterns.length > 1) {
                 switchBtn.classList.remove('hidden');
                 switchBtn.onclick = () => {
-                    currentPatternIndex = (currentPatternIndex + 1) % processedPatterns.length;
-                    updateRouteView(route, { preserveBounds: true });
-                    if (window.currentStopId) {
-                        Router.updateNested(window.currentStopId, route.shortName, currentPatternIndex);
+                    const nextPatternIndex = (currentPatternIndex + 1) % processedPatterns.length;
+                    currentPatternIndex = nextPatternIndex;
+                    updateRouteView(route, {
+                        preserveBounds: true,
+                        fromStopId: options.fromStopId,
+                        initialDirectionIndex: nextPatternIndex
+                    });
+                    const nestedStopId = options.fromStopId || window.currentStopId;
+                    if (nestedStopId) {
+                        Router.updateNested(nestedStopId, route.shortName, nextPatternIndex);
                     } else {
-                        Router.updateRoute(route.shortName, currentPatternIndex);
+                        Router.updateRoute(route.shortName, nextPatternIndex);
                     }
                 };
             } else {
@@ -4548,9 +4641,29 @@ async function updateRouteView(route, options = {}) {
 
                     // Helper to render schedule with tabs
                     const renderSchedule = (scheduleIndex = null) => {
+                        console.log('[ScheduleDebug] Route card requesting schedule', {
+                            routeId: route.id,
+                            shortName: route.shortName,
+                            fromStopId: options.fromStopId,
+                            patternSuffix: currentPattern.patternSuffix,
+                            strategy,
+                            scheduleIndex,
+                            currentPatternIndex,
+                            requestId,
+                            lastRouteUpdateId
+                        });
                         arrivals.getFullScheduleGrouped(route.shortName, options.fromStopId, route.id, currentPattern.patternSuffix, { strategy, scheduleIndex }).then(result => {
                             if (requestId !== lastRouteUpdateId) return;
                             if (!result || !result.grouped || Object.keys(result.grouped).length === 0) {
+                                console.warn('[ScheduleDebug] Route card received no grouped schedule', {
+                                    routeId: route.id,
+                                    shortName: route.shortName,
+                                    fromStopId: options.fromStopId,
+                                    patternSuffix: currentPattern.patternSuffix,
+                                    strategy,
+                                    scheduleIndex,
+                                    result
+                                });
                                 routeBodyEl.innerHTML = `<div class="empty">${t('noScheduleData')}</div>`;
                                 return;
                             }

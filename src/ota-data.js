@@ -11,12 +11,27 @@ function isNativeOtaAvailable() {
     return true;
 }
 
-export async function checkRouteDataUpdates() {
+export async function checkRouteDataUpdates(options = {}) {
     if (!isNativeOtaAvailable()) {
         return { status: 'unsupported' };
     }
 
-    return OtaData.checkForUpdates({ manifestUrl: OTA_MANIFEST_URL });
+    let progressListener = null;
+    if (typeof options.onProgress === 'function' && typeof OtaData.addListener === 'function') {
+        try {
+            progressListener = await OtaData.addListener('routeDataProgress', options.onProgress);
+        } catch (err) {
+            console.warn('[OTA] Failed to attach progress listener', err);
+        }
+    }
+
+    try {
+        return await OtaData.checkForUpdates({ manifestUrl: OTA_MANIFEST_URL });
+    } finally {
+        try {
+            await progressListener?.remove?.();
+        } catch (err) { }
+    }
 }
 
 export async function getActiveRouteDataManifest() {

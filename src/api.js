@@ -239,6 +239,22 @@ const staticCache = {
 const staticStopToRoutes = new Map(); // stopId -> Set<routeId>
 const staticRouteDetails = new Map(); // routeId -> details
 
+export function invalidateStaticTransitDataCaches() {
+    Object.keys(staticCache).forEach(sourceId => {
+        staticCache[sourceId] = {};
+    });
+    pendingCacheRequests.clear();
+    preloadPromise = null;
+    preloadLocale = null;
+    staticStopToRoutes.clear();
+    staticRouteDetails.clear();
+    v3Cache.patterns.clear();
+    v3Cache.stopPatterns.clear();
+    v3Cache.schedules.clear();
+    v3Cache.polylines.clear();
+    invalidateRouteOverridesCache();
+}
+
 export function invalidateRouteCache(routeId) {
     if (routeId) {
         staticRouteDetails.delete(routeId);
@@ -1517,6 +1533,16 @@ export async function fetchRouteStopsV3(routeId, patternSuffix, options = {}) {
                 return pattern.stops.map(s => processStop(s, source));
             }
         }
+        if (details._stopsOfPatterns && Array.isArray(details._stopsOfPatterns)) {
+            const source = sources.find(s => s.id === details._sourceId);
+            const stopsForPattern = details._stopsOfPatterns
+                .filter(entry => !realSuffix || entry.patternSuffixes?.includes(realSuffix))
+                .map(entry => processStop(entry.stop, source))
+                .filter(Boolean);
+            if (stopsForPattern.length > 0) {
+                return stopsForPattern;
+            }
+        }
     }
 
     // 2b. For Rustavi routes, always prefer static data over live API.
@@ -2028,6 +2054,75 @@ const v3InFlight = {
     schedules: new Map()
 };
 
+function getRouteSourceCandidates(routeId) {
+    const candidates = [];
+    const addSource = (sourceId) => {
+        const source = sources.find(s => s.id === sourceId);
+        if (source && !candidates.some(existing => existing.id === source.id)) {
+            candidates.push(source);
+        }
+    };
+
+    const staticDetails = getStaticRouteDetails(routeId);
+    if (staticDetails?._sourceId) {
+        addSource(staticDetails._sourceId);
+    }
+
+    const routeIdStr = String(routeId || '');
+    if (/^rustavi:/i.test(routeIdStr) || /^r\d/.test(routeIdStr)) {
+        addSource('rustavi');
+    } else {
+        addSource('tbilisi');
+    }
+
+    sources.forEach(source => addSource(source.id));
+    return candidates;
+}
+
+export async function getStaticScheduleForRouteSuffix(routeId, suffix) {
+    const sourceCandidates = getRouteSourceCandidates(routeId);
+    const misses = [];
+
+    for (const sourceConfig of sourceCandidates) {
+        const cache = await getStaticCache(sourceConfig.id, 'schedules');
+        if (!cache) {
+            misses.push({ sourceId: sourceConfig.id, reason: 'cache-missing' });
+            continue;
+        }
+
+        const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
+        const appRouteId = processId(routeId, sourceConfig);
+        const apiRouteId = restoreApiId(appRouteId, sourceConfig);
+        const keys = [`${appRouteId}_${safeSuffix}`, `${apiRouteId}_${safeSuffix}`, `${routeId}_${safeSuffix}`];
+        for (const key of keys) {
+            if (cache[key]) {
+                console.log('[ScheduleDebug] Static schedule hit', {
+                    routeId,
+                    suffix,
+                    sourceId: sourceConfig.id,
+                    key,
+                    entries: Array.isArray(cache[key]) ? cache[key].length : null
+                });
+                return cache[key];
+            }
+        }
+
+        misses.push({
+            sourceId: sourceConfig.id,
+            keys,
+            sampleKeys: Object.keys(cache).filter(key => key.includes(String(routeId).replace(/^1:/, ''))).slice(0, 10)
+        });
+    }
+
+    console.warn('[ScheduleDebug] Static schedule miss', {
+        routeId,
+        suffix,
+        sourceCandidates: sourceCandidates.map(source => source.id),
+        misses
+    });
+    return null;
+}
+
 export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = null, options = {}) {
     if (!routeId || !stopIds || stopIds.length === 0) return null;
 
@@ -2035,17 +2130,6 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
     // Use separate cache key to avoid collision with full route details patterns
     let patterns = v3Cache.stopPatterns.get(routeId);
     let routeDataForPrioritization = null;
-
-    if (!patterns) {
-        const lsKey = `v3_stop_patterns_${routeId}`;
-        try {
-            const cached = await db.get(lsKey);
-            if (cached && (Date.now() - cached.timestamp < 7 * 24 * 60 * 60 * 1000)) {
-                patterns = cached.data;
-                v3Cache.stopPatterns.set(routeId, patterns);
-            }
-        } catch (e) { }
-    }
 
     if (!patterns) {
         // Fetch patterns if not in cache
@@ -2087,11 +2171,15 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
             } catch (e) {
                 // Fallback to static cache
                 try {
-                    const isRustavi = /^r/.test(routeId) || routeId.startsWith('rustavi:');
-                    const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
-                    const sourceConfig = sources.find(s => s.id === sourceId);
-                    const cache = await getStaticCache(sourceId, `${sourceId}_routes_details_en.json`);
-                    if (cache) {
+                    for (const sourceConfig of getRouteSourceCandidates(routeId)) {
+                        const sourceId = sourceConfig.id;
+                        const locale = getActiveLocale();
+                        let cache = await getStaticCache(sourceId, `${sourceId}_routes_details_${locale}.json`);
+                        if (!cache && locale !== 'en') {
+                            cache = await getStaticCache(sourceId, `${sourceId}_routes_details_en.json`);
+                        }
+                        if (!cache) continue;
+
                         const appRouteId = processId(routeId, sourceConfig);
                         const apiRouteId = restoreApiId(appRouteId, sourceConfig);
                         // Try multiple ID formats to hit cache
@@ -2118,16 +2206,13 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
 
         if (patterns && patterns.length > 0) { // Only cache if we actually found something
             v3Cache.stopPatterns.set(routeId, patterns);
-            try {
-                await db.set(`v3_stop_patterns_${routeId}`, {
-                    timestamp: Date.now(),
-                    data: patterns
-                });
-            } catch (e) { console.warn('LS Write Failed (StopPatterns)', e); }
         }
     }
 
-    if (!patterns) return null;
+    if (!patterns) {
+        console.warn('[ScheduleDebug] No stop-pattern data', { routeId, stopIds, explicitSuffix, strategy: options.strategy });
+        return null;
+    }
 
     const stopEntry = patterns.find((p, idx) => {
         if (!p || !p.stop) return false;
@@ -2143,11 +2228,33 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
         });
     });
 
-    if (!stopEntry || !stopEntry.patternSuffixes.length) return null;
+    if (!stopEntry || !stopEntry.patternSuffixes.length) {
+        console.warn('[ScheduleDebug] Stop not found in pattern associations', {
+            routeId,
+            stopIds,
+            explicitSuffix,
+            strategy: options.strategy,
+            patternCount: patterns.length,
+            sampleStops: patterns.slice(0, 8).map(p => ({
+                id: p?.stop?.id,
+                code: p?.stop?.code,
+                suffixes: p?.patternSuffixes
+            }))
+        });
+        return null;
+    }
 
     // --- Suffix Selection ---
     let suffix = explicitSuffix;
     if (!suffix || !stopEntry.patternSuffixes.includes(suffix)) {
+        if (explicitSuffix) {
+            console.warn('[ScheduleDebug] Explicit suffix not valid for stop; falling back', {
+                routeId,
+                stopIds,
+                explicitSuffix,
+                stopSuffixes: stopEntry.patternSuffixes
+            });
+        }
         suffix = stopEntry.patternSuffixes[0];
 
         // Prioritize non-terminus suffix
@@ -2172,6 +2279,15 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
     let schedule = v3Cache.schedules.get(cacheKey);
 
     if (!schedule) {
+        try {
+            schedule = await getStaticScheduleForRouteSuffix(routeId, suffix);
+            if (schedule) {
+                v3Cache.schedules.set(cacheKey, schedule);
+            }
+        } catch (e) { }
+    }
+
+    if (!schedule) {
         const keySafe = cacheKey.replace(/:/g, '_');
         const lsKey = `v3_sched_${keySafe}`;
         try {
@@ -2185,22 +2301,6 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
 
     if (!schedule) {
         if (options.strategy === 'cache-only') {
-            // Check static cache directly
-            const isRustavi = /^[rR]/.test(routeId) || routeId.toLowerCase().startsWith('rustavi:');
-            const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
-            const sourceConfig = sources.find(s => s.id === sourceId);
-            try {
-                const cache = await getStaticCache(sourceId, 'schedules');
-                if (cache) {
-                    const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
-                    const appRouteId = processId(routeId, sourceConfig);
-                    const apiRouteId = restoreApiId(appRouteId, sourceConfig);
-                    const keys = [`${appRouteId}_${safeSuffix}`, `${apiRouteId}_${safeSuffix}`, `${routeId}_${safeSuffix}`];
-                    for (const key of keys) {
-                        if (cache[key]) return { schedule: cache[key], patternSuffix: suffix };
-                    }
-                }
-            } catch (err) { }
             return null;
         }
 
@@ -2214,20 +2314,9 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
                     if (!schRes) throw new Error(`Schedule fetch failed`);
                     return schRes;
                 } catch (e) {
-                    const isRustavi = /^[rR]/.test(routeId) || routeId.toLowerCase().startsWith('rustavi:');
-                    const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
-                    const sourceConfig = sources.find(s => s.id === sourceId);
                     try {
-                        const cache = await getStaticCache(sourceId, 'schedules');
-                        if (cache) {
-                            const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
-                            const appRouteId = processId(routeId, sourceConfig);
-                            const apiRouteId = restoreApiId(appRouteId, sourceConfig);
-                            const keys = [`${appRouteId}_${safeSuffix}`, `${apiRouteId}_${safeSuffix}`, `${routeId}_${safeSuffix}`];
-                            for (const key of keys) {
-                                if (cache[key]) return { schedule: cache[key], patternSuffix: suffix };
-                            }
-                        }
+                        const staticSchedule = await getStaticScheduleForRouteSuffix(routeId, suffix);
+                        if (staticSchedule) return staticSchedule;
                     } catch (err) { }
                     return null;
                 }
@@ -2250,7 +2339,12 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
         }
     }
 
-    return schedule ? { schedule, patternSuffix: suffix } : null;
+    if (!schedule) {
+        console.warn('[ScheduleDebug] No schedule resolved', { routeId, stopIds, explicitSuffix, selectedSuffix: suffix, strategy: options.strategy });
+        return null;
+    }
+
+    return { schedule, patternSuffix: suffix };
 }
 
 /**

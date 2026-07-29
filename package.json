@@ -14,6 +14,7 @@
     "data:update:tbilisi:no-archive": "node scripts/update-data.js --source=tbilisi --skip-archive",
     "data:update:rustavi": "node scripts/update-data.js --source=rustavi",
     "data:update:rustavi:no-archive": "node scripts/update-data.js --source=rustavi --skip-archive",
+    "data:intervals": "node scripts/generate_interval_patterns.cjs",
     "data:manifest": "node scripts/write-data-manifest.js && node scripts/sync-ota-files.js",
     "data:ota": "node scripts/sync-ota-files.js",
     "data:export-route-overrides": "node scripts/export-route-overrides.js",
