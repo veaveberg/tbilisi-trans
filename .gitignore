@@ -8,3 +8,4 @@ data-archive/
 *.har
 .env
 .env.local
+.claude/
