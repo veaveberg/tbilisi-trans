@@ -234,66 +234,6 @@
       }
     ]
   },
-  "1:R13339": {
-    "shortName": "153",
-    "longName": "M/s \"akhmeteli\"-N175-sajaro Skola",
-    "mode": "BUS",
-    "source": "tbilisi",
-    "firstDeparture": 360,
-    "lastDeparture": 843,
-    "pattern": [
-      {
-        "start": 6,
-        "end": 14,
-        "interval": 7
-      }
-    ]
-  },
-  "1:R13280": {
-    "shortName": "154",
-    "longName": "M/S Akhmeteli Theatre - Public School #191",
-    "mode": "BUS",
-    "source": "tbilisi",
-    "firstDeparture": 360,
-    "lastDeparture": 840,
-    "pattern": [
-      {
-        "start": 6,
-        "end": 14,
-        "interval": 5
-      }
-    ]
-  },
-  "1:R13297": {
-    "shortName": "155",
-    "longName": "M/S Samgori - Public School #103",
-    "mode": "BUS",
-    "source": "tbilisi",
-    "firstDeparture": 360,
-    "lastDeparture": 841,
-    "pattern": [
-      {
-        "start": 6,
-        "end": 14,
-        "interval": 13
-      }
-    ]
-  },
-  "1:R13332": {
-    "shortName": "157",
-    "longName": "M/S Didube (Lower Exit) - Paichadze Street #38/5 (Public School #147)",
-    "mode": "BUS",
-    "source": "tbilisi",
-    "firstDeparture": 360,
-    "lastDeparture": 846,
-    "pattern": [
-      {
-        "start": 6,
-        "end": 14,
-        "interval": 9
-      }
-    ]
-  },
   "1:R113218": {
     "shortName": "292",
     "longName": "M/S Akhmeteli Theatre - Tbilisi Mall",

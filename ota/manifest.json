@@ -1,69 +1,69 @@
 {
   "manifestVersion": 1,
-  "generatedAt": "2026-07-29T12:26:14.578Z",
-  "baseDatasetVersion": "260729-1626",
-  "correctionsVersion": "260729-1626",
+  "generatedAt": "2026-07-30T11:25:37.744Z",
+  "baseDatasetVersion": "260730-1525",
+  "correctionsVersion": "260730-1525",
   "minAppVersion": "26.5.3",
   "files": {
     "tbilisi_stops_en.json": {
       "category": "base",
-      "sha256": "51ed8e248cf1451e260e8db51b64962fbd4432ee714493bd8bcc93c4f062acb2",
-      "size": 323261,
+      "sha256": "148412f7cbbb109ada1ab28d0644f6e81fb791e80072aec21892423ff34d7164",
+      "size": 322694,
       "url": "files/tbilisi_stops_en.json",
       "source": "tbilisi",
       "locale": "en"
     },
     "tbilisi_stops_ka.json": {
       "category": "base",
-      "sha256": "46245a809fa1412590c4f0fc8b5a8f98b1714d6d78c99dca8c08e38fbbf7be0d",
-      "size": 417139,
+      "sha256": "24a9ff9dc3d68d219ca745076c772a2e254a0a8e1b15a81c3a602f063bc93fe3",
+      "size": 416460,
       "url": "files/tbilisi_stops_ka.json",
       "source": "tbilisi",
       "locale": "ka"
     },
     "tbilisi_routes_en.json": {
       "category": "base",
-      "sha256": "1cd7845d807263c4102c62ed90c0c2c3cc8d88a8ebf80030bab24f7d2585ff11",
-      "size": 150903,
+      "sha256": "d33a443474ae4eefcc6ca7f3fe71f35daf182614b45b517898c6357e389b8e02",
+      "size": 150274,
       "url": "files/tbilisi_routes_en.json",
       "source": "tbilisi",
       "locale": "en"
     },
     "tbilisi_routes_ka.json": {
       "category": "base",
-      "sha256": "53256f3c26f7c88faab45455caa1b9121bcd69a731583a63b9adf77201f02b7e",
-      "size": 157190,
+      "sha256": "a514fb29530eade8a4d9984e9319830b0295a2862aa5057942673ef17315e2e8",
+      "size": 156356,
       "url": "files/tbilisi_routes_ka.json",
       "source": "tbilisi",
       "locale": "ka"
     },
     "tbilisi_routes_details_en.json": {
       "category": "base",
-      "sha256": "54bc302780c3760999da1b4d7e2956bdc977d13b61bee3887624a67c31705568",
-      "size": 1920842,
+      "sha256": "1cfe49ec2a70d3b92a26b1acbfb56348630f356a8a16723182b0c6ecd7659c21",
+      "size": 1917717,
       "url": "files/tbilisi_routes_details_en.json",
       "source": "tbilisi",
       "locale": "en"
     },
     "tbilisi_routes_details_ka.json": {
       "category": "base",
-      "sha256": "143d16e55d5679c593c52720dcc1927dcab983d192fe5cb70a9cdf4b4d0e915a",
-      "size": 2360890,
+      "sha256": "8ee4ac338332501da43dd6ef832639072556220fe2446b154a3092a70381f956",
+      "size": 2357114,
       "url": "files/tbilisi_routes_details_ka.json",
       "source": "tbilisi",
       "locale": "ka"
     },
     "tbilisi_polylines.json": {
       "category": "base",
-      "sha256": "f4cbcf71f35f1d360821c6010ffad637e15c7d840096650344a7669af2f59d8f",
-      "size": 430169,
+      "sha256": "1480f57914997340f7d5376aee447681bd7af999c60f7a872bf20b5cf0a849ce",
+      "size": 428500,
       "url": "files/tbilisi_polylines.json",
       "source": "tbilisi"
     },
     "tbilisi_schedules.json": {
       "category": "base",
-      "sha256": "cd444be90cb9b30659560ae476a0092c5be70534aaaa4a01d643a45127a765f5",
-      "size": 12609886,
+      "sha256": "53d59eb9b2ae2c527fc3664441c57fd487ae0b3f498e0ed2845371e8a364cc99",
+      "size": 12548754,
       "url": "files/tbilisi_schedules.json",
       "source": "tbilisi"
     },
@@ -131,8 +131,8 @@
     },
     "routes_overrides.csv": {
       "category": "corrections",
-      "sha256": "3d94d9ac637e79e1ac4a1fb6807b1880f1b266c5d5d618c849e2a07499c3c4e7",
-      "size": 115636,
+      "sha256": "82e9cd24b9e358678d11897be6a54414fe88a05bcb71275b46281046a8d32ec6",
+      "size": 115173,
       "url": "files/routes_overrides.csv"
     },
     "stops_overrides.csv": {
@@ -143,8 +143,8 @@
     },
     "route_intervals.json": {
       "category": "base",
-      "sha256": "0c3366cf7c9cdae738e21f77398614aaee958fbbeee9306cf1a5a0caa5a070e2",
-      "size": 166730,
+      "sha256": "9dc94f5473ced130f4c2d00fc44789bee9891c0c01e8a1004d6170538f17d397",
+      "size": 165503,
       "url": "files/route_intervals.json"
     },
     "long_segments.geojson": {
