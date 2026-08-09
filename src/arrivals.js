@@ -816,7 +816,10 @@ export function getMinutesFromNow(timeStr) {
     const currM = parseInt(tbilisiParts.find(p => p.type === 'minute').value);
 
     let diff = (h * 60 + m) - (currH * 60 + currM);
-    if (diff < -60) { // Likely tomorrow
+    // Keep the midnight hour attached to the service day that just ended:
+    // some routes still have final scheduled departures after 00:00.  From
+    // 01:00 onward, an earlier clock time belongs to tomorrow's schedule.
+    if (diff < 0 && currH >= 1) {
         diff += 24 * 60;
     }
     return diff;
@@ -847,7 +850,7 @@ export function shouldShowLateDepotWarning(etaMinutes, lastScheduledMinutes, fir
     let currentMinutes = getCurrentTbilisiMinutes();
 
     // If the schedule extends past midnight, compare against the same extended-day frame.
-    if (lastScheduled >= 24 * 60 && currentMinutes < 4 * 60) {
+    if (lastScheduled >= 24 * 60 && currentMinutes < 1 * 60) {
         currentMinutes += 24 * 60;
     }
 
@@ -857,7 +860,7 @@ export function shouldShowLateDepotWarning(etaMinutes, lastScheduledMinutes, fir
     if (
         lastScheduled < 24 * 60 &&
         Number.isFinite(firstScheduled) &&
-        currentMinutes < 4 * 60 &&
+        currentMinutes < 1 * 60 &&
         currentMinutes + eta < firstScheduled
     ) {
         currentMinutes += 24 * 60;
@@ -1074,7 +1077,9 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
 
     try {
         const { todayStr, todayName, todayIdx } = getTbilisiDayInfo();
-        const OVERNIGHT_CUTOFF_HOUR = 4;
+        // The midnight hour still belongs to the departing service day so
+        // final 00:xx trips remain visible.  Start tomorrow's schedule at 1am.
+        const OVERNIGHT_CUTOFF_HOUR = 1;
         const toServiceDayMinutes = (timeStr) => {
             const [rawH, rawM] = String(timeStr || '').split(':').map(Number);
             if (!Number.isFinite(rawH) || !Number.isFinite(rawM)) return null;
@@ -1396,11 +1401,21 @@ function formatDayLabel(fromDay, toDay) {
 
 function getTbilisiDayInfo() {
     const now = new Date();
-    const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
+    const hour = Number(new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Tbilisi',
+        hour: 'numeric',
+        hourCycle: 'h23'
+    }).format(now));
+    // Keep 00:xx attached to the service day that is ending.  This matters at
+    // the Sunday/Monday boundary: late Sunday trains must keep the weekend
+    // schedule until 1:00 a.m., rather than switching to weekday service at
+    // midnight.
+    const serviceDay = hour < 1 ? new Date(now.getTime() - 24 * 60 * 60 * 1000) : now;
+    const todayStr = serviceDay.toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
     const weekday = new Intl.DateTimeFormat('en-US', {
         timeZone: 'Asia/Tbilisi',
         weekday: 'long'
-    }).format(now).toUpperCase();
+    }).format(serviceDay).toUpperCase();
     const dayNames = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
     return {
         todayStr,
@@ -1546,7 +1561,7 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
             if (allTimes.length > 0) {
                 const toMins = t => {
                     let [h, m] = t.split(':').map(Number);
-                    if (h < 4) h += 24;
+                    if (h < 1) h += 24;
                     return h * 60 + m;
                 };
                 allTimes.sort((a, b) => toMins(a) - toMins(b));

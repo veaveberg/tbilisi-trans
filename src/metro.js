@@ -1,7 +1,7 @@
 import * as api from './api.js';
 import * as turf from '@turf/turf';
 import { getSegmentForStop, generateSegmentGeometry, generateConnectionGeometry, getConnectionKey, LINE_1_IDS, LINE_2_IDS } from './metro-utils.js';
-import { getCurrentIntervalState, getIntervalDescription } from './intervals.js';
+import { getIntervalDescription } from './intervals.js';
 import { simplifyNumber } from './settings.js';
 import { getCurrentStopNamesLanguage, t } from './i18n.ts';
 import { setPoint } from './directions.js';
@@ -196,6 +196,86 @@ function formatStationLabelName(name) {
     return name;
 }
 
+function formatMetroTime(time) {
+    if (!time) return 'N/A';
+    const [hour, minute] = String(time).split(':');
+    return parseInt(hour, 10) >= 24 ? `${parseInt(hour, 10) - 24}:${minute}` : String(time);
+}
+
+function getMetroServiceLabel(firstTrain, lastTrain, times, now = new Date()) {
+    const parseMinutes = (time) => {
+        const [hour, minute] = String(time || '').split(':').map(Number);
+        return Number.isFinite(hour) && Number.isFinite(minute) ? hour * 60 + minute : null;
+    };
+    const first = parseMinutes(firstTrain);
+    let last = parseMinutes(lastTrain);
+    if (first === null || last === null) return null;
+
+    let current = now.getHours() * 60 + now.getMinutes();
+    if (last < first) last += 24 * 60;
+    if (current < first) current += 24 * 60;
+    if (current < first || current > last) return null;
+
+    const departures = (times || [])
+        .map(parseMinutes)
+        .filter(Number.isFinite)
+        .map(minutes => minutes < first ? minutes + 24 * 60 : minutes)
+        .sort((a, b) => a - b);
+    const nextIndex = departures.findIndex(minutes => minutes >= current);
+    if (nextIndex < 0) return null;
+    const previous = departures[nextIndex - 1];
+    const following = departures[nextIndex + 1];
+    const interval = previous !== undefined
+        ? departures[nextIndex] - previous
+        : following - departures[nextIndex];
+    if (!Number.isFinite(interval) || interval <= 0) return null;
+
+    const minutesUntilLast = last - current;
+    return {
+        isEndingSoon: minutesUntilLast <= 60,
+        text: minutesUntilLast <= 60
+            ? t('everyMinutesLastTrainAt', interval, formatMetroTime(lastTrain))
+            : t('everyMinutes', interval)
+    };
+}
+
+function getMetroServiceDayType(now = new Date()) {
+    const hour = Number(new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Tbilisi',
+        hour: 'numeric',
+        hourCycle: 'h23'
+    }).format(now));
+    const serviceDay = hour < 1 ? new Date(now.getTime() - 24 * 60 * 60 * 1000) : now;
+    const weekday = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Tbilisi',
+        weekday: 'short'
+    }).format(serviceDay);
+    return weekday === 'Sat' || weekday === 'Sun' ? 'SATURDAY' : 'MONDAY';
+}
+
+function refreshMetroServiceLabels(listEl) {
+    listEl?.querySelectorAll('.metro-consolidated-item[data-first-train]').forEach(item => {
+        const stateEl = item.querySelector('.metro-service-state');
+        if (!stateEl) return;
+        const status = getMetroServiceLabel(
+            item.dataset.firstTrain,
+            item.dataset.lastTrain,
+            item.dataset.arrivalTimes?.split(',') || []
+        );
+        stateEl.textContent = status?.text || t('notOperating');
+        stateEl.classList.toggle('is-ending-soon', status?.isEndingSoon === true);
+        stateEl.classList.toggle('is-not-operating', !status);
+    });
+}
+
+function startMetroServiceLabelRefresh(panel, listEl) {
+    if (window.metroServiceStateTimer) clearInterval(window.metroServiceStateTimer);
+    window.metroServiceStateTimer = setInterval(() => {
+        if (document.hidden || !listEl.isConnected || !panel.classList.contains('metro-mode')) return;
+        refreshMetroServiceLabels(listEl);
+    }, 15 * 1000);
+}
+
 export async function handleMetroStop(stop, panel, nameEl, listEl, {
     allRoutes,
     stopToRoutesMap,
@@ -330,9 +410,7 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
 
             const arrivalItems = [];
 
-            const dayOfWeek = new Date().getDay(); // 0 = Sunday, 6 = Saturday
-            const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-            const dayType = isWeekend ? 'SATURDAY' : 'MONDAY';
+            const dayType = getMetroServiceDayType();
             // Process EACH route (for transfer stations like Station Square)
             for (const route of metroRoutes) {
                 try {
@@ -381,25 +459,7 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                 headsign = "Arriving trains";
                             }
 
-                            const formatTime = (t) => {
-                                if (!t) return 'N/A';
-                                const [h, m] = t.split(':');
-                                if (parseInt(h) >= 24) {
-                                    return `${parseInt(h) - 24}:${m}`;
-                                }
-                                return t;
-                            };
-
-                            const minutesUntilLastTrain = (() => {
-                                const [hour, minute] = lastTrain.split(':').map(Number);
-                                if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
-
-                                const now = new Date();
-                                const current = now.getHours() * 60 + now.getMinutes();
-                                let last = hour * 60 + minute;
-                                if (last < current) last += 24 * 60;
-                                return last - current;
-                            })();
+                            const serviceStatus = getMetroServiceLabel(firstTrain, lastTrain, times);
 
                             let intervalDesc = getIntervalDescription(route.id);
                             // Fallback for Metro Line 2 if missing from route_intervals.json
@@ -407,7 +467,7 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                 intervalDesc = "every 5', after 21:00 — every 10'";
                             }
 
-                            let bottomHTML = `<span class="schedule-times">${formatTime(firstTrain)} – ${formatTime(lastTrain)}</span>`;
+                            let bottomHTML = `<span class="schedule-times">${formatMetroTime(firstTrain)} – ${formatMetroTime(lastTrain)}</span>`;
                             if (intervalDesc) {
                                 bottomHTML += `,<span class="interval-desc">&nbsp;${intervalDesc}</span>`;
                             }
@@ -415,7 +475,10 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                 <div class="arrival-item metro-consolidated-item" 
                                      style="border-left-color: #${route.color || 'ef4444'}; cursor: pointer;"
                                      data-route-id="${route.id}"
-                                     data-headsign="${rawHeadsign}">
+                                     data-headsign="${rawHeadsign}"
+                                     data-first-train="${firstTrain}"
+                                     data-last-train="${lastTrain}"
+                                     data-arrival-times="${times.join(',')}">
                                     <div class="arrival-card-left">
                                         <div class="arrival-card-top">
                                             <div class="route-number" style="color: #${route.color || 'ef4444'}">${simplifyNumber(route.shortName)}</div>
@@ -428,16 +491,8 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                     <div class="arrival-card-right">
                                         <div class="next-arrival">
                                             ${(() => {
-                                                const serviceState = getCurrentIntervalState(route.id);
-                                                const isEndingSoon = minutesUntilLastTrain !== null &&
-                                                    minutesUntilLastTrain >= 0 && minutesUntilLastTrain <= 60;
-                                                const serviceLabel = serviceState?.operating
-                                                    ? (isEndingSoon
-                                                        ? t('everyMinutesLastTrainAt', serviceState.interval, formatTime(lastTrain))
-                                                        : t('everyMinutes', serviceState.interval))
-                                                    : null;
-                                                return serviceLabel
-                                                    ? `<div class="time-container"><div class="metro-service-state${isEndingSoon ? ' is-ending-soon' : ''}">${serviceLabel}</div></div>`
+                                                return serviceStatus
+                                                    ? `<div class="time-container"><div class="metro-service-state${serviceStatus.isEndingSoon ? ' is-ending-soon' : ''}">${serviceStatus.text}</div></div>`
                                                     : `<div class="time-container"><div class="metro-service-state is-not-operating">${t('notOperating')}</div></div>`;
                                             })()}
                                         </div>
@@ -454,6 +509,7 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
 
             if (arrivalItems.length > 0) {
                 listEl.innerHTML = arrivalItems.join(''); // Set all items at once
+                startMetroServiceLabelRefresh(panel, listEl);
 
                 // Attach click handlers to the newly added items
                 const items = listEl.querySelectorAll('.arrival-item.metro-consolidated-item');
