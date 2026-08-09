@@ -1079,6 +1079,31 @@ export function setupGeolocation(map) {
     if (miniCompass) {
         let lastBearing = map.getBearing();
         let cumulativeRotation = lastBearing;
+        let compassFadeTimeout = null;
+
+        const showCompass = () => {
+            if (compassFadeTimeout) {
+                clearTimeout(compassFadeTimeout);
+                compassFadeTimeout = null;
+            }
+            if (!miniCompass.classList.contains('hidden')) {
+                miniCompass.classList.remove('fading-out');
+                return;
+            }
+            miniCompass.classList.add('fading-out');
+            miniCompass.classList.remove('hidden');
+            requestAnimationFrame(() => miniCompass.classList.remove('fading-out'));
+        };
+
+        const hideCompass = () => {
+            if (miniCompass.classList.contains('hidden') || miniCompass.classList.contains('fading-out')) return;
+            miniCompass.classList.add('fading-out');
+            compassFadeTimeout = setTimeout(() => {
+                miniCompass.classList.add('hidden');
+                miniCompass.classList.remove('fading-out');
+                compassFadeTimeout = null;
+            }, 220);
+        };
 
         map.on('rotate', () => {
             const bearing = map.getBearing();
@@ -1091,12 +1116,12 @@ export function setupGeolocation(map) {
             lastBearing = bearing;
 
             if (Math.abs(bearing) > 0.1) {
-                miniCompass.classList.remove('hidden');
+                showCompass();
                 if (compassIcon) {
                     compassIcon.style.transform = `rotate(${-cumulativeRotation}deg)`;
                 }
             } else {
-                miniCompass.classList.add('hidden');
+                hideCompass();
             }
         });
         miniCompass.addEventListener('click', () => {

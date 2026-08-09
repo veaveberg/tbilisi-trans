@@ -638,6 +638,10 @@ export function updateMapTheme() {
 
     // Update Stop Circle Layers
     if (map.getLayer('stops-layer-circle')) {
+        // At zoomed-out levels, active stops must render above inactive ones.
+        map.setLayoutProperty('stops-layer-circle', 'circle-sort-key', [
+            'case', ['==', ['get', 'inactive'], 1], 0, 1
+        ]);
         map.setPaintProperty('stops-layer-circle', 'circle-color', [
             'case',
             ['==', ['get', 'inactive'], 1], inactiveColor,
@@ -657,21 +661,10 @@ export function updateMapTheme() {
         map.setPaintProperty('stops-layer-circle', 'circle-opacity', 1);
     }
     if (map.getLayer('stops-layer-circle-hover')) {
-        map.setPaintProperty('stops-layer-circle-hover', 'circle-color', [
-            'case',
-            ['==', ['get', 'inactive'], 1], inactiveColor,
-            manualGondolaExpr, theme.manualGondolaStop,
-            ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStop,
-            theme.stop
-        ]);
-        map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-color', [
-            'case',
-            ['==', ['get', 'inactive'], 1], inactiveStrokeColor,
-            manualGondolaExpr, theme.manualGondolaStopStroke,
-            ['==', ['get', 'mode'], 'GONDOLA'], theme.gondolaStopStroke,
-            theme.stopStroke
-        ]);
+        map.setPaintProperty('stops-layer-circle-hover', 'circle-color', isDark ? '#FFFFFF' : '#898989');
+        map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-color', isDark ? '#E5E7EB' : '#FFFFFF');
         map.setPaintProperty('stops-layer-circle-hover', 'circle-stroke-width', 1.5);
+        map.setPaintProperty('stops-layer-circle-hover', 'circle-opacity', 1);
     }
     // Active-stop overlay layers — same colors as main layers (shown only for non-dimmed stops)
     if (map.getLayer('stops-layer-circle-active')) {
@@ -706,6 +699,9 @@ export function updateMapTheme() {
 
     // Update Glow Layers
     if (map.getLayer('stops-layer-glow')) {
+        map.setLayoutProperty('stops-layer-glow', 'circle-sort-key', [
+            'case', ['==', ['get', 'inactive'], 1], 0, 1
+        ]);
         map.setPaintProperty('stops-layer-glow', 'circle-color', [
             'case',
             ['==', ['get', 'inactive'], 1], inactiveColor,
@@ -714,6 +710,10 @@ export function updateMapTheme() {
             theme.glow
         ]);
         map.setPaintProperty('stops-layer-glow', 'circle-opacity', 0.05);
+    }
+    if (map.getLayer('stops-layer-glow-hover')) {
+        map.setPaintProperty('stops-layer-glow-hover', 'circle-color', isDark ? '#FFFFFF' : '#898989');
+        map.setPaintProperty('stops-layer-glow-hover', 'circle-opacity', 0.7);
     }
     if (map.getLayer('stops-highlight-glow')) {
         map.setPaintProperty('stops-highlight-glow', 'circle-color', theme.highlightGlow);
@@ -737,7 +737,18 @@ export function updateMapTheme() {
         map.setPaintProperty('stops-layer', 'icon-opacity', 1);
     }
     if (map.getLayer('stops-layer-hover')) {
-        // Hover image update handled in updateStopHoverEffects
+        const hoverSuffix = isDark ? 'hover-dark' : 'hover-light';
+        const gondolaSuffix = isDark ? 'gondola-dark' : 'gondola-light';
+        const gondolaManualSuffix = isDark ? 'gondola-manual-dark' : 'gondola-manual-light';
+        map.setLayoutProperty('stops-layer-hover', 'icon-image', [
+            'case',
+            manualGondolaExpr,
+            ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${gondolaManualSuffix}`, `stop-close-up-icon-${gondolaManualSuffix}`],
+            ['==', ['get', 'mode'], 'GONDOLA'],
+            ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${gondolaSuffix}`, `stop-close-up-icon-${gondolaSuffix}`],
+            ['case', ['==', ['get', 'rotation'], 0], `stop-icon-${hoverSuffix}`, `stop-close-up-icon-${hoverSuffix}`]
+        ]);
+        map.setPaintProperty('stops-layer-hover', 'icon-opacity', 1);
     }
     if (map.getLayer('stops-highlight')) {
         const highlightImage = [
@@ -771,6 +782,7 @@ const STOP_STACK_SOURCE_IDS = [
     'metro-exits',
     'metro-lines-manual',
     'stops',
+    'stops-hover',
     'selected-stop',
     'filter-connection'
 ];
@@ -778,6 +790,7 @@ const STOP_STACK_SOURCE_IDS = [
 const STOP_STACK_LAYER_IDS = [
     'stops-layer-hit-target',
     'stops-layer-glow',
+    'stops-layer-glow-hover',
     'stops-layer-circle',
     'stops-layer-circle-active',
     'stops-layer-glow-active',
@@ -812,6 +825,7 @@ function clearStopLayerStack() {
     STOP_STACK_SOURCE_IDS.forEach(sourceId => {
         try {
             if (map.getSource(sourceId)) map.removeSource(sourceId);
+            sourceDataSignatures.delete(sourceId);
         } catch (e) {
             console.warn(`[Map] Failed to remove source ${sourceId}:`, e.message);
         }
@@ -821,6 +835,7 @@ function clearStopLayerStack() {
 function hasCompleteStopLayerStack() {
     return STOP_STACK_LAYER_IDS.every((id) => map.getLayer(id)) &&
         map.getSource('stops') &&
+        map.getSource('stops-hover') &&
         map.getSource('selected-stop') &&
         map.getSource('filter-connection');
 }
@@ -831,6 +846,9 @@ function moveStopLayerStackToExpectedOrder() {
     }
     if (map.getLayer('stops-layer-glow') && map.getLayer('stops-layer-circle')) {
         map.moveLayer('stops-layer-glow', 'stops-layer-circle');
+    }
+    if (map.getLayer('stops-layer-glow-hover') && map.getLayer('stops-layer-circle-hover')) {
+        map.moveLayer('stops-layer-glow-hover', 'stops-layer-circle-hover');
     }
     if (map.getLayer('stops-highlight-glow') && map.getLayer('stops-highlight')) {
         map.moveLayer('stops-highlight-glow', 'stops-highlight');
@@ -889,6 +907,12 @@ function ensureStopsLayerStack() {
             cluster: false
         });
     }
+    if (!map.getSource('stops-hover')) {
+        map.addSource('stops-hover', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+    }
 
     if (!map.getLayer('stops-layer-hit-target')) {
         map.addLayer({
@@ -896,6 +920,9 @@ function ensureStopsLayerStack() {
         type: 'circle',
         source: 'stops',
         slot: 'top',
+        layout: {
+            'circle-sort-key': ['case', ['==', ['get', 'inactive'], 1], 0, 1]
+        },
         paint: {
             'circle-color': '#000000',
             'circle-opacity': 0,
@@ -911,6 +938,9 @@ function ensureStopsLayerStack() {
         type: 'circle',
         source: 'stops',
         slot: 'top',
+        layout: {
+            'circle-sort-key': ['case', ['==', ['get', 'inactive'], 1], 0, 1]
+        },
         paint: {
             'circle-color': '#000000',
             'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 12, 16, 25, 20, 60],
@@ -921,6 +951,22 @@ function ensureStopsLayerStack() {
     });
     }
 
+    if (!map.getLayer('stops-layer-glow-hover')) {
+        map.addLayer({
+            id: 'stops-layer-glow-hover',
+            type: 'circle',
+            source: 'stops-hover',
+            slot: 'top',
+            paint: {
+                'circle-color': '#000000',
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 12, 16, 25, 20, 60],
+                'circle-opacity': 0.7,
+                'circle-blur': 0.9,
+                'circle-emissive-strength': 1
+            }
+        });
+    }
+
     if (!map.getLayer('stops-layer-circle')) {
         map.addLayer({
         id: 'stops-layer-circle',
@@ -928,6 +974,9 @@ function ensureStopsLayerStack() {
         source: 'stops',
         maxzoom: 15.2,
         slot: 'top',
+        layout: {
+            'circle-sort-key': ['case', ['==', ['get', 'inactive'], 1], 0, 1]
+        },
         paint: {
             'circle-color': '#000000',
             'circle-stroke-color': '#555555',
@@ -985,10 +1034,9 @@ function ensureStopsLayerStack() {
         map.addLayer({
             id: 'stops-layer-circle-hover',
             type: 'circle',
-            source: 'stops',
+            source: 'stops-hover',
             maxzoom: 15.2,
             slot: 'top',
-            filter: ['==', ['get', 'id'], ''], // Initially hidden (no match)
             paint: {
                 'circle-color': '#000000',
                 'circle-stroke-color': '#555555',
@@ -1048,10 +1096,9 @@ function ensureStopsLayerStack() {
         map.addLayer({
         id: 'stops-layer-hover',
         type: 'symbol',
-        source: 'stops',
+        source: 'stops-hover',
         minzoom: 15.2,
         slot: 'top',
-        filter: ['==', ['get', 'id'], ''], // Initially hidden (no match)
         layout: {
             'icon-allow-overlap': true,
             'icon-ignore-placement': true,
@@ -1266,7 +1313,7 @@ export function addStopsToMap(stops, options = {}) {
         ensureStopsLayerStack();
     }
 
-    map.getSource('stops')?.setData({
+    setGeoJSONSourceDataIfChanged('stops', {
         type: 'FeatureCollection',
         features: busStops
     });
@@ -1422,7 +1469,52 @@ let liveBusCurrentFeatures = new Map(); // vehicleId -> feature (current animate
 const liveBusLineCache = new Map(); // lineKey -> { coords, cumDist, total }
 const LIVE_BUS_UPDATE_INTERVAL_MS = 5000;
 const LIVE_BUS_ANIMATION_MS = 1200;
+const LIVE_BUS_ANIMATION_FRAME_INTERVAL_MS = 250;
 let liveBusFollowId = null;
+let liveBusRenderedFeatureCount = 0;
+const sourceDataSignatures = new Map();
+
+function getFeatureSignaturePart(feature) {
+    const props = feature?.properties || {};
+    const coords = feature?.geometry?.coordinates;
+    const coordPart = Array.isArray(coords)
+        ? coords.flat?.(2).slice(0, 4).map(value => Number.isFinite(value) ? value.toFixed(6) : String(value)).join(',')
+        : '';
+    return `${props.id || props.stopId || props.name || ''}:${props.rotation || 0}:${coordPart}`;
+}
+
+function getFeatureCollectionSignature(data) {
+    if (!data || data.type !== 'FeatureCollection' || !Array.isArray(data.features)) {
+        return null;
+    }
+    const { features } = data;
+    if (features.length === 0) return 'FeatureCollection:0';
+
+    let hash = 0;
+    for (let i = 0; i < features.length; i += 1) {
+        const part = getFeatureSignaturePart(features[i]);
+        for (let j = 0; j < part.length; j += 1) {
+            hash = ((hash * 31) + part.charCodeAt(j)) | 0;
+        }
+    }
+
+    return `FeatureCollection:${features.length}:${hash}`;
+}
+
+function setGeoJSONSourceDataIfChanged(sourceId, data) {
+    const source = map.getSource(sourceId);
+    if (!source) return false;
+
+    const signature = getFeatureCollectionSignature(data);
+    if (signature && sourceDataSignatures.get(sourceId) === signature) {
+        return false;
+    }
+
+    source.setData(data);
+    if (signature) sourceDataSignatures.set(sourceId, signature);
+    else sourceDataSignatures.delete(sourceId);
+    return true;
+}
 
 function mixHexColors(hexA, hexB, weightA = 0.12) {
     const parseHex = (hex) => {
@@ -1583,9 +1675,12 @@ function pointAlongLine(meta, fraction) {
 }
 
 function setLiveBusData(features = []) {
+    if (features.length === 0 && liveBusRenderedFeatureCount === 0) return;
+
     ensureLiveBusLayers();
     if (map.getSource('live-buses')) {
         map.getSource('live-buses').setData({ type: 'FeatureCollection', features });
+        liveBusRenderedFeatureCount = features.length;
     }
 }
 
@@ -1661,11 +1756,20 @@ export function renderLiveBuses(features = []) {
         if (liveBusAnimationId) cancelAnimationFrame(liveBusAnimationId);
         const startTime = performance.now();
         const totalMs = Math.min(LIVE_BUS_ANIMATION_MS, LIVE_BUS_UPDATE_INTERVAL_MS);
+        let lastAnimationDataUpdate = -Infinity;
 
         const animate = (now) => {
             const elapsed = now - startTime;
             const t = Math.max(0, Math.min(1, elapsed / totalMs));
             const k = easeInOutCubic(t);
+            const shouldUpdateMapData = t >= 1 || (now - lastAnimationDataUpdate) >= LIVE_BUS_ANIMATION_FRAME_INTERVAL_MS;
+
+            if (!shouldUpdateMapData) {
+                liveBusAnimationId = requestAnimationFrame(animate);
+                return;
+            }
+
+            lastAnimationDataUpdate = now;
             const blended = [];
 
             nextById.forEach((next, id) => {
@@ -1745,7 +1849,6 @@ export function renderLiveBuses(features = []) {
             }
 
             liveBusAnimationId = null;
-            setLiveBusData(features);
             liveBusCurrentFeatures = new Map(nextById);
             liveBusLastFeatures = new Map(nextById);
         };
@@ -1772,6 +1875,15 @@ export function registerLiveBusLine(lineKey, coords) {
 
 export function clearLiveBuses() {
     if (liveBusAnimationId) cancelAnimationFrame(liveBusAnimationId);
+    if (
+        !liveBusAnimationId &&
+        liveBusRenderedFeatureCount === 0 &&
+        liveBusLastFeatures.size === 0 &&
+        liveBusCurrentFeatures.size === 0 &&
+        !liveBusFollowId
+    ) {
+        return;
+    }
     liveBusAnimationId = null;
     liveBusLastFeatures.clear();
     liveBusCurrentFeatures.clear();
@@ -1837,13 +1949,27 @@ export async function updateLiveBuses(routeId, patternSuffix, color, options = {
     }
 }
 
-export function updateStopHoverEffects(hoveredId) {
+export function updateStopHoverEffects(hoveredId, hoveredFeature = null) {
     if (!map || !map.getStyle()) return;
     const filterModeActive = window.isFilterModeActive === true;
     if (window.currentStopId && !filterModeActive) return;
 
-    const isDark = document.body.classList.contains('dark-mode');
-    const safeHoveredId = hoveredId ?? '';
+    // Keep the hover overlays in a one-feature source. Updating that tiny
+    // source avoids restyling every stop while leaving base stop colors alone.
+    const hoverSource = map.getSource('stops-hover');
+    if (hoverSource) {
+        const feature = hoveredId && hoveredFeature?.geometry ? {
+            type: 'Feature',
+            geometry: hoveredFeature.geometry,
+            properties: { ...hoveredFeature.properties }
+        } : null;
+        hoverSource.setData({
+            type: 'FeatureCollection',
+            features: feature ? [feature] : []
+        });
+    }
+    return;
+
     const manualGondolaExpr = [
         'all',
         ['==', ['get', 'mode'], 'GONDOLA'],

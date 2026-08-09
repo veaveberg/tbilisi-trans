@@ -1,3 +1,4 @@
+import './performance-recorder.js';
 import './css/base.css';
 import './css/map-ui.css';
 import './css/search.css';
@@ -18,7 +19,7 @@ const { handleMetroStop } = metro;
 import { setupGeolocation, isTrackingActive, stopTracking, isUserInteractingWithMap, LOCATION_STATES, refreshLocationMarker } from './geolocation.js';
 import { map, getMapHash } from './map-setup.js';
 import { setupVisuals, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, renderLiveBuses, registerLiveBusLine, clearLiveBuses, holdLiveBuses, refreshLiveBusTheme, decorateLiveBusFeatures, setMapLightPreset } from './map-visuals.js';
-import { setMapFocus, refreshMapFocusDimTheme, setupHoverHandlers, setupClickHandlers, addMetroHoverLogic, clearStopHoverState, runMapAction, resolvePlaceClickDetails } from './map-interactions.js';
+import { setMapFocus, refreshMapFocusDimTheme, setupHoverHandlers, setupClickHandlers, clearStopHoverState, consumeMapTapForSearch, runMapAction, resolvePlaceClickDetails } from './map-interactions.js';
 import stopRotations from './data/stop_bearings.json';
 import { db } from './db.js';
 import { historyManager, addToHistory, popHistory, clearHistory, updateBackButtons, peekHistory } from './history.js';
@@ -237,7 +238,7 @@ function resetLiveBusSession({ clear = true } = {}) {
 initSettings({
     onUpdate: () => {
         // Re-render Views
-        if (window.currentStopId) {
+        if (window.currentStopId && !document.getElementById('info-panel')?.classList.contains('metro-mode')) {
             // If we have cached lastArrivals, re-render
             if (window.lastArrivals) {
                 arrivals.renderArrivals(window.lastArrivals, window.currentStopId);
@@ -260,7 +261,13 @@ onLanguageChange((change) => {
     applyStaticText();
     syncFavoriteButtonState();
 
-    if (window.currentStopId && window.lastArrivals) {
+    const isMetroCard = document.getElementById('info-panel')?.classList.contains('metro-mode');
+    if (isMetroCard && window.currentStopId) {
+        const metroStop = findStopById(window.currentStopId);
+        if (metroStop) {
+            void showStopInfo(metroStop, false, false, false, { forceRoutesRefresh: true });
+        }
+    } else if (window.currentStopId && window.lastArrivals) {
         arrivals.renderArrivals(window.lastArrivals, window.currentStopId);
     }
 
@@ -397,6 +404,19 @@ window.startMetroEditor = async () => {
 
 // --- OPTIMIZED INITIALIZATION ---
 let isRouterLogicExecuted = false;
+let deepLinkHandlingPromise = null;
+
+function runWhenMapReady(callback) {
+    // Route and stop data is loaded from within the map's `load` handler. At
+    // that point `initializeMapData` has already created the app layers, even
+    // though Mapbox may keep both loaded checks false while tiles settle.
+    // Waiting for a second `load` event in that state leaves deep links idle.
+    if (map.getStyle()) {
+        callback();
+    } else {
+        map.once('load', callback);
+    }
+}
 
 function onRoutesLoaded(data) {
     if (!data) return;
@@ -422,11 +442,15 @@ function onRoutesLoaded(data) {
             api.fetchV3Routes().then(() => {
                 const routeObj = resolveRouteByShortName(initialState.shortName, { preferBus: true });
                 if (routeObj) {
-                    showRouteOnMap(routeObj, true, { initialDirectionIndex: initialState.direction, fitToRoute: true });
+                    showRouteOnMap(routeObj, true, {
+                        initialDirectionIndex: initialState.direction,
+                        fitToRoute: true,
+                        routeSource: 'deepLink'
+                    });
                 }
             });
         };
-        if (map.loaded()) execute(); else map.once('load', execute);
+        runWhenMapReady(execute);
     }
 
     // 3. Compact Directions Link
@@ -435,7 +459,7 @@ function onRoutesLoaded(data) {
             applyDirectionsUrlState(initialState, { syncUrl: false, openSheet: true });
             isDeepLinkHandled = true;
         };
-        if (map.loaded()) executeDirectionsDeepLink(); else map.once('load', executeDirectionsDeepLink);
+        runWhenMapReady(executeDirectionsDeepLink);
     }
 
     // 4. Stop / Nested / Filter (Delegated to handleDeepLinks)
@@ -443,24 +467,54 @@ function onRoutesLoaded(data) {
     // Wait for map to be loaded AND stops to be available before processing
     else if (initialState.stopId) {
         const executeStopDeepLink = async () => {
+            if (isDeepLinkHandled) return;
             // Wait until allStops is populated (stops load separately from routes)
             if (allStops.length === 0) {
                 // Retry after a short delay - stops might still be loading
                 setTimeout(executeStopDeepLink, 100);
                 return;
             }
-            handleDeepLinks();
+            const success = await handleDeepLinks();
+            if (success) isDeepLinkHandled = true;
         };
-        if (map.loaded()) executeStopDeepLink(); else map.once('load', executeStopDeepLink);
+        runWhenMapReady(executeStopDeepLink);
     }
 }
 
 // Consolidated loading logic is now inside map.on('load') to avoid race conditions.
-const staticPreloadPromise = api.preloadStaticRoutesDetails().then(() => {
-    if (window.allStops && window.allStops.length > 0) {
-        addStopsToMap(window.allStops, { redirectMap, filterManager, updateConnectionLine });
+let staticPreloadPromise = null;
+let staticPreloadScheduled = false;
+
+function runStaticRouteDetailsPreload() {
+    if (staticPreloadPromise) return staticPreloadPromise;
+
+    staticPreloadPromise = api.preloadStaticRoutesDetails().then(() => {
+        if (window.allStops && window.allStops.length > 0) {
+            addStopsToMap(window.allStops, { redirectMap, filterManager, updateConnectionLine });
+        }
+    });
+
+    return staticPreloadPromise;
+}
+
+function scheduleStaticRouteDetailsPreload() {
+    if (staticPreloadScheduled || staticPreloadPromise) return;
+    staticPreloadScheduled = true;
+
+    const startPreload = () => {
+        setTimeout(() => {
+            runStaticRouteDetailsPreload().catch((error) => {
+                console.warn('[Load] Static route details preload failed:', error);
+            });
+        }, 1500);
+    };
+
+    if ('requestIdleCallback' in window) {
+        window.requestIdleCallback(startPreload, { timeout: 4000 });
+    } else {
+        setTimeout(startPreload, 2500);
     }
-}); // Preload for filtering
+}
 
 window.addEventListener('static-routes-loaded', () => {
     if (window.allStops && window.allStops.length > 0) {
@@ -779,10 +833,6 @@ setupHoverHandlers({
     updateConnectionLine: updateConnectionLine // Pass function for hover preview
 });
 
-// Init Metro Hover
-addMetroHoverLogic(map, filterManager);
-
-
 const getActiveStopId = () => (
     window.currentStopId ||
     arrivalsController?.stopId ||
@@ -1044,7 +1094,7 @@ window.restoreArrivalsBoard = async () => {
 
 import { RouteFilterColorManager } from './color-manager.js';
 
-import { setupSearch, showPlaceInfoSheet } from './search.js';
+import { dismissSearch, isSearchActive, setupSearch, showPlaceInfoSheet } from './search.js';
 import { ThemeManager } from './theme.js';
 
 // Global Theme Manager
@@ -1097,7 +1147,6 @@ function pauseAppActivity() {
     trackingZoomBeforePause = wasTrackingBeforePause ? map.getZoom() : null;
     try { arrivalsController.pause(); } catch (e) { }
     try { arrivals.stopArrivalsCountdown(); } catch (e) { }
-    try { metro.stopMetroTicker(); } catch (e) { }
     if (busUpdateInterval) {
         clearInterval(busUpdateInterval);
         busUpdateInterval = null;
@@ -1137,11 +1186,6 @@ function resumeAppActivity() {
             }, 700);
         }
     }
-    try {
-        if (document.querySelector('.metro-countdown')) {
-            metro.startMetroTicker();
-        }
-    } catch (e) { }
     try {
         const routePanel = document.getElementById('route-info');
         if (window.currentRoute && routePanel && !routePanel.classList.contains('hidden')) {
@@ -1188,7 +1232,11 @@ async function initializeMapData(stopsData, routesData) {
     applyRouteOverrides(); // Ensure overrides are applied to fresh data
 
 
-    // 2. Config & Layers (Populates allStops from rawStops)
+    // 2. Map Images, Config & Layers (Populates allStops from rawStops)
+    if (!areImagesLoaded) {
+        await loadImages(map);
+        areImagesLoaded = true;
+    }
     await refreshStopsLayer();
 
     // 3. Index Routes (Clear and Rebuild)
@@ -1221,6 +1269,7 @@ async function initializeMapData(stopsData, routesData) {
         const POI_FEATURESET = { featuresetId: 'poi', importId: 'basemap' };
 
         map.on('click', POI_FEATURESET, (e) => {
+            if (consumeMapTapForSearch(e)) return;
             // Stops take priority — if a stop is under the cursor, ignore the POI click
             const validStopLayers = ALL_STOP_LAYERS.filter(id => map.getLayer(id));
             if (map.queryRenderedFeatures(e.point, { layers: validStopLayers }).length > 0) return;
@@ -1281,6 +1330,10 @@ async function initializeMapData(stopsData, routesData) {
         });
 
         map.on('mouseenter', POI_FEATURESET, (e) => {
+            if (isSearchActive()) {
+                map.getCanvas().style.cursor = '';
+                return;
+            }
             // Don't override the stop pointer cursor
             const validStopLayers = ALL_STOP_LAYERS.filter(id => map.getLayer(id));
             if (map.queryRenderedFeatures(e.point, { layers: validStopLayers }).length > 0) return;
@@ -1292,11 +1345,6 @@ async function initializeMapData(stopsData, routesData) {
     }
 
     // 5. Map Visuals
-    if (!areImagesLoaded) {
-        await loadImages(map);
-        areImagesLoaded = true;
-    }
-    addStopsToMap(allStops, { redirectMap, filterManager, updateConnectionLine });
     window.dispatchEvent(new CustomEvent('map-data-initialized'));
 
     // 6. Final UI
@@ -1414,6 +1462,7 @@ async function reloadActiveTransitData(reason = 'manual', options = {}) {
             }
         }
         console.log(`[Data] Reloaded active transit data (${reason})`);
+        scheduleStaticRouteDetailsPreload();
         return true;
     } catch (error) {
         console.error(`[Data] Failed to reload active transit data (${reason})`, error);
@@ -1519,6 +1568,7 @@ map.on('load', async () => {
                 console.log('[Load] Fast data loaded');
                 await initializeMapData(stops, routes);
                 onRoutesLoaded(routes);
+                scheduleStaticRouteDetailsPreload();
             }
         } catch (e) { console.warn('Fast Load Failed', e); }
 
@@ -1531,6 +1581,7 @@ map.on('load', async () => {
             console.log('[Load] Fresh data loaded');
             await initializeMapData(stops, routes);
             onRoutesLoaded(routes);
+            scheduleStaticRouteDetailsPreload();
         } catch (e) { console.error('Fresh Load Failed', e); }
     };
 
@@ -2385,7 +2436,16 @@ function fitFilterBounds(originStop, targetIds) {
     }
 }
 
-async function handleDeepLinks() {
+function handleDeepLinks() {
+    if (deepLinkHandlingPromise) return deepLinkHandlingPromise;
+    const promise = handleDeepLinksInternal().finally(() => {
+        if (deepLinkHandlingPromise === promise) deepLinkHandlingPromise = null;
+    });
+    deepLinkHandlingPromise = promise;
+    return promise;
+}
+
+async function handleDeepLinksInternal() {
     const state = Router.parse();
     if (state.type === 'special') {
         return openSheetForCurrentPath();
@@ -2930,6 +2990,21 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         if (stopDirsContainer) stopDirsContainer.classList.add('hidden');
         if (editBtn) editBtn.classList.add('hidden');
         if (filterBtn) filterBtn.classList.add('hidden');
+
+        // Metro has its own card renderer and returns early below. Run the
+        // shared stop-centering action here so metro marker taps behave like
+        // bus-stop taps as well.
+        if (flyTarget) {
+            requestAnimationFrame(() => {
+                flyToPointInView(flyTarget.center, {
+                    zoom: flyTarget.zoom,
+                    bottomAnchorSelector: '#info-panel',
+                    duration: 900,
+                    radiusMeters: 12
+                });
+            });
+        }
+
         handleMetroStop(stop, panel, nameEl, listEl, {
             allRoutes,
             stopToRoutesMap,
@@ -2941,7 +3016,6 @@ async function showStopInfo(stop, addToStack = true, flyToStop = false, updateUR
         return;
     } else {
         if (stopDirsContainer) stopDirsContainer.classList.remove('hidden');
-        metro.stopMetroTicker();
         const hasWriteAccess = (location.hostname === 'localhost' || location.hostname.startsWith('192.168.')) && import.meta.env.DEV;
         if (editBtn) {
             editBtn.classList.toggle('hidden', !hasWriteAccess);
@@ -4189,6 +4263,16 @@ async function refreshStopsLayer(useLocalConfig = false) {
 
     const busStops = [];
     const metroStops = [];
+    const stopsWithRoutes = new Set();
+    if (Array.isArray(allRoutes)) {
+        allRoutes.forEach(route => {
+            if (!Array.isArray(route?.stops)) return;
+            route.stops.forEach(stopId => {
+                const targetId = redirectMap.get(stopId) || stopId;
+                stopsWithRoutes.add(String(targetId));
+            });
+        });
+    }
 
     // Helper to identify Metro
     const isMetroStop = (s) =>
@@ -4288,6 +4372,7 @@ async function refreshStopsLayer(useLocalConfig = false) {
         if (isMetroStop(stop)) {
             metroStops.push(stop);
         } else {
+            stop._hasRoutes = stopsWithRoutes.has(String(stop.id));
             busStops.push(stop);
         }
         stops.push(stop); // allStops keeps everything for search
@@ -4344,6 +4429,13 @@ async function showRouteOnMap(route, addToStack = true, options = {}) {
     currentPatternIndex = 0; // Reset to default
     if (options.fromFavorites) {
         setFavoritesBackContext(true);
+    }
+
+    // Routes opened from a stop inherit its focused map state. Direct routes
+    // from search and deep links need to enable the same dimming themselves.
+    if ((options.routeSource === 'search' || options.routeSource === 'deepLink') &&
+        !(filterManager && (filterManager.state.active || filterManager.state.picking))) {
+        setMapFocus(true);
     }
 
     // Style wait removed - we're inside map.on('load') so style should be ready
@@ -5170,9 +5262,12 @@ const initMoreMenu = (triggerId, menuId) => {
         syncFavoriteButtonState();
 
         const actions = getVisibleActions();
+        const copyActionIndex = actions.findIndex((action) => action.id === 'copy-link-btn' || action.id === 'copy-route-link-btn');
+        const copyAction = copyActionIndex >= 0 ? actions.splice(copyActionIndex, 1)[0] : null;
         if (menuId === 'stop-more-menu' && !actions.some((action) => action.id === 'open-street-screen-btn')) {
             actions.push(getBoardAction());
         }
+        if (copyAction) actions.push(copyAction);
         actions.push({ id: 'native-share-current-url', title: t('share'), style: 'default', symbol: 'square.and.arrow.up' });
         if (!actions.length) return true;
 
@@ -5182,7 +5277,9 @@ const initMoreMenu = (triggerId, menuId) => {
                 actions,
                 theme: localStorage.getItem('theme') || 'system',
                 anchorX: Number(event?.clientX ?? 0),
-                anchorY: Number(event?.clientY ?? 0)
+                anchorY: Number(event?.clientY ?? 0),
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight
             });
         } catch (err) {
             console.warn('[UI] Native action sheet failed, falling back to web menu:', err);
@@ -5598,7 +5695,6 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
     if (typeof stopEditing === 'function') stopEditing(true);
 
     setSheetState(panel, 'hidden');
-    metro.stopMetroTicker();
 
     try {
         window.currentStopId = null; // Clear Global State
@@ -6576,10 +6672,10 @@ window.addEventListener('keydown', (e) => {
         }
 
         // 2. Search Suggestions
+        const searchInput = document.getElementById('search-input');
         const suggestions = document.getElementById('search-suggestions');
-        if (suggestions && !suggestions.classList.contains('hidden')) {
-            suggestions.classList.add('hidden');
-            document.getElementById('search-input')?.blur();
+        if (document.activeElement === searchInput || (suggestions && !suggestions.classList.contains('hidden'))) {
+            dismissSearch();
             return;
         }
 

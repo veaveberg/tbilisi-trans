@@ -136,6 +136,26 @@ export function flyToPointInView(center, options = {}) {
         topAnchorSelector,
         bottomAnchorSelector
     });
+
+    // Mapbox's flyTo animation deliberately arcs out while travelling. At close
+    // zoom levels that briefly takes the map below the label-detail threshold,
+    // making labels flicker.
+    // Use easeTo here so zoom follows a direct path to the selected point.
+    const currentZoom = map.getZoom();
+    if (currentZoom >= 16 && zoom >= 16) {
+        const camera = map.cameraForBounds(target.toBounds(radiusMeters), {
+            padding,
+            maxZoom: zoom
+        });
+        map.easeTo({
+            ...camera,
+            zoom: Math.min(zoom, 17),
+            duration,
+            essential
+        });
+        return intentId;
+    }
+
     map.fitBounds(target.toBounds(radiusMeters), {
         padding,
         maxZoom: zoom,

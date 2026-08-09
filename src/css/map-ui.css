@@ -86,6 +86,13 @@ body.panel-open #map-controls {
     display: none !important;
 }
 
+/* Contextual controls fade before their layout space is removed. */
+#map-controls .control-btn.fading-out {
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.8);
+}
+
 #map-controls .control-btn:active {
     transform: scale(0.95);
     background: var(--bg-secondary) !important;
@@ -121,12 +128,6 @@ body.panel-open #map-controls {
 
 #mini-compass svg {
     transition: transform 0.1s linear;
-}
-
-#mini-compass.hidden {
-    opacity: 0;
-    pointer-events: none;
-    transform: scale(0.8);
 }
 
 /* 2D/3D Toggle Button */

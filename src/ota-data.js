@@ -7,7 +7,7 @@ const OtaData = registerPlugin('OtaData');
 function isNativeOtaAvailable() {
     if (typeof Capacitor === 'undefined') return false;
     if (typeof Capacitor.isNativePlatform === 'function' && !Capacitor.isNativePlatform()) return false;
-    if (typeof Capacitor.getPlatform === 'function' && Capacitor.getPlatform() !== 'ios') return false;
+    if (typeof Capacitor.getPlatform === 'function' && !['ios', 'android'].includes(Capacitor.getPlatform())) return false;
     return true;
 }
 

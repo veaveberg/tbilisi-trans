@@ -18,6 +18,7 @@
     "data:manifest": "node scripts/write-data-manifest.js && node scripts/sync-ota-files.js",
     "data:ota": "node scripts/sync-ota-files.js",
     "data:export-route-overrides": "node scripts/export-route-overrides.js",
+    "perf:analyze": "node scripts/analyze-performance-recording.js",
     "data:archive-and-manifest": "node scripts/update-data.js --skip-fetch",
     "verify:directions-url": "node scripts/verify-directions-url.js",
     "check:live-bus-fit": "node scripts/check-live-bus-polyline-fit.js",

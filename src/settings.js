@@ -62,12 +62,18 @@ function isIOSNativePlatform() {
         && Capacitor.getPlatform() === 'ios';
 }
 
+function isNativePlatform() {
+    return typeof Capacitor !== 'undefined'
+        && typeof Capacitor.isNativePlatform === 'function'
+        && Capacitor.isNativePlatform();
+}
+
 function shouldAvoidProgrammaticFocus() {
     return isIOSNativePlatform();
 }
 
 function setNativeRouteDataStatus(status) {
-    if (!isIOSNativePlatform()) return;
+    if (!isNativePlatform()) return;
     NativeSettingsPlugin.setRouteDataStatus?.(status).catch((err) => {
         console.warn('[NativeSettings] Failed to set route data status', err);
     });
@@ -657,6 +663,7 @@ async function openNativeSettings(options = {}) {
         uiLanguage: getCurrentUiLanguage(),
         stopNamesLanguage: getCurrentStopNamesLanguage(),
         mapLanguage: getCurrentMapLanguage(),
+        simplifyNumbersDescription: t('simpleNumbersDescription'),
         simplifyNumbers: getStoredBoolean('simplifyNumbers', false),
         showMinibuses: getStoredBoolean('showMinibuses', true),
         showMinibusSegments: getStoredBoolean('showMinibusSegments', false),
@@ -1333,11 +1340,59 @@ function init3DToggleButton() {
     const label = toggleBtn?.querySelector('.toggle-3d-label');
     if (!toggleBtn || !label) return;
 
-    // Update label based on pitch
+    let hideButtonTimeout = null;
+    let fadeButtonTimeout = null;
+    const RECENTLY_TILTED_MS = 5000;
+
+    const showToggleButton = () => {
+        if (fadeButtonTimeout) {
+            clearTimeout(fadeButtonTimeout);
+            fadeButtonTimeout = null;
+        }
+        if (!toggleBtn.classList.contains('hidden')) {
+            toggleBtn.classList.remove('fading-out');
+            return;
+        }
+        toggleBtn.classList.add('fading-out');
+        toggleBtn.classList.remove('hidden');
+        requestAnimationFrame(() => toggleBtn.classList.remove('fading-out'));
+    };
+
+    const hideToggleButton = () => {
+        if (toggleBtn.classList.contains('hidden') || toggleBtn.classList.contains('fading-out')) return;
+        toggleBtn.classList.add('fading-out');
+        fadeButtonTimeout = setTimeout(() => {
+            toggleBtn.classList.add('hidden');
+            toggleBtn.classList.remove('fading-out');
+            fadeButtonTimeout = null;
+        }, 220);
+    };
+
+    // Update the label and mirror the compass control's contextual visibility:
+    // keep this control available while tilted, then briefly after returning
+    // to a flat map so it is easy to tilt again.
     function updateLabel() {
         if (!window.map) return;
         const pitch = window.map.getPitch();
-        label.textContent = pitch > 5 ? '2D' : '3D';
+        const isTilted = pitch > 5;
+        label.textContent = isTilted ? '2D' : '3D';
+
+        if (isTilted) {
+            if (hideButtonTimeout) {
+                clearTimeout(hideButtonTimeout);
+                hideButtonTimeout = null;
+            }
+            showToggleButton();
+            return;
+        }
+
+        if (hideButtonTimeout) return;
+        hideButtonTimeout = setTimeout(() => {
+            hideButtonTimeout = null;
+            if (window.map?.getPitch() <= 5) {
+                hideToggleButton();
+            }
+        }, RECENTLY_TILTED_MS);
     }
 
     // Initial state

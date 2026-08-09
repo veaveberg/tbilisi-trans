@@ -1,12 +1,11 @@
 import * as api from './api.js';
 import * as turf from '@turf/turf';
 import { getSegmentForStop, generateSegmentGeometry, generateConnectionGeometry, getConnectionKey, LINE_1_IDS, LINE_2_IDS } from './metro-utils.js';
-import { getIntervalDescription } from './intervals.js';
+import { getCurrentIntervalState, getIntervalDescription } from './intervals.js';
 import { simplifyNumber } from './settings.js';
 import { getCurrentStopNamesLanguage, t } from './i18n.ts';
 import { setPoint } from './directions.js';
 
-let metroTicker = null;
 let _cachedSegments = null;
 let _cachedMidpoints = null;
 let _cachedExits = null;
@@ -197,71 +196,6 @@ function formatStationLabelName(name) {
     return name;
 }
 
-export function startMetroTicker() {
-    if (metroTicker) return;
-    metroTicker = setInterval(() => {
-        if (document.hidden) return;
-        const now = Date.now();
-        const elements = document.querySelectorAll('.metro-countdown');
-        elements.forEach(el => {
-            let target = parseInt(el.getAttribute('data-target'));
-            if (!target) return;
-
-            let remainingMs = target - now;
-
-            // If expired, check for blink state or next target
-            if (remainingMs <= 0) {
-                const blinkUntil = parseInt(el.getAttribute('data-blink-until'));
-
-                if (!blinkUntil) {
-                    // Start blinking for 10 seconds
-                    el.setAttribute('data-blink-until', now + 10000);
-                    el.classList.add('led-blink');
-                    el.textContent = '00:00';
-                    return;
-                } else if (now < blinkUntil) {
-                    // Still in blink phase
-                    el.textContent = '00:00';
-                    return;
-                } else {
-                    // Blink finished, move to next target
-                    el.classList.remove('led-blink');
-                    el.removeAttribute('data-blink-until');
-
-                    const queue = el.getAttribute('data-next-targets');
-                    if (queue) {
-                        const targets = queue.split(',');
-                        const nextTarget = targets.shift();
-                        el.setAttribute('data-target', nextTarget);
-                        if (targets.length > 0) el.setAttribute('data-next-targets', targets.join(','));
-                        else el.removeAttribute('data-next-targets');
-
-                        target = parseInt(nextTarget);
-                        remainingMs = target - now;
-                    }
-                }
-            }
-
-            if (remainingMs <= 0) {
-                el.textContent = '00:00';
-                return;
-            }
-
-            const totalSeconds = Math.floor(remainingMs / 1000);
-            const mm = Math.floor(totalSeconds / 60);
-            const ss = totalSeconds % 60;
-            el.textContent = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
-        });
-    }, 1000);
-}
-
-export function stopMetroTicker() {
-    if (metroTicker) {
-        clearInterval(metroTicker);
-        metroTicker = null;
-    }
-}
-
 export async function handleMetroStop(stop, panel, nameEl, listEl, {
     allRoutes,
     stopToRoutesMap,
@@ -270,9 +204,6 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
     showRouteOnMap
 }) {
     panel.classList.add('metro-mode');
-    // Ensure ticker starts
-    startMetroTicker();
-
     // --- Metro Display Logic ---
     setSheetState(panel, 'half'); // Open panel immediately
     updateBackButtons();
@@ -286,7 +217,7 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
 
     headerContainer.innerHTML = `
         <div class="metro-hours-badge">
-            <span class="icon">🕒</span> Entrance open 6:00 – 0:00
+            <span class="icon">🕒</span> ${t('metroEntranceOpenHours', '6:00', '0:00')}
         </div>
         <div class="metro-directions-buttons" style="display: flex; gap: 12px; margin-top: 12px; width: 100%;">
             <button class="place-detail-btn btn-secondary metro-dir-from" style="flex: 1;">
@@ -402,8 +333,6 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
             const dayOfWeek = new Date().getDay(); // 0 = Sunday, 6 = Saturday
             const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
             const dayType = isWeekend ? 'SATURDAY' : 'MONDAY';
-            const currentMinutes = new Date().getHours() * 60 + new Date().getMinutes();
-
             // Process EACH route (for transfer stations like Station Square)
             for (const route of metroRoutes) {
                 try {
@@ -443,23 +372,6 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                             const firstTrain = times[0];
                             const lastTrain = times[times.length - 1];
 
-                            const upcoming = [];
-                            for (const t of times) {
-                                const [h, m] = t.split(':').map(Number);
-                                let timeMins = h * 60 + m;
-                                if (h < 4) timeMins += 24 * 60;
-
-                                let cmpTime = timeMins;
-                                if (h < 4) cmpTime += 24 * 60; // Extend night
-                                let cmpCurrent = currentMinutes;
-                                if (new Date().getHours() < 4) cmpCurrent += 24 * 60;
-
-                                if (cmpTime >= cmpCurrent) {
-                                    upcoming.push({ time: t, diff: cmpTime - cmpCurrent });
-                                    if (upcoming.length >= 3) break;
-                                }
-                            }
-
                             // Build UI
                             const rawHeadsign = pattern.headsign || "Unknown Direction";
                             let headsign = rawHeadsign.replace(/ [12]$/, '').trim();
@@ -477,6 +389,17 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                 }
                                 return t;
                             };
+
+                            const minutesUntilLastTrain = (() => {
+                                const [hour, minute] = lastTrain.split(':').map(Number);
+                                if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+
+                                const now = new Date();
+                                const current = now.getHours() * 60 + now.getMinutes();
+                                let last = hour * 60 + minute;
+                                if (last < current) last += 24 * 60;
+                                return last - current;
+                            })();
 
                             let intervalDesc = getIntervalDescription(route.id);
                             // Fallback for Metro Line 2 if missing from route_intervals.json
@@ -504,28 +427,19 @@ export async function handleMetroStop(stop, panel, nameEl, listEl, {
                                     </div>
                                     <div class="arrival-card-right">
                                         <div class="next-arrival">
-                                             ${upcoming.length > 0
-                                    ? (() => {
-                                        const targets = upcoming.map(u => {
-                                            const [hu, mu] = u.time.split(':').map(Number);
-                                            const tDate = new Date();
-                                            if (hu < 4 && tDate.getHours() >= 4) tDate.setDate(tDate.getDate() + 1);
-                                            else if (hu >= 4 && tDate.getHours() < 4) tDate.setDate(tDate.getDate() - 1);
-                                            const offset = Math.floor(Math.random() * 25) - 12;
-                                            tDate.setHours(hu, mu, 30 + offset, 0);
-                                            return tDate.getTime();
-                                        });
-
-                                        const currentTarget = targets.shift();
-                                        const nextTargets = targets.length > 0 ? `data-next-targets="${targets.join(',')}"` : '';
-
-                                        return `<div class="time-container">
-                                                    <div class="led-text scheduled-time metro-countdown" data-target="${currentTarget}" ${nextTargets}>88:88</div>
-                                                    <div class="scheduled-disclaimer">Scheduled</div>
-                                                </div>`;
-                                    })()
-                                    : `<div class="status-closed">End of Service</div>`
-                                }
+                                            ${(() => {
+                                                const serviceState = getCurrentIntervalState(route.id);
+                                                const isEndingSoon = minutesUntilLastTrain !== null &&
+                                                    minutesUntilLastTrain >= 0 && minutesUntilLastTrain <= 60;
+                                                const serviceLabel = serviceState?.operating
+                                                    ? (isEndingSoon
+                                                        ? t('everyMinutesLastTrainAt', serviceState.interval, formatTime(lastTrain))
+                                                        : t('everyMinutes', serviceState.interval))
+                                                    : null;
+                                                return serviceLabel
+                                                    ? `<div class="time-container"><div class="metro-service-state${isEndingSoon ? ' is-ending-soon' : ''}">${serviceLabel}</div></div>`
+                                                    : `<div class="time-container"><div class="metro-service-state is-not-operating">${t('notOperating')}</div></div>`;
+                                            })()}
                                         </div>
                                     </div>
                                 </div>
@@ -697,7 +611,7 @@ export function processMetroStops(stops, stopBearings = {}) {
             });
         } else {
             const staticRoutes = api.getRoutesForStopStatic ? api.getRoutesForStopStatic(stop.id) : [];
-            const hasRoutes = staticRoutes.length > 0;
+            const hasRoutes = stop._hasRoutes === true || staticRoutes.length > 0;
             busStops.push({
                 type: 'Feature',
                 geometry: {

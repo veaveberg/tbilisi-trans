@@ -24,6 +24,23 @@ let appData = {
     getAllRoutes: () => []
 };
 
+export function isSearchActive() {
+    const input = document.getElementById('search-input');
+    const suggestions = document.getElementById('search-suggestions');
+    return document.activeElement === input || !suggestions?.classList.contains('hidden');
+}
+
+export function dismissSearch() {
+    const input = document.getElementById('search-input');
+    const suggestions = document.getElementById('search-suggestions');
+    const closeBtn = document.getElementById('search-close');
+
+    suggestions?.classList.add('hidden');
+    closeBtn?.classList.add('hidden');
+    input?.blur();
+    clearSearchSuggestionMarkers();
+}
+
 export function setupSearch(callbacks, dataProviders) {
     appCallbacks = { ...appCallbacks, ...callbacks };
     appData = { ...appData, ...dataProviders };
@@ -31,6 +48,7 @@ export function setupSearch(callbacks, dataProviders) {
     const input = document.getElementById('search-input');
     const suggestions = document.getElementById('search-suggestions');
     const clearBtn = document.getElementById('search-clear');
+    const closeBtn = document.getElementById('search-close');
     let debounceTimeout;
 
     // DEBUG: Log clicks in suggestions to diagnose blocking
@@ -95,14 +113,25 @@ export function setupSearch(callbacks, dataProviders) {
         }
     };
 
-    input.addEventListener('focus', showSuggestionsOnFocus);
-    input.addEventListener('click', showSuggestionsOnFocus);
+    input.addEventListener('focus', () => {
+        closeBtn.classList.remove('hidden');
+        document.dispatchEvent(new Event('search-opened'));
+        showSuggestionsOnFocus();
+    });
+    input.addEventListener('click', () => {
+        closeBtn.classList.remove('hidden');
+        document.dispatchEvent(new Event('search-opened'));
+        showSuggestionsOnFocus();
+    });
     input.addEventListener('blur', () => {
         setTimeout(() => {
             suggestions.classList.add('hidden');
+            closeBtn.classList.add('hidden');
             clearSearchSuggestionMarkers();
         }, 200);
     });
+
+    closeBtn.addEventListener('click', dismissSearch);
 
     input.addEventListener('input', (e) => {
         const query = e.target.value.toLowerCase();
@@ -177,7 +206,9 @@ export function setupSearch(callbacks, dataProviders) {
 
     // Hide suggestions on click outside (unless clicking a map marker, which we handle)
     document.addEventListener('click', (e) => {
-        if (!e.target.closest('.search-container') && !e.target.closest('.mapboxgl-marker')) {
+        if (!e.target.closest('.search-container') &&
+            !e.target.closest('#search-suggestions') &&
+            !e.target.closest('.mapboxgl-marker')) {
             suggestions.classList.add('hidden');
             clearSearchSuggestionMarkers();
         }

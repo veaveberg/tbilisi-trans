@@ -132,14 +132,16 @@ body.dark-mode .panel.metro-mode .metro-inline-warning {
 }
 
 .panel.metro-mode .arrival-card-right {
-    padding-right: 12px;
+    padding-right: 10px;
     padding-left: 0;
+    width: min(34vw, 150px);
 }
 
 .panel.metro-mode .time-container {
     gap: 10px;
     justify-content: flex-end;
     transform: none;
+    max-width: 100%;
 }
 
 .panel.metro-mode .arrival-item {
@@ -166,10 +168,27 @@ body.dark-mode .panel.metro-mode .metro-inline-warning {
     align-items: center;
 }
 
-.status-closed {
-    font-size: 0.85rem;
+.panel.metro-mode .metro-service-state {
+    font-family: 'Matrix Sans', monospace;
+    color: #03FF78;
+    text-shadow: 0 0 5px rgba(3, 255, 121, 0.26);
+    font-size: 1.2rem;
+    font-weight: 700;
+    line-height: 1.05;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.panel.metro-mode .metro-service-state.is-ending-soon {
+    color: #f59e0b;
+    text-shadow: 0 0 5px rgba(245, 158, 11, 0.32);
+    font-size: 1rem;
+}
+
+.panel.metro-mode .metro-service-state.is-not-operating {
     color: #ef4444;
-    font-weight: 600;
+    text-shadow: 0 0 5px rgba(239, 68, 68, 0.26);
 }
 
 .next-arrival-chip {
@@ -184,30 +203,15 @@ body.dark-mode .panel.metro-mode .metro-inline-warning {
     font-weight: 400;
 }
 
-.status-closed {
-    font-size: 0.85rem;
-    color: #ef4444;
-    font-weight: 600;
-}
-
-.panel.metro-mode .scheduled-disclaimer {
-    color: #03FF78 !important;
-    text-shadow: 0 0 5px rgba(3, 255, 120, 0.5) !important;
-    font-style: normal;
-    font-weight: 600;
-    margin-right: 0;
-    font-size: 0.62rem;
-    line-height: 1;
-    text-align: right;
-}
-
-body:not(.dark-mode) .panel.metro-mode .time-container {
+.panel.metro-mode .time-container {
     background: #000;
-    padding: 0;
-    border-radius: 6px;
+    /* Match the arrival card's 8px rounding and 10px content inset. */
+    padding: 0 10px;
+    box-sizing: border-box;
+    border-radius: 8px;
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     width: 130px;
     height: 60px;
@@ -225,15 +229,6 @@ body:not(.dark-mode) .panel.metro-mode .time-container {
     border-radius: 8px;
 }
 
-.led-blink {
-    animation: led-blink-anim 1s steps(2, start) infinite;
-}
-
-@keyframes led-blink-anim {
-    to {
-        visibility: hidden;
-    }
-}
 
 .first-last-item {
     display: flex;

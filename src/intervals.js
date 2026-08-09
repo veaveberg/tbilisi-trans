@@ -52,6 +52,34 @@ export function getIntervalData(routeId) {
 }
 
 /**
+ * Returns the service state for the current interval window instead of
+ * estimating a vehicle arrival from a timetable.
+ */
+export function getCurrentIntervalState(routeId, now = new Date()) {
+    const data = getIntervalData(routeId);
+    const pattern = data?.pattern;
+    if (!Array.isArray(pattern) || pattern.length === 0) return null;
+
+    const currentHour = now.getHours() + (now.getMinutes() / 60);
+    const activeSegment = pattern.find((segment) => {
+        const start = Number(segment.start);
+        const end = Number(segment.end);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+
+        // A segment whose end precedes its start runs through midnight.
+        return end <= start
+            ? currentHour >= start || currentHour < end
+            : currentHour >= start && currentHour < end;
+    });
+
+    if (!activeSegment || activeSegment.gap || !activeSegment.interval) {
+        return { operating: false, interval: null };
+    }
+
+    return { operating: true, interval: activeSegment.interval };
+}
+
+/**
  * Generate a human-readable interval description string
  * @param {string} routeId - The route ID (e.g., "1:R216088")
  * @returns {string|null} - Description like "Every 8', 15' after 22:00"

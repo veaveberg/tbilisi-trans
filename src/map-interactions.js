@@ -2,7 +2,7 @@ import mapboxgl from 'mapbox-gl';
 import { map } from './map-setup.js';
 import { updateStopHoverEffects } from './map-visuals.js';
 import { getCurrentMapLanguage } from './i18n.ts';
-import { showPlaceInfoSheet } from './search.js';
+import { dismissSearch, isSearchActive, showPlaceInfoSheet } from './search.js';
 import { flyToPointInView, isCurrentMapCameraIntent, invalidateMapCameraIntent } from './map-camera.js';
 import { stopTracking } from './geolocation.js';
 
@@ -40,6 +40,14 @@ export function runMapAction(event, action) {
         pendingTouchMapActionTimeout = null;
         action();
     }, 280);
+}
+
+export function consumeMapTapForSearch(event) {
+    if (!isSearchActive()) return false;
+
+    dismissSearch();
+    if (event.originalEvent) event.originalEvent._clickHandled = true;
+    return true;
 }
 
 export function setMapFocus(active) {
@@ -362,7 +370,25 @@ export function addMetroHoverLogic(map, filterManager) {
         }
     };
 
+    const clearMetroHover = () => {
+        map.getCanvas().style.cursor = '';
+        if (hoveredStateId !== null) {
+            map.setFeatureState(
+                { source: 'metro-stops', id: hoveredStateId },
+                { hover: false }
+            );
+        }
+        hoveredStateId = null;
+        updateMetroGlow(null);
+    };
+
+    document.addEventListener('search-opened', clearMetroHover);
+
     map.on('mouseenter', targets, (e) => {
+        if (isSearchActive()) {
+            clearMetroHover();
+            return;
+        }
         // Disable Metro Hover if Filter is Active (Metro is not "reachable")
         if (filterManager && (filterManager.state.active || filterManager.state.picking)) return;
 
@@ -389,15 +415,7 @@ export function addMetroHoverLogic(map, filterManager) {
     });
 
     map.on('mouseleave', targets, () => {
-        map.getCanvas().style.cursor = '';
-        if (hoveredStateId !== null) {
-            map.setFeatureState(
-                { source: 'metro-stops', id: hoveredStateId },
-                { hover: false }
-            );
-        }
-        hoveredStateId = null;
-        updateMetroGlow(null);
+        clearMetroHover();
     });
 }
 
@@ -426,18 +444,84 @@ export function setupHoverHandlers(context) {
     // Unified Hover Target: Stops + Segments
     const HOVER_TARGETS = [...ALL_STOP_LAYERS, 'minibus-segments-layer'];
     let hoveredSegmentId = null; // Local state for segment hover
+    let pendingHoverEvent = null;
+    let hoverAnimationFrame = null;
+    let appliedStopHoverId = null;
+    let appliedMetroHoverId = null;
 
-    map.on('mousemove', HOVER_TARGETS, (e) => {
+    const isMetroFeature = (feature) => feature?.layer?.id?.startsWith('metro-');
+
+    const requestMetroHoverEffect = (feature = null) => {
+        const stationId = feature?.properties?.id ?? feature?.properties?.stationId ?? null;
+        if (appliedMetroHoverId === stationId) return;
+
+        appliedMetroHoverId = stationId;
+        if (!map.getLayer('metro-layer-glow')) return;
+
+        // Keep the metro station's own line color. Its hover is a colored glow,
+        // not the white bus-stop overlay.
+        map.setPaintProperty('metro-layer-glow', 'circle-opacity', stationId === null
+            ? 0
+            : ['case', ['==', ['get', 'id'], stationId], 0.6, 0]);
+    };
+
+    const cancelPendingHover = () => {
+        pendingHoverEvent = null;
+        if (hoverAnimationFrame !== null) {
+            cancelAnimationFrame(hoverAnimationFrame);
+            hoverAnimationFrame = null;
+        }
+    };
+
+    const requestStopHoverEffect = (stopId, stopFeature = null) => {
+        if (appliedStopHoverId === stopId) return;
+
+        const wasHoveringStop = Boolean(appliedStopHoverId);
+        appliedStopHoverId = stopId;
+        updateStopHoverEffects(stopId, stopFeature);
+        // The connection-line opacity only changes when entering or leaving
+        // stop hover. Avoid restyling it again for every stop crossed.
+        if (setFilterOpacity && wasHoveringStop !== Boolean(stopId)) {
+            setFilterOpacity(Boolean(stopId));
+        }
+    };
+
+    const clearHoverState = () => {
+        cancelPendingHover();
+        if (hoverTimeout) {
+            clearTimeout(hoverTimeout);
+            hoverTimeout = null;
+        }
+        if (updateConnectionLine && filterManager && filterManager.state.picking) {
+            updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
+        }
+        lastHoveredStopId = null;
+        requestStopHoverEffect(null);
+        requestMetroHoverEffect(null);
+        if (hoveredSegmentId !== null) {
+            map.setFeatureState({ source: 'minibus-segments', id: hoveredSegmentId }, { hover: false });
+            hoveredSegmentId = null;
+            window.hoveredMinibusSegmentId = null;
+        }
+        map.getCanvas().style.cursor = '';
+    };
+
+    document.addEventListener('search-opened', clearHoverState);
+
+    const processHoverMove = (e) => {
+        if (isSearchActive()) {
+            clearHoverState();
+            return;
+        }
         if (window.isPickModeActive) return;
 
         // 1. Check for Stops First (Priority)
-        // We query broadly to catch stops near the cursor even if we technically hovered the segment line first
-
-        // SAFEGUARD: Only query layers that actually exist to prevent Mapbox errors
-        const validStopLayers = ALL_STOP_LAYERS.filter(id => map.getLayer(id));
-        const stopFeatures = validStopLayers.length > 0
-            ? map.queryRenderedFeatures(e.point, { layers: validStopLayers })
-            : [];
+        // Mapbox already queried these features to dispatch this layer-specific
+        // mousemove event. Reusing them avoids a second, expensive query of all
+        // stop layers for every cursor movement.
+        const stopFeatures = e.features.filter(feature =>
+            ALL_STOP_LAYERS.includes(feature.layer.id)
+        );
 
         let bestStopFeature = null;
 
@@ -496,24 +580,32 @@ export function setupHoverHandlers(context) {
             // Normal Stop Hover Processing
             map.getCanvas().style.cursor = 'pointer';
 
-            // Prioritize Metro Features
-            const metroFeature = features.find(f => f.layer.id.startsWith('metro-'));
-            let bestFeature;
-            if (metroFeature) {
-                bestFeature = metroFeature;
-            } else {
-                const sorted = proximitySort(features, e.point);
-                bestFeature = sorted ? sorted[0] : null;
-            }
+            // Bus stops and metro stations share one closest-feature decision.
+            // This prevents an independent metro hover from disagreeing with
+            // the stop that receives the click beneath the cursor.
+            const sorted = proximitySort(features, e.point);
+            const bestFeature = sorted ? sorted[0] : null;
 
             if (!bestFeature) return;
 
+            if (isMetroFeature(bestFeature)) {
+                requestStopHoverEffect(null);
+                requestMetroHoverEffect(bestFeature);
+                lastHoveredStopId = `metro:${bestFeature.properties.id ?? bestFeature.properties.stationId ?? ''}`;
+
+                if (hoverTimeout) {
+                    clearTimeout(hoverTimeout);
+                    hoverTimeout = null;
+                }
+                return;
+            }
+
+            requestMetroHoverEffect(null);
             const currentId = bestFeature.properties.id;
 
             if (lastHoveredStopId !== currentId) {
                 lastHoveredStopId = currentId;
-                updateStopHoverEffects(currentId);
-                if (setFilterOpacity) setFilterOpacity(true);
+                requestStopHoverEffect(currentId, bestFeature);
             }
 
             if (hoverTimeout) {
@@ -531,9 +623,9 @@ export function setupHoverHandlers(context) {
         // Clear Stop Hover effects if we left a stop
         if (lastHoveredStopId !== null) {
             lastHoveredStopId = null;
-            updateStopHoverEffects(null);
-            if (setFilterOpacity) setFilterOpacity(false);
+            requestStopHoverEffect(null);
         }
+        requestMetroHoverEffect(null);
 
         // Segment Logic
         const segmentFeatures = e.features.filter(f => f.layer.id === 'minibus-segments-layer');
@@ -568,9 +660,30 @@ export function setupHoverHandlers(context) {
             map.getCanvas().style.cursor = '';
         }
 
+    };
+
+    map.on('mousemove', HOVER_TARGETS, (e) => {
+        // Mapbox can emit many mousemove events before it has repainted the
+        // previous hover. Keep only the newest event so the highlight follows
+        // the cursor instead of replaying every stop crossed along the way.
+        // Mapbox reuses event objects, so snapshot the values needed by the
+        // deferred handler instead of retaining the event itself.
+        pendingHoverEvent = {
+            point: [e.point.x, e.point.y],
+            features: Array.isArray(e.features) ? [...e.features] : []
+        };
+        if (hoverAnimationFrame !== null) return;
+
+        hoverAnimationFrame = requestAnimationFrame(() => {
+            hoverAnimationFrame = null;
+            const latestEvent = pendingHoverEvent;
+            pendingHoverEvent = null;
+            if (latestEvent) processHoverMove(latestEvent);
+        });
     });
 
     map.on('mouseleave', HOVER_TARGETS, () => {
+        cancelPendingHover();
         // We need to be careful here. Mouseleave fires when leaving layer A to enter layer B.
         // So we might leave Segment to enter Stop.
         // queryRenderedFeatures is the source of truth.
@@ -589,8 +702,8 @@ export function setupHoverHandlers(context) {
                 updateConnectionLine(filterManager.state.originId, filterManager.state.targetIds, false);
             }
             lastHoveredStopId = null;
-            updateStopHoverEffects(null);
-            if (setFilterOpacity) setFilterOpacity(false);
+            requestStopHoverEffect(null);
+            requestMetroHoverEffect(null);
         }, 50);
 
         // Clear Segment Hover
@@ -603,6 +716,10 @@ export function setupHoverHandlers(context) {
 
     // Broad Pointer cursor for POIs
     map.on('mousemove', (e) => {
+        if (isSearchActive()) {
+            map.getCanvas().style.cursor = '';
+            return;
+        }
         if (window.isPickModeActive) return;
 
         let features = [];
@@ -802,6 +919,7 @@ export function setupClickHandlers(context) {
 
     map.on('click', ALL_STOP_LAYERS, (e) => {
         if (window.ignoreMapClicks) return;
+        if (consumeMapTapForSearch(e)) return;
         stopTracking();
         if (e.originalEvent) e.originalEvent._clickHandled = true;
 
@@ -899,6 +1017,7 @@ export function setupClickHandlers(context) {
     map.on('click', (e) => {
         if (window.ignoreMapClicks) return;
         if (e.originalEvent && e.originalEvent._clickHandled) return;
+        if (consumeMapTapForSearch(e)) return;
         stopTracking();
         if (window.hoveredMinibusSegmentId !== null && window.hoveredMinibusSegmentId !== undefined) return;
         if (window.minibusSegmentsEditor && window.minibusSegmentsEditor.isActive()) return;

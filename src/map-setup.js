@@ -2,6 +2,7 @@ import mapboxgl from 'mapbox-gl';
 import { Capacitor } from '@capacitor/core';
 import * as api from './api.js';
 import { getCurrentMapLanguage, onLanguageChange } from './i18n.ts';
+import { attachMapPerformanceRecorder, markPerformanceEvent } from './performance-recorder.js';
 
 function getMapboxLanguageValue(language = getCurrentMapLanguage()) {
     switch (language) {
@@ -57,6 +58,13 @@ export const map = new mapboxgl.Map({
     center: [44.78, 41.72], // Tbilisi center
     zoom: 12,
     trackResize: false
+});
+
+attachMapPerformanceRecorder(map);
+markPerformanceEvent('map:created', {
+    center: [44.78, 41.72],
+    zoom: 12,
+    style: 'mapbox://styles/mapbox/standard'
 });
 
 function installTapDragZoomAnchorPatch() {

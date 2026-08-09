@@ -17,6 +17,11 @@ const V3_ROUTES_CACHE_KEY = 'v3_routes_map_cache';
 const V3_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 const scheduledArrivalsCache = new Map(); // key -> { minutes, timeDisplay }
 const scheduledArrivalsByStop = new Map(); // stopId -> Map(key -> { route, headsign, directionIndex, minutes, timeDisplay })
+// A loop can visit the same physical stop twice while still being represented
+// by one API pattern. Keep the two schedule occurrences separate so each one
+// can have its own destination and arrivals card.
+const loopScheduleDirections = new Map();
+const loopScheduleDirectionsInFlight = new Map();
 let selectedStopRouteIds = new Set();
 let selectedStopRouteFilterStopId = null;
 
@@ -106,6 +111,9 @@ function resolveRouteByShortName(shortName, options = {}) {
     for (const c of candidates) {
         let score = 0;
         const mode = String(c.mode || '').toUpperCase();
+        if (options.preferredSource) {
+            score += c._source === options.preferredSource ? 80 : -80;
+        }
         if (preferBus && mode === 'BUS') score += 40;
         if (preferBus && isRailLikeMode(mode)) score -= 30;
 
@@ -147,16 +155,46 @@ function resolveRouteForStop(routeLike, stopId, options = {}) {
     const routeId = getArrivalRouteId(routeLike);
     const shortName = getArrivalShortName(routeLike);
 
-    return allRoutes.find(route => String(route.id) === routeId) ||
-        allRoutes.find(route => normalizeRouteId(route.id) === normalizeRouteId(routeId)) ||
+    // Route IDs overlap between the Tbilisi and Rustavi feeds.  An arrival is
+    // tagged with its physical stop, so use that source before comparing the
+    // normalized IDs; otherwise a Rustavi live arrival can be attached to a
+    // similarly named Tbilisi route and lose its real-time data on refresh.
+    const sourceId = String(stopId || '').startsWith('r') ? 'rustavi' : 'tbilisi';
+    const sourceRoutes = allRoutes.filter(route => route?._source === sourceId);
+    const candidates = sourceRoutes.length > 0 ? sourceRoutes : allRoutes;
+
+    return candidates.find(route => String(route.id) === routeId) ||
+        candidates.find(route => normalizeRouteId(route.id) === normalizeRouteId(routeId)) ||
         resolveRouteByShortName(shortName, {
             preferredStopId: stopId,
+            preferredSource: sourceId,
             preferBus: options.preferBus !== false
         });
 }
 
+function getRouteArrivalSourceStopId(route, stopId) {
+    if (route?._sourceStopId) return route._sourceStopId;
+    const candidates = new Set([stopId]);
+    if (typeof deps.getEquivalentStops === 'function') {
+        deps.getEquivalentStops(stopId, false).forEach(id => candidates.add(id));
+    }
+    if (deps.mergeSourcesMap?.has(stopId)) {
+        deps.mergeSourcesMap.get(stopId).forEach(id => candidates.add(id));
+    }
+    const routeStops = Array.isArray(route?.stops) ? route.stops : [];
+    return Array.from(candidates).find(candidateId =>
+        routeStops.some(routeStopId => normalizeRouteId(routeStopId) === normalizeRouteId(candidateId))
+    ) || stopId;
+}
+
 function normalizeArrivalRouteFields(arrival, stopId) {
     if (!arrival) return arrival;
+    // TTC's sources do not always serialize this field the same way. Normalize
+    // it before grouping so a string value such as "false" cannot be treated
+    // as live merely because it is truthy, and Rustavi's isRealtime variant is
+    // preserved as a real-time arrival.
+    const realtimeValue = arrival.realtime ?? arrival.isRealtime ?? arrival.realTime ?? arrival.isRealTime;
+    if (realtimeValue !== undefined) arrival.realtime = isRealtimeArrival(realtimeValue);
     const shortName = getArrivalShortName(arrival);
     if (shortName && !arrival.shortName) arrival.shortName = shortName;
 
@@ -210,7 +248,9 @@ export function initArrivals(dependencies) {
 
     // Listen for static data preload to refresh arrivals (fixes direction logic on first load)
     window.addEventListener('static-routes-loaded', () => {
-        // Skip if arrivals are actively loading (controller is handling it)
+        // The controller owns the first deep-link render. Re-rendering while
+        // that request is still in flight briefly combines stale associations
+        // with the partial live response.
         if (window.arrivalsLoading) return;
 
         if (window.currentStopId && window.lastArrivals) {
@@ -570,7 +610,10 @@ function resolveDirectionInfo(a, matchedRoute, stopId) {
 
         let bestIdx = null;
         let bestScore = -1;
-        overrides.destinations.forEach((dest, idx) => {
+        const destinations = Array.isArray(overrides.destinations)
+            ? overrides.destinations
+            : Object.values(overrides.destinations);
+        destinations.forEach((dest, idx) => {
             if (!dest || !dest.headsign) return;
             const cand = typeof dest.headsign === 'string'
                 ? dest.headsign
@@ -652,6 +695,22 @@ function getValidDirectionsForRoute(routeId, stopIds) {
     return finalDirs.size > 0 ? Array.from(finalDirs) : [0];
 }
 
+function getPatternSuffixForDirection(route, stopId, directionIndex) {
+    const details = getStaticRouteDetails(route?.id);
+    if (!details?._stopsOfPatterns || !stopId) return null;
+
+    const sourceStopId = getRouteArrivalSourceStopId(route, stopId);
+    const stopEntry = details._stopsOfPatterns.find(entry => {
+        const entryStopId = String(entry?.stop?.id || entry?.stop || '');
+        return entryStopId === String(sourceStopId) ||
+            normalizeRouteId(entryStopId) === normalizeRouteId(sourceStopId);
+    });
+    const suffixes = Array.isArray(stopEntry?.patternSuffixes) ? stopEntry.patternSuffixes : [];
+    return suffixes.find(suffix =>
+        resolveDirectionInfo({ patternSuffix: suffix }, route, sourceStopId).directionIndex === directionIndex
+    ) || suffixes[0] || null;
+}
+
 // Public wrapper to match stop-card direction resolution behavior.
 export function getValidDirectionsForStop(routeId, stopIds) {
     return getValidDirectionsForRoute(routeId, stopIds);
@@ -670,9 +729,21 @@ function getSchedulePatternSuffixForItem(item, stopId) {
         item?.data;
 
     const staticDetails = getStaticRouteDetails(routeId);
+    // A merged card can be opened from its display stop while the route and
+    // its timetable belong to the paired physical stop. Prefer the source
+    // reported by the arrivals API, then consider all equivalent IDs.
+    const stopIds = new Set([item?.data?._sourceStopId, stopId].filter(Boolean).map(String));
+    if (typeof deps.getEquivalentStops === 'function') {
+        deps.getEquivalentStops(stopId, false).forEach(id => stopIds.add(String(id)));
+    }
+    if (deps.mergeSourcesMap?.has(stopId)) {
+        deps.mergeSourcesMap.get(stopId).forEach(id => stopIds.add(String(id)));
+    }
     const stopEntry = staticDetails?._stopsOfPatterns?.find(s => {
         const sId = String(s?.stop?.id || s?.stop || '');
-        return sId === String(stopId) || normalizeRouteId(sId) === normalizeRouteId(stopId);
+        return Array.from(stopIds).some(id =>
+            sId === id || normalizeRouteId(sId) === normalizeRouteId(id)
+        );
     });
 
     const suffixes = Array.isArray(stopEntry?.patternSuffixes) ? stopEntry.patternSuffixes.filter(Boolean) : [];
@@ -812,6 +883,11 @@ function isRealtimeArrival(value) {
 function getLateWarningIndices(item, lastScheduledMinutes, firstScheduledMinutes, options = {}) {
     if (options.isMetroCard === true) return [];
     if (item.type !== 'live') return [];
+    // TTC's loop-route feed deliberately cannot distinguish the two visits to
+    // this stop. Its copied arrival list is already shown in yellow with a
+    // direction warning, so it must not also be judged against one side's
+    // schedule and reported as an unscheduled late bus.
+    if (item.loopSharedLive) return [];
 
     const displayArrivals = Array.isArray(item.displayArrivals) ? item.displayArrivals.slice(0, 3) : [];
     if (displayArrivals.length === 0) return [];
@@ -849,8 +925,11 @@ function buildLateArrivalWarningHtml(item, lastScheduledMinutes, firstScheduledM
     const displayArrivals = Array.isArray(item.displayArrivals) ? item.displayArrivals.slice(0, 3) : [];
     const liveIndexes = displayArrivals.flatMap((entry, index) => entry.isScheduled ? [] : [index]);
     const warnings = getLateWarningEntriesFromIndices(warningIndexes, liveIndexes);
-    if (warnings.length === 0) return '';
-    return warnings.map(warning => `<div class="arrival-warning">${warning.message}</div>`).join('');
+    const lateWarningsHtml = warnings.map(warning => `<div class="arrival-warning">${warning.message}</div>`).join('');
+    const sharedLoopLiveWarning = item.loopSharedLive
+        ? `<div class="arrival-warning">${t('loopRouteLiveDataWarning')}</div>`
+        : '';
+    return `${lateWarningsHtml}${sharedLoopLiveWarning}`;
 }
 
 function buildArrivalBottomHtml(baseHtml, item, lastScheduledMinutes, firstScheduledMinutes, options = {}) {
@@ -1203,6 +1282,100 @@ export async function getV3Schedule(routeShortName, stopId, explicitRouteId = nu
     return parseSchedule(schedule, stopIds, patternSuffix, routeShortName);
 }
 
+function isLoopRoute(route) {
+    const value = route?._overrides?.isLoop ?? route?.isLoop;
+    if (value === true || value === 1 || String(value).toLowerCase() === 'true') return true;
+    const pattern = getStaticRouteDetails(route?.id)?.patterns?.[0];
+    return !!(pattern?.firstStop?.id && pattern?.lastStop?.id &&
+        stopIdsMatch(pattern.firstStop.id, pattern.lastStop.id));
+}
+
+function stopIdsMatch(first, second) {
+    return String(first) === String(second) || normalizeRouteId(first) === normalizeRouteId(second);
+}
+
+function getLoopScheduleDirectionsKey(routeId, stopIds) {
+    const normalizedIds = (stopIds || []).map(normalizeRouteId).sort().join(',');
+    return `${normalizeRouteId(routeId)}|${normalizedIds}`;
+}
+
+function getLoopScheduleDirectionsForRoute(routeId, stopIds) {
+    return loopScheduleDirections.get(getLoopScheduleDirectionsKey(routeId, stopIds)) || [];
+}
+
+async function loadLoopScheduleDirections(route, stopIds) {
+    if (!route?.id) return [];
+
+    const key = getLoopScheduleDirectionsKey(route.id, stopIds);
+    if (loopScheduleDirections.has(key)) return loopScheduleDirections.get(key);
+    if (loopScheduleDirectionsInFlight.has(key)) return loopScheduleDirectionsInFlight.get(key);
+
+    const promise = (async () => {
+        const scheduleResult = await api.fetchScheduleForStop(route.id, stopIds, null, { strategy: 'cache-only' });
+        const schedule = scheduleResult?.schedule;
+        const suffix = scheduleResult?.patternSuffix;
+        const details = getStaticRouteDetails(route.id);
+        if (!schedule || !suffix) return [];
+        const selected = selectScheduleForTbilisiToday(schedule);
+        const stops = selected?.entry?.stops || [];
+        // An on-map marker can merge two adjacent physical platforms.  They
+        // are both valid schedule lookup IDs, but they must not be treated as
+        // two visits to one loop stop: that produces duplicate, opposite-side
+        // cards with exactly the same timetable.  Split a loop only when one
+        // physical stop itself occurs twice in its schedule.
+        const matchingIndexesByStop = new Map();
+        stops.forEach((stop, index) => {
+            const scheduleStopId = stop?.id || stop?.code;
+            if (!scheduleStopId || !stopIds.some(stopId => stopIdsMatch(scheduleStopId, stopId))) return;
+            const key = normalizeRouteId(scheduleStopId);
+            const indexes = matchingIndexesByStop.get(key) || [];
+            indexes.push(index);
+            matchingIndexesByStop.set(key, indexes);
+        });
+        const matchingIndexes = Array.from(matchingIndexesByStop.values())
+            .find(indexes => indexes.length >= 2) || [];
+
+        // One occurrence is a normal loop stop. Two internal occurrences mean
+        // passengers can board there on each side of the loop. A repeated
+        // terminus (such as route 505 at stop 1354) remains one direction.
+        if (matchingIndexes.length < 2) return [];
+        if (matchingIndexes.some(index => index === 0 || index === stops.length - 1)) return [];
+
+        const directions = matchingIndexes.slice(0, 2).map((occurrenceIndex, directionIndex) => {
+            // Keep only this visit to the stop when parsing the schedule. The
+            // dummy final item ensures the parser does not treat it as a terminus.
+            const occurrenceSchedule = schedule.map(entry => ({
+                ...entry,
+                stops: [entry.stops?.[matchingIndexes[directionIndex]], { id: '__loop_schedule_end__' }]
+            }));
+            const parsed = parseSchedule(occurrenceSchedule, stopIds, suffix, route.shortName);
+            const fallbackHeadsign = directionIndex === 0
+                ? route.longName
+                : details?.patterns?.[0]?.firstStop?.name || route.longName;
+            return {
+                directionIndex,
+                headsign: deps.getPatternHeadsign(route, directionIndex, fallbackHeadsign),
+                schedule: parsed,
+                patternSuffix: suffix,
+                targetIndex: occurrenceIndex,
+                scheduleStops: stops
+            };
+        }).filter(direction => direction.schedule?.nextArrivals?.length);
+        return directions;
+    })().catch((error) => {
+        console.warn('[Arrivals] Failed to derive loop directions from schedule', { routeId: route.id, error });
+        return [];
+    }).then((directions) => {
+        loopScheduleDirections.set(key, directions);
+        return directions;
+    }).finally(() => {
+        loopScheduleDirectionsInFlight.delete(key);
+    });
+
+    loopScheduleDirectionsInFlight.set(key, promise);
+    return promise;
+}
+
 /**
  * Format day label from fromDay-toDay (e.g., "MONDAY-FRIDAY" -> "Mon-Fri")
  */
@@ -1262,6 +1435,27 @@ function selectScheduleForTbilisiToday(schedule, info = getTbilisiDayInfo()) {
     console.warn(`[V3 Debug] No schedule found for ${todayStr}/${todayName}. Using first available.`);
     const first = schedule[0] || null;
     return first ? { entry: first, reason: 'first-available-fallback', label: formatDayLabel(first.fromDay, first.toDay) } : null;
+}
+
+function getScheduleStopsForDirection(scheduleEntry, stopIds, explicitSuffix = null) {
+    const stops = Array.isArray(scheduleEntry?.stops) ? scheduleEntry.stops : [];
+    const matchedStops = stops.filter((stop, index) => {
+        if (index === stops.length - 1) return false;
+        const stopId = String(stop?.id || '');
+        const stopCode = String(stop?.code || '');
+        return stopIds.some(candidateId => {
+            const candidate = String(candidateId);
+            return candidate === stopId ||
+                normalizeRouteId(candidate) === normalizeRouteId(stopId) ||
+                (stopCode && normalizeRouteId(stopCode) === normalizeRouteId(candidate));
+        });
+    });
+
+    const virtualMatch = String(explicitSuffix || '').match(/_PART([01])$/);
+    if (virtualMatch && matchedStops.length > 1) {
+        return [matchedStops[Number(virtualMatch[1])]].filter(Boolean);
+    }
+    return matchedStops;
 }
 
 /**
@@ -1342,16 +1536,7 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
         // Calculate summary (First - Last, Interval)
         let summaryTimes = '';
         let summaryInterval = '';
-        const matchedStops = entry.stops?.filter((s, idx) => {
-            const isTerminus = idx === entry.stops.length - 1;
-            if (isTerminus) return false;
-            const sId = String(s.id);
-            const normalize = (id) => String(id).replace(/^\d+:/, '').replace(/^[rR]/, '');
-            return stopIds.some(pid => {
-                const pIdStr = String(pid);
-                return pIdStr === sId || normalize(pIdStr) === normalize(sId) || (s.code && normalize(s.code) === normalize(pIdStr));
-            });
-        }) || [];
+        const matchedStops = getScheduleStopsForDirection(entry, stopIds, explicitSuffix);
 
         if (matchedStops.length > 0) {
             const allTimes = [];
@@ -1421,18 +1606,7 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
         return null;
     }
 
-    const matchedStops = daySchedule.stops.filter((s, idx) => {
-        const isTerminus = idx === daySchedule.stops.length - 1;
-        if (isTerminus) return false;
-
-        const sId = String(s.id);
-        const sCode = String(s.code || '');
-        return stopIds.some(pid => {
-            const pIdStr = String(pid);
-            const normalize = (id) => String(id).replace(/^\d+:/, '').replace(/^[rR]/, '');
-            return pIdStr === sId || normalize(pIdStr) === normalize(sId) || (sCode && normalize(sCode) === normalize(pIdStr));
-        });
-    });
+    const matchedStops = getScheduleStopsForDirection(daySchedule, stopIds, explicitSuffix);
 
     if (matchedStops.length === 0) {
         console.warn('[ScheduleDebug] Full schedule stop match failed', {
@@ -1585,15 +1759,30 @@ export async function fetchArrivals(stopId) {
         routeIds.forEach(routeId => routeIdsSet.add(routeId));
     });
     const routeCount = routeIdsSet.size;
-    const maxNumberOfArrivalTimes = Math.min(150, Math.max(5, routeCount > 0 ? routeCount * 5 : 5));
+    // Static route associations populate shortly after a cold deep-link load.
+    // Until then routeCount is zero; requesting only five arrivals makes the
+    // first card visibly incomplete and forces a later refresh to fill it in.
+    const maxNumberOfArrivalTimes = routeCount > 0
+        ? Math.min(150, Math.max(5, routeCount * 5))
+        : 150;
 
     // Note: Loading state is managed by ArrivalsController
     const combined = await api.fetchArrivalsForStopIds(Array.from(idsToCheck), { maxNumberOfArrivalTimes });
+    console.debug(`[ArrivalLoad] stop response stop=${stopId} count=${combined.length} max=${maxNumberOfArrivalTimes}`);
 
     const normalizedCombined = combined.map(a => {
         const actualStopId = a?._sourceStopId || stopId;
         return normalizeArrivalRouteFields({ ...a }, actualStopId);
     });
+    const arrivalsBySource = normalizedCombined.reduce((summary, arrival) => {
+        const source = String(arrival?._sourceStopId || '').startsWith('r') ? 'rustavi' : 'tbilisi';
+        if (!summary[source]) summary[source] = { total: 0, live: 0, unresolved: 0 };
+        summary[source].total += 1;
+        if (arrival.realtime === true || arrival.realtime === 1 || arrival.realtime === 'true') summary[source].live += 1;
+        if (!resolveRouteForStop(arrival, arrival?._sourceStopId || stopId, { preferBus: true })) summary[source].unresolved += 1;
+        return summary;
+    }, {});
+    console.debug('[ArrivalLoad] arrivals by source', { stopId, sources: arrivalsBySource });
 
     // Group by canonical route, prefer live over scheduled
     const arrivalsByRoute = new Map();
@@ -1633,6 +1822,8 @@ export async function fetchArrivals(stopId) {
         const timeB = b.realtimeArrivalMinutes !== undefined ? b.realtimeArrivalMinutes : b.scheduledArrivalMinutes;
         return timeA - timeB;
     });
+
+    console.debug(`[ArrivalLoad] normalized live stop=${stopId} count=${unique.length}`);
 
     return unique;
 }
@@ -1692,34 +1883,48 @@ function buildArrivalTimesMarkup(displayArrivals, timeElId, options = {}) {
     const entries = Array.isArray(displayArrivals) ? displayArrivals.slice(0, 3) : [];
     const primary = entries[0] || { text: '--:--', isScheduled: false };
     const isMetroCard = options.isMetroCard === true;
+    const scheduledOnly = !isMetroCard && entries.length > 0 && entries.every(entry => entry.isScheduled);
     const staleLive = options.staleLive === true;
+    const loopSharedLive = options.loopSharedLive === true;
     const lateWarningIndices = new Set(Array.isArray(options.lateWarningIndices) ? options.lateWarningIndices : []);
     const lateStyleAttr = ` style="color:#fbbf24 !important; text-shadow:0 0 5px rgba(251, 191, 36, 0.28) !important;"`;
     const primaryClasses = ['led-text', 'arrival-time-primary'];
     if (primary.isScheduled) primaryClasses.push('scheduled-time');
     if (staleLive && !primary.isScheduled) primaryClasses.push('stale-live-time');
-    if (lateWarningIndices.has(0)) primaryClasses.push('late-depot-time');
+    if (lateWarningIndices.has(0) || (loopSharedLive && !primary.isScheduled)) primaryClasses.push('late-depot-time');
     const primaryText = isMetroCard && primary.isScheduled ? String(primary.text || '').replace(/˚$/, '') : primary.text;
     const primaryMarkup = isMetroCard && primary.isScheduled
         ? `
             <div class="metro-scheduled-time-stack">
-                <div id="${timeElId}" class="${primaryClasses.join(' ')}"${lateWarningIndices.has(0) ? lateStyleAttr : ''}>${primaryText}</div>
+                <div id="${timeElId}" class="${primaryClasses.join(' ')}"${lateWarningIndices.has(0) || (loopSharedLive && !primary.isScheduled) ? lateStyleAttr : ''}>${primaryText}</div>
                 <div class="scheduled-disclaimer">${t('scheduled')}</div>
             </div>
         `
-        : `<div id="${timeElId}" class="${primaryClasses.join(' ')}"${lateWarningIndices.has(0) ? lateStyleAttr : ''}>${primaryText}</div>`;
+        : `<div id="${timeElId}" class="${primaryClasses.join(' ')}"${lateWarningIndices.has(0) || (loopSharedLive && !primary.isScheduled) ? lateStyleAttr : ''}>${primaryText}</div>`;
 
-    const secondaryMarkup = entries.length > 1 ? `
+    const secondaryEntries = scheduledOnly ? entries.slice(1, 3) : entries.slice(1, 3);
+    const secondaryMarkup = secondaryEntries.length > 0 ? `
         <div class="time-secondary-stack">
-            ${entries.slice(1, 3).map((entry, index) => {
+            ${secondaryEntries.map((entry, index) => {
                 const classes = ['led-text', 'led-text-secondary'];
                 if (entry.isScheduled) classes.push('scheduled-time');
                 if (staleLive && !entry.isScheduled) classes.push('stale-live-time');
-                if (lateWarningIndices.has(index + 1)) classes.push('late-depot-time');
-                return `<div class="${classes.join(' ')}" data-secondary-index="${index + 1}"${lateWarningIndices.has(index + 1) ? lateStyleAttr : ''}>${entry.text}</div>`;
+                if (lateWarningIndices.has(index + 1) || (loopSharedLive && !entry.isScheduled)) classes.push('late-depot-time');
+                return `<div class="${classes.join(' ')}" data-secondary-index="${index + 1}"${lateWarningIndices.has(index + 1) || (loopSharedLive && !entry.isScheduled) ? lateStyleAttr : ''}>${entry.text}</div>`;
             }).join('')}
         </div>
     ` : '';
+
+    // Scheduled arrivals are estimates shown as clock times. Reserve the
+    // primary display for live arrivals and use the second and third scheduled
+    // times in the compact stack to free width for route details.
+    if (scheduledOnly) {
+        return `
+            <div class="time-container time-container-scheduled-only">
+                ${secondaryMarkup}
+            </div>
+        `;
+    }
 
     return `
         <div class="time-container ${entries.length > 1 ? 'time-container-multi' : 'time-container-single'}">
@@ -1809,11 +2014,13 @@ export function markArrivalsLiveDataStale() {
     setArrivalsLiveDataStale(true);
 }
 
-function isCardRenderCurrent(cardId, stopId, renderVersion) {
+function isCardRenderCurrent(cardId, stopId) {
     const cardEl = document.getElementById(cardId);
     if (!cardEl) return false;
-    if (String(cardEl.getAttribute('data-stop-id') || '') !== String(stopId)) return false;
-    return String(cardEl.getAttribute('data-render-version') || '') === String(renderVersion);
+    // A list-wide render version changes whenever any card updates. Schedule
+    // fetches for sibling cards must not be invalidated by that unrelated
+    // render; the card id plus stop identity is the actual safety boundary.
+    return String(cardEl.getAttribute('data-stop-id') || '') === String(stopId);
 }
 
 function escapeHtmlAttribute(value) {
@@ -1835,6 +2042,10 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     const activeMode = String(stopObj?.mode || stopObj?.vehicleMode || window.currentStopMode || '').toUpperCase();
     const isGondolaStop = activeMode === 'GONDOLA';
     const isMetroStop = activeMode === 'SUBWAY';
+
+    // Metro cards have their own service-state renderer. Never let cached bus
+    // arrivals replace it during a language, settings, or data refresh.
+    if (isMetroStop) return;
 
     // --- CROSS-STOP PROTECTION ---
     // If this render is for a stop that is no longer the current one, ignore it.
@@ -1876,6 +2087,12 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     window._lastRenderedStopId = String(stopId);
     const renderVersion = (Number(window._arrivalsRenderVersion) || 0) + 1;
     window._arrivalsRenderVersion = renderVersion;
+    console.debug('[ArrivalLoad] render requested', {
+        stopId,
+        renderVersion,
+        count: Array.isArray(arrivalsData) ? arrivalsData.length : 0,
+        source: arrivalsData === window.lastArrivals ? 'current' : 'stale-or-intermediate'
+    });
 
 
     // NOTE: Staleness-based refresh is now handled by ArrivalsController
@@ -1889,6 +2106,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             const actualStopId = arrival?._sourceStopId || stopId;
             return normalizeArrivalRouteFields(arrival, actualStopId);
         });
+
     }
 
     // 0. Ensure All Routes (Chips)
@@ -1935,6 +2153,23 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         .filter(Boolean)
         .map(id => String(id));
     const selectedRouteIds = pruneStopRouteFilterIds(validRouteIdsForStop, stopId);
+
+    // Route details deduplicate a loop's repeated stop, while the schedule
+    // retains both visits. Prime that extra direction data and re-render once
+    // it is available; normal routes do not take this path.
+    uniqueRoutesMap.forEach((route) => {
+        if (!isLoopRoute(route)) return;
+        const cacheKey = getLoopScheduleDirectionsKey(route.id, equivalentIds);
+        if (loopScheduleDirections.has(cacheKey) || loopScheduleDirectionsInFlight.has(cacheKey)) return;
+        void loadLoopScheduleDirections(route, equivalentIds).then(() => {
+            // The static schedule request can finish after the controller has
+            // upgraded this card from scheduled data to live data. Re-render
+            // to add its split-direction information, but always use the
+            // controller's current array rather than this older closure.
+            if (String(window.currentStopId) !== String(stopId)) return;
+            renderArrivals(window.lastArrivals || arrivalsData, stopId);
+        });
+    });
 
     // 2. Filter Logic (User Route Filter)
     const shouldFilterArrivals = !!(deps.filterManager &&
@@ -2027,7 +2262,10 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             a.displayShortName = matchedRouteForColor.customShortName || matchedRouteForColor.shortName;
         }
 
-        const resolveStopId = stopId || actualStopId;
+        // Resolve a route's direction using the physical stop which supplied
+        // the arrival.  On merged stops (e.g. 3963/3964 for route 397), the
+        // selected display ID is not necessarily present in the route pattern.
+        const resolveStopId = actualStopId || stopId;
         const { directionIndex, headsign, verifiedHeadsign, loopAmbiguous } = resolveDirectionInfo(a, matchedRouteForColor, resolveStopId);
         if (verifiedHeadsign) a._verifiedHeadsign = verifiedHeadsign;
         const routeIdForKey = String((matchedRouteForColor && matchedRouteForColor.id) || a.id || a.shortName);
@@ -2098,6 +2336,17 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
         // Take only the closest arrival
         const primaryArrival = group.arrivals[0];
+        const resolvedRoute = resolveRouteForStop(primaryArrival, stopId, { preferBus: true });
+        const loopDirections = resolvedRoute
+            ? getLoopScheduleDirectionsForRoute(resolvedRoute.id, equivalentIds)
+            : [];
+        const loopSharedLive = loopDirections.length >= 2;
+
+        // The loop-specific pass below produces one card per visit to the
+        // stop and shares TTC's indistinguishable live arrivals between them.
+        // Do not also retain this generic live group, or 387/397 appear as a
+        // third duplicate card after the loop schedules have loaded.
+        if (loopSharedLive) return;
 
         renderList.push({
             type: 'live',
@@ -2108,7 +2357,57 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             directionIndex: group.directionIndex,
             allArrivals: group.arrivals,
             displayArrivals: buildDisplayedArrivals(group.arrivals, 3),
+            loopSharedLive,
             key: group.key || `${primaryArrival.shortName}_${group.directionIndex}`
+        });
+    });
+
+    // A live response can contain only the currently approaching side of a
+    // loop. Add the other schedule-derived side directly, rather than waiting
+    // for the normal route-pattern fallback (which has already deduplicated
+    // the two visits into one stop association).
+    uniqueRoutesMap.forEach((route) => {
+        const directions = getLoopScheduleDirectionsForRoute(route.id, equivalentIds);
+        if (directions.length < 2) return;
+        const sharedLiveGroup = Array.from(liveGroups.values()).find(group => {
+            const liveRoute = resolveRouteForStop(group.primary, stopId, { preferBus: true });
+            return normalizeRouteId(liveRoute?.id || group.primary?.id) === normalizeRouteId(route.id);
+        });
+
+        directions.forEach((direction) => {
+            const key = `${route.id}_${direction.directionIndex}`;
+            if (representedKeys.has(key)) return;
+            if (sharedLiveGroup) {
+                const primaryArrival = sharedLiveGroup.arrivals[0];
+                renderList.push({
+                    type: 'live',
+                    data: primaryArrival,
+                    minutes: primaryArrival._calculatedMinutes,
+                    color: deps.getRouteDisplayColor(route),
+                    directionIndex: direction.directionIndex,
+                    headsign: direction.headsign,
+                    allArrivals: sharedLiveGroup.arrivals,
+                    displayArrivals: buildDisplayedArrivals(sharedLiveGroup.arrivals, 3),
+                    loopSharedLive: true,
+                    key
+                });
+                representedKeys.add(key);
+                return;
+            }
+            const nextArrival = direction.schedule?.nextArrivals?.[0];
+            const minutes = nextArrival ? getMinutesFromNow(nextArrival.time) : 99999;
+            renderList.push({
+                type: 'scheduled',
+                data: route,
+                minutes: Number.isFinite(minutes) ? minutes : 99999,
+                color: deps.getRouteDisplayColor(route),
+                directionIndex: direction.directionIndex,
+                headsign: direction.headsign,
+                needsFetch: true,
+                loopSchedule: direction.schedule,
+                key
+            });
+            representedKeys.add(key);
         });
     });
 
@@ -2157,9 +2456,19 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         }
         if (!shouldShowRoute(r.shortName, r)) return;
         const routeIdentity = String(r.id || r.shortName);
-        if (liveRouteKeys.has(routeIdentity) && sharedStopRoutes.has(routeIdentity)) return;
-
-        const validDirs = getValidDirectionsForRoute(r.id, equivalentIds);
+        const hasLiveRoute = Array.from(liveRouteKeys).some(liveRouteId =>
+            normalizeRouteId(liveRouteId) === normalizeRouteId(routeIdentity)
+        );
+        const cachedLoopDirections = getLoopScheduleDirectionsForRoute(r.id, equivalentIds);
+        const loopDirections = cachedLoopDirections;
+        // A merged stop can contain the opposite physical platform. Once a
+        // route already has a live card, do not add that platform's scheduled
+        // fallback as a second, opposite-direction card. Loop routes are the
+        // only exception: their dedicated schedule split adds both visits.
+        if (hasLiveRoute && loopDirections.length === 0) return;
+        const validDirs = loopDirections.length > 0
+            ? loopDirections.map(direction => direction.directionIndex)
+            : getValidDirectionsForRoute(r.id, equivalentIds);
         validDirs.forEach(dirIdx => {
             const key = `${routeIdentity}_${dirIdx}`;
             if (!representedKeys.has(key)) {
@@ -2167,10 +2476,26 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                     deps.allRoutes().find(route => normalizeRouteId(route.id) === normalizeRouteId(r.id)) ||
                     resolveRouteByShortName(r.shortName, { preferredStopId: stopId, preferBus: true }) ||
                     r;
-                const isLoopRoute = realRoute?._overrides?.isLoop === true || realRoute?.isLoop === true || realRoute?._overrides?.isLoop === 'true';
-                if (liveRouteKeys.has(routeIdentity) && isLoopRoute) return;
-                // Determine headsign for this direction at this stop
-                const { headsign } = resolveDirectionInfo({ id: realRoute.id, shortName: realRoute.shortName, directionIndex: dirIdx }, realRoute, stopId);
+                // Preserve the actual pattern suffix that was matched for this
+                // physical stop. Passing only directionIndex makes the resolver
+                // fall back to zero and can display the opposite direction on
+                // the initial scheduled card.
+                const directionStopId = getRouteArrivalSourceStopId(realRoute, stopId);
+                const directionPatternSuffix = getPatternSuffixForDirection(realRoute, directionStopId, dirIdx);
+                const { headsign } = resolveDirectionInfo({
+                    id: realRoute.id,
+                    shortName: realRoute.shortName,
+                    patternSuffix: directionPatternSuffix || undefined
+                }, realRoute, directionStopId);
+                console.debug('[ArrivalDirection] scheduled direction resolved', {
+                    stopId,
+                    sourceStopId: directionStopId,
+                    routeId: realRoute.id,
+                    shortName: realRoute.shortName,
+                    directionIndex: dirIdx,
+                    patternSuffix: directionPatternSuffix,
+                    headsign
+                });
                 const stableId = `route-${realRoute.id || r.id}-${dirIdx}`;
                 const existingEl = document.getElementById(stableId);
                 let existingMinutes = 99999;
@@ -2201,20 +2526,24 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                     }
                 }
 
+                const loopDirection = loopDirections.find(direction => direction.directionIndex === dirIdx);
+                const loopNextArrival = loopDirection?.schedule?.nextArrivals?.[0];
+                const loopMinutes = loopNextArrival ? getMinutesFromNow(loopNextArrival.time) : null;
                 const scheduledItem = {
                     type: 'scheduled',
                     data: realRoute,
-                    minutes: existingMinutes,
+                    minutes: Number.isFinite(loopMinutes) ? loopMinutes : existingMinutes,
                     color: deps.getRouteDisplayColor(realRoute),
                     directionIndex: dirIdx,
-                    headsign: headsign,
+                    headsign: loopDirection?.headsign || headsign,
                     needsFetch: true,
+                    loopSchedule: loopDirection?.schedule || null,
                     timeDisplay: existingTimeDisplay || undefined,
                     key: key
                 };
 
                 // If no live data and this stop has multiple patterns for this route, keep only the earliest scheduled item
-                if (!liveRouteKeys.has(routeIdentity) && sharedStopRoutes.has(routeIdentity)) {
+                if (!hasLiveRoute && sharedStopRoutes.has(routeIdentity)) {
                     const existingIdx = renderList.findIndex(item =>
                         item.type === 'scheduled' && String(item.data.id || item.data.shortName) === routeIdentity
                     );
@@ -2239,6 +2568,13 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         stopMap.forEach((cached, key) => {
             if (representedKeys.has(key)) return;
             const cachedRoute = resolveRouteForStop(cached.route, stopId, { preferBus: true }) || cached.route;
+            const hasLiveRoute = Array.from(liveRouteKeys).some(liveRouteId =>
+                normalizeRouteId(liveRouteId) === normalizeRouteId(cachedRoute.id || cached.route?.id || cached.route?.shortName)
+            );
+            // Cached timetable entries may describe the paired platform of a
+            // merged stop. A live card for the route is authoritative unless
+            // this is one of the explicitly split loop routes.
+            if (hasLiveRoute && !isLoopRoute(cachedRoute)) return;
             const minsFromDisplay = cached.timeDisplay ? getMinutesFromNow(cached.timeDisplay.replace('˚', '')) : cached.minutes;
             renderList.push({
                 type: 'scheduled',
@@ -2254,6 +2590,40 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             representedKeys.add(key);
         });
     }
+
+    // Final reconciliation for merged platforms: cache keys can preserve
+    // different source prefixes for the same route, but the visible route
+    // number is still the same. For ordinary routes, a live card wins over
+    // every scheduled fallback; loop routes retain their explicit split view.
+    const getVisibleRouteNumbers = (route) => [
+        route?.displayShortName,
+        route?.customShortName,
+        route?.shortName
+    ].filter(Boolean).map(String);
+    const liveRouteNumbers = new Set(renderList
+        .filter(item => item.type === 'live')
+        .flatMap(item => getVisibleRouteNumbers(item.data)));
+    renderList = renderList.filter(item => {
+        if (item.type !== 'scheduled' || isLoopRoute(item.data)) return true;
+        return !getVisibleRouteNumbers(item.data).some(shortName => liveRouteNumbers.has(shortName));
+    });
+
+    // A destination is required for a useful arrival card. During deep-link
+    // startup, stale static associations can briefly create scheduled cards
+    // for a paired platform before its live route list has arrived. Showing
+    // them as "Destination unknown" is misleading, so wait until the route
+    // details can resolve the destination instead.
+    renderList = renderList.filter(item => {
+        const headsign = String(item.headsign || '').trim();
+        if (headsign && headsign !== 'undefined') return true;
+        console.debug('[ArrivalLoad] destinationless card hidden', {
+            stopId,
+            routeId: item.data?.id,
+            shortName: item.data?.shortName,
+            sourceStopId: item.data?._sourceStopId
+        });
+        return false;
+    });
 
     // 4. Sort EVERYTHING
     renderList.sort((a, b) => {
@@ -2457,7 +2827,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
         const bottomBarId = `bottom-${stableId}`;
         let bottomBarDataAttrs = '';
 
-        let bottomContent = '&nbsp;';
+        let bottomContent = buildArrivalBottomHtml('&nbsp;', item, null, null, { isMetroCard: isMetroStop });
         // Preserve bottom content if already exists
         const existingBottom = div.querySelector('.arrival-card-bottom');
         if (existingBottom && existingBottom.innerHTML.trim() !== '&nbsp;') {
@@ -2501,7 +2871,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 </div>
             </div>
             <div class="arrival-card-right">
-                ${buildArrivalTimesMarkup(displayArrivals, timeElId, { isMetroCard: isMetroStop, lateWarningIndices, staleLive })}
+                ${buildArrivalTimesMarkup(displayArrivals, timeElId, { isMetroCard: isMetroStop, lateWarningIndices, staleLive, loopSharedLive: item.loopSharedLive })}
             </div>
         `;
 
@@ -2534,11 +2904,18 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             };
         }
 
-        if (item.type === 'live' && displayArrivals.length < 3 && routeIdForClick) {
+        const shouldFetchRouteLiveArrivals = !!routeIdForClick && (
+            (item.type === 'live' && displayArrivals.length < 3) ||
+            // The stop-wide TTC request can be slow. While it is pending,
+            // let scheduled cards ask their own small route endpoint so they
+            // can upgrade to live times without waiting for a later refresh.
+            (item.type === 'scheduled' && window.arrivalsLoading)
+        );
+        if (shouldFetchRouteLiveArrivals) {
             const liveFetchState = div.getAttribute('data-live-route-arrivals-fetch');
             if (liveFetchState !== 'pending') {
                 div.setAttribute('data-live-route-arrivals-fetch', 'pending');
-                const actualStopId = item.data._sourceStopId || stopId;
+                const actualStopId = getRouteArrivalSourceStopId(item.data, stopId);
                 api.fetchRouteArrivalsForStop(actualStopId, routeIdForClick).then(routeArrivals => {
                     if (!isCardRenderCurrent(stableId, stopId, renderVersion)) {
                         return;
@@ -2560,12 +2937,26 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                     const candidateArrivals = liveOnly.length > 0 ? liveOnly : filteredRouteArrivals;
                     const nextDisplayArrivals = buildDisplayedArrivals(candidateArrivals, 3);
                     if (
-                        nextDisplayArrivals.length > 1 &&
+                        liveOnly.length > 0 && nextDisplayArrivals.length > 0 &&
                         isCardRenderCurrent(stableId, stopId, renderVersion)
                     ) {
                         const currentDiv = document.getElementById(stableId);
                         if (!currentDiv) return;
+                        const firstLiveArrival = liveOnly[0];
+                        const liveRoute = resolveRouteForStop(firstLiveArrival, actualStopId, { preferBus: true });
+                        const liveDirection = resolveDirectionInfo(firstLiveArrival, liveRoute, actualStopId);
+                        item.type = 'live';
+                        item.data = { ...item.data, ...firstLiveArrival, id: liveRoute?.id || routeIdForClick };
+                        item.headsign = liveDirection.headsign || item.headsign;
                         item.displayArrivals = nextDisplayArrivals;
+                        currentDiv.setAttribute('data-item-type', 'live');
+                        if (item.headsign) {
+                            const destinationEl = currentDiv.querySelector('.destination');
+                            if (destinationEl) {
+                                destinationEl.textContent = item.headsign;
+                                destinationEl.title = item.headsign;
+                            }
+                        }
                         const currentBottomEl = document.getElementById(bottomBarId);
                         const firstScheduledMinutes = currentBottomEl?.dataset.firstScheduledMinutes;
                         const lastScheduledMinutes = currentBottomEl?.dataset.lastScheduledMinutes;
@@ -2589,7 +2980,8 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                         updateCardDisplayArrivals(currentDiv, timeElId, nextDisplayArrivals, nextDisplayArrivals[0].minutes, {
                             isMetroCard: isMetroStop,
                             lateWarningIndices,
-                            staleLive: isArrivalsLiveDataStale()
+                            staleLive: isArrivalsLiveDataStale(),
+                            loopSharedLive: item.loopSharedLive
                         });
                     }
                     const currentDiv = document.getElementById(stableId);
@@ -2636,7 +3028,10 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
             if (!hasInfo || item.needsFetch) {
                 const explicitSuffix = getSchedulePatternSuffixForItem(item, stopId);
-                getV3Schedule(item.data.shortName, stopId, item.data.id, explicitSuffix).then(res => {
+                const scheduleRequest = item.loopSchedule
+                    ? Promise.resolve(item.loopSchedule)
+                    : getV3Schedule(item.data.shortName, stopId, item.data.id, explicitSuffix);
+                scheduleRequest.then(res => {
                     if (!isCardRenderCurrent(stableId, stopId, renderVersion)) return;
                     if (!res) return;
                     const currentDiv = document.getElementById(stableId);
@@ -2713,7 +3108,8 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                             updateCardDisplayArrivals(currentDiv, timeElId, displayEntries, item.minutes, {
                                 isMetroCard: isMetroStop,
                                 lateWarningIndices,
-                                staleLive: isArrivalsLiveDataStale()
+                                staleLive: isArrivalsLiveDataStale(),
+                                loopSharedLive: item.loopSharedLive
                             });
                         }
                     }
@@ -2724,9 +3120,13 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                         const firstArrival = displayEntries[0];
                         const timeEl = document.getElementById(timeElId);
                         if (!isCardRenderCurrent(stableId, stopId, renderVersion)) return;
-                        if (timeEl && firstArrival) {
+                        if (firstArrival) {
                             const currentType = currentDiv.getAttribute('data-item-type');
-                            const isStillScheduled = currentType === 'scheduled' || timeEl.classList.contains('scheduled-time');
+                            // Scheduled-only cards intentionally render no
+                            // primary time; they show the second and third
+                            // arrivals in the compact stack. Do not require a
+                            // primary element before replacing that stack.
+                            const isStillScheduled = currentType === 'scheduled' || timeEl?.classList.contains('scheduled-time');
                             if (!isStillScheduled) return;
                             const minsFromNow = firstArrival.minutes;
                             item.displayArrivals = displayEntries;
@@ -2741,7 +3141,8 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                             updateCardDisplayArrivals(currentDiv, timeElId, displayEntries, minsFromNow, {
                                 isMetroCard: isMetroStop,
                                 lateWarningIndices,
-                                staleLive: isArrivalsLiveDataStale()
+                                staleLive: isArrivalsLiveDataStale(),
+                                loopSharedLive: item.loopSharedLive
                             });
                             const resolvedScheduleRoute = resolveRouteForStop(item.data, stopId, { preferBus: true }) || item.data;
                             const resolvedScheduleRouteId = resolvedScheduleRoute.id || item.data.id || item.data.shortName;
@@ -2785,16 +3186,31 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     // They are only removed when the stop ID changes (handled at top of renderArrivals).
     listEl.querySelectorAll('.arrival-item').forEach(el => {
         if (!activeIds.has(el.id)) {
+            // Scheduled-only cards are fallbacks. Keeping one after a live
+            // card has replaced it produces an opposite-platform route card.
+            if (el.getAttribute('data-item-type') === 'scheduled') {
+                el.style.opacity = '0';
+                el.style.transform = 'scale(0.95)';
+                setTimeout(() => el.remove(), 200);
+                return;
+            }
             // IMMEDIATE CLEANUP: If the item belongs to an invalid direction for this stop, remove it NOW.
             // This prevents "opposite direction" ghosts from appearing as dimmed items.
             const routeId = el.getAttribute('data-route-id');
             if (routeId) {
-                const validDirs = getValidDirectionsForRoute(routeId, stopId);
+                const loopDirections = getLoopScheduleDirectionsForRoute(routeId, equivalentIds);
+                const validDirs = loopDirections.length > 0
+                    ? loopDirections.map(direction => direction.directionIndex)
+                    : getValidDirectionsForRoute(routeId, stopId);
                 const itemDir = parseInt(el.getAttribute('data-direction') || '0');
                 if (!validDirs.includes(itemDir)) {
                     el.style.opacity = '0';
                     el.style.transform = 'scale(0.95)';
-                    setTimeout(() => el.remove(), 400);
+                    const removalToken = `${Date.now()}-${Math.random()}`;
+                    el.dataset.removalToken = removalToken;
+                    setTimeout(() => {
+                        if (el.dataset.removalToken === removalToken) el.remove();
+                    }, 400);
                     return;
                 }
             }
@@ -2805,7 +3221,11 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             if (age > 15000) {
                 el.style.opacity = '0';
                 el.style.transform = 'scale(0.95)';
-                setTimeout(() => el.remove(), 400);
+                const removalToken = `${Date.now()}-${Math.random()}`;
+                el.dataset.removalToken = removalToken;
+                setTimeout(() => {
+                    if (el.dataset.removalToken === removalToken) el.remove();
+                }, 400);
                 return;
             }
 
@@ -2828,6 +3248,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 el.style.opacity = '0.5';
             }
         } else {
+            delete el.dataset.removalToken;
             // Restore opacity if it was dimmed
             if (el.style.opacity === '0.5') {
                 el.style.opacity = '1';
@@ -3012,5 +3433,6 @@ export function updateArrivalsLoadingState(visible) {
                 }, 300);
             }
         });
+
     }
 }

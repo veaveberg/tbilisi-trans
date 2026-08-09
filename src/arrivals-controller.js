@@ -34,6 +34,7 @@ class ArrivalsController {
     async selectStop(stopId) {
         const requestId = ++this.requestSeq;
         const isRefresh = this.stopId === stopId;
+        console.debug('[ArrivalLoad] request started', { stopId, requestId, isRefresh });
 
         // Cancel any in-flight request
         if (this.abortController) this.abortController.abort();
@@ -53,13 +54,17 @@ class ArrivalsController {
         if (!isRefresh) {
             try {
                 const scheduled = await fetchArrivalsOptimistic(stopId);
-                if (requestId !== this.requestSeq || this.stopId !== stopId) return;
+                if (requestId !== this.requestSeq || this.stopId !== stopId) {
+                    console.debug('[ArrivalLoad] scheduled response discarded', { stopId, requestId, currentRequestId: this.requestSeq, activeStopId: this.stopId });
+                    return;
+                }
 
                 if (scheduled.length > 0) {
                     this.arrivals = scheduled;
                     this.timestamp = Date.now();
                     window.lastArrivals = scheduled;
                     renderArrivals(scheduled, stopId);
+                    console.debug('[ArrivalLoad] scheduled rendered', { stopId, requestId, count: scheduled.length });
                 }
             } catch (e) {
                 console.warn('[ArrivalsController] Optimistic fetch failed:', e);
@@ -70,7 +75,10 @@ class ArrivalsController {
         updateArrivalsLoadingState(true);
         try {
             const live = await fetchArrivals(stopId);
-            if (requestId !== this.requestSeq || this.stopId !== stopId) return;
+            if (requestId !== this.requestSeq || this.stopId !== stopId) {
+                console.debug('[ArrivalLoad] live response discarded', { stopId, requestId, currentRequestId: this.requestSeq, activeStopId: this.stopId });
+                return;
+            }
 
             if (live.length > 0) {
                 // Upgrade to live data
@@ -80,9 +88,11 @@ class ArrivalsController {
                 window.arrivalsDataTimestamp = this.timestamp;
                 setArrivalsLiveDataStale(false);
                 renderArrivals(live, stopId);
+                console.debug('[ArrivalLoad] live rendered', { stopId, requestId, count: live.length });
             } else if (this.arrivals.length === 0) {
                 // No live AND no scheduled - render empty state
                 renderArrivals([], stopId);
+                console.debug('[ArrivalLoad] empty rendered', { stopId, requestId });
             }
             // else: keep showing scheduled (already rendered in phase 1)
 
@@ -91,6 +101,7 @@ class ArrivalsController {
             }
         } catch (e) {
             console.warn('[ArrivalsController] Live fetch failed:', e);
+            console.debug('[ArrivalLoad] live fetch failed', { stopId, requestId, message: e?.message });
             // Keep showing scheduled data if available
         } finally {
             updateArrivalsLoadingState(false);
