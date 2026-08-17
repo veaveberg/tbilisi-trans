@@ -19,6 +19,7 @@ export const DATA_FILES = [
 
     { name: 'routes_overrides.csv', category: 'corrections' },
     { name: 'stops_overrides.csv', category: 'corrections' },
+    { name: 'fares.csv', category: 'corrections' },
     { name: 'route_intervals.json', category: 'base' },
     { name: 'long_segments.geojson', category: 'base' },
     { name: 'metro_exits.json', category: 'base' },

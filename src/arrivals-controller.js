@@ -96,6 +96,14 @@ class ArrivalsController {
             }
             // else: keep showing scheduled (already rendered in phase 1)
 
+            // An empty response is still a successful live-data check. Without
+            // this timestamp, the refresh loop compares Date.now() with zero
+            // and immediately starts another request on every 5-second tick.
+            if (live.length === 0) {
+                this.timestamp = Date.now();
+                window.arrivalsDataTimestamp = this.timestamp;
+            }
+
             if (requestId === this.requestSeq) {
                 this.startRefreshTimer();
             }
@@ -141,14 +149,16 @@ class ArrivalsController {
 
     /**
      * Determine refresh threshold based on earliest arrival
-     * - <10 min: refresh every 15s
-     * - <90 min: refresh every 60s  
+     * - scheduled-only/no-arrivals: refresh every 10min
+     * - live arrival <10 min: refresh every 15s
+     * - live arrival <90 min: refresh every 60s
      * - else: refresh every 10min
      */
     getRefreshThreshold() {
-        if (this.arrivals.length === 0) return 60;
+        const liveArrivals = this.arrivals.filter(arrival => arrival?.realtime === true);
+        if (liveArrivals.length === 0) return 600;
 
-        const earliest = Math.min(...this.arrivals.map(a =>
+        const earliest = Math.min(...liveArrivals.map(a =>
             a.realtimeArrivalMinutes ?? a.scheduledArrivalMinutes ?? 999
         ));
 

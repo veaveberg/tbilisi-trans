@@ -4,7 +4,7 @@ import { addToHistory } from './history.js';
 import * as api from './api.js';
 import { hydrateRouteDetails } from './fetch.js';
 import { shouldShowRoute } from './settings.js';
-import { flyToPointInView, invalidateMapCameraIntent } from './map-camera.js';
+import { flyToPointInView, getCameraOrientation, invalidateMapCameraIntent } from './map-camera.js';
 // We need these icons. Assuming Vite setup allows importing them here too.
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg';
@@ -185,6 +185,7 @@ export class FilterManager {
                     center: this.map.getCenter(),
                     zoom,
                     duration: 900,
+                    ...getCameraOrientation(this.map),
                     essential: true
                 });
             } else {

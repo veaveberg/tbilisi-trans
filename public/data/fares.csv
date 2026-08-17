@@ -1,0 +1,7 @@
+source,mode,route_id,route_short_name,price_gel,currency
+rustavi,BUS,,,0.50,GEL
+rustavi,BUS,,20,1.5,GEL
+rustavi,BUS,,21,2.50,GEL
+rustavi,BUS,,22,2.50,GEL
+rustavi,BUS,,23,2.50,GEL
+rustavi,BUS,,24,2.50,GEL

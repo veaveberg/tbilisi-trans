@@ -8,6 +8,7 @@ import { getStaticRouteDetails } from './api.js';
 import { db } from './db.js';
 import { simplifyNumber, shouldShowRoute } from './settings.js';
 import { loadIntervalData, getIntervalDescription } from './intervals.js';
+import { formatRouteFare, loadFareData } from './fares.js';
 import { getCurrentStopNamesLanguage, t } from './i18n.ts';
 
 // --- Module State ---
@@ -245,6 +246,7 @@ export function initArrivals(dependencies) {
     deps = { ...deps, ...dependencies };
     // Load interval pattern data for schedule descriptions
     loadIntervalData().catch(e => console.warn('Failed to load interval data:', e));
+    loadFareData();
 
     // Listen for static data preload to refresh arrivals (fixes direction logic on first load)
     window.addEventListener('static-routes-loaded', () => {
@@ -849,19 +851,14 @@ export function shouldShowLateDepotWarning(etaMinutes, lastScheduledMinutes, fir
 
     let currentMinutes = getCurrentTbilisiMinutes();
 
-    // If the schedule extends past midnight, compare against the same extended-day frame.
-    if (lastScheduled >= 24 * 60 && currentMinutes < 1 * 60) {
-        currentMinutes += 24 * 60;
-    }
-
-    // For ordinary schedules that end before midnight, very-late live ETAs after midnight
-    // should still be compared against the previous service day, not the new day's 00:xx clock.
-    // Otherwise a suspicious 38' bus at 00:10 looks like 00:48 and stops being flagged on refresh.
+    // A live vehicle that remains after the final trip belongs to the
+    // service day that just ended, even once the wall clock has passed 1 a.m.
+    // Keep that extended-day frame until this route's first trip starts. This
+    // lets a 2–4 a.m. ETA still be compared to the previous evening's final
+    // scheduled arrival instead of looking like an early-morning ETA.
     if (
-        lastScheduled < 24 * 60 &&
         Number.isFinite(firstScheduled) &&
-        currentMinutes < 1 * 60 &&
-        currentMinutes + eta < firstScheduled
+        (firstScheduled >= 24 * 60 || currentMinutes < firstScheduled)
     ) {
         currentMinutes += 24 * 60;
     }
@@ -2391,7 +2388,6 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
 
         directions.forEach((direction) => {
             const key = `${route.id}_${direction.directionIndex}`;
-            if (representedKeys.has(key)) return;
             if (sharedLiveGroup) {
                 const primaryArrival = sharedLiveGroup.arrivals[0];
                 renderList.push({
@@ -2409,6 +2405,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 representedKeys.add(key);
                 return;
             }
+            if (representedKeys.has(key)) return;
             const nextArrival = direction.schedule?.nextArrivals?.[0];
             const minutes = nextArrival ? getMinutesFromNow(nextArrival.time) : 99999;
             renderList.push({
@@ -2551,7 +2548,10 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                     color: deps.getRouteDisplayColor(realRoute),
                     directionIndex: dirIdx,
                     headsign: loopDirection?.headsign || headsign,
-                    needsFetch: true,
+                    // Once a card already has its schedule metadata, retain it
+                    // until static data is explicitly invalidated. Re-fetching
+                    // it on each live-data poll needlessly rewrites the card.
+                    needsFetch: !existingEl?.querySelector('.arrival-card-bottom')?.dataset.baseHtml,
                     loopSchedule: loopDirection?.schedule || null,
                     timeDisplay: existingTimeDisplay || undefined,
                     key: key
@@ -3046,7 +3046,7 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 const scheduleRequest = item.loopSchedule
                     ? Promise.resolve(item.loopSchedule)
                     : getV3Schedule(item.data.shortName, stopId, item.data.id, explicitSuffix);
-                scheduleRequest.then(res => {
+                Promise.all([scheduleRequest, loadFareData()]).then(([res]) => {
                     if (!isCardRenderCurrent(stableId, stopId, renderVersion)) return;
                     if (!res) return;
                     const currentDiv = document.getElementById(stableId);
@@ -3090,6 +3090,15 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                             if (intervalDesc) {
                                 bottomHTML += `,<span class="interval-desc">&nbsp;${intervalDesc}</span>`;
                             }
+                        }
+
+                        // Live arrivals do not always carry a source marker. Resolve
+                        // against this stop before looking up the fare so overlapping
+                        // Tbilisi/Rustavi route IDs cannot select the wrong network.
+                        const fareRoute = resolveRouteForStop(displayRoute || item.data, stopId, { preferBus: true }) || displayRoute || item.data;
+                        const fare = formatRouteFare(fareRoute);
+                        if (fare) {
+                            bottomHTML = `<span class="route-fare">${fare}</span>, ${bottomHTML}`;
                         }
 
                         currentBottomEl.dataset.baseHtml = bottomHTML;

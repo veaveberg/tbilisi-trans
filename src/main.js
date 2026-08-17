@@ -28,10 +28,11 @@ import { setupEditTools, getEditState, setEditPickMode } from './dev-tools.js';
 import * as arrivals from './arrivals.js';
 import { arrivalsController } from './arrivals-controller.js';
 import { getIntervalDescription, invalidateIntervalDataCache, loadIntervalData } from './intervals.js';
+import { invalidateFareDataCache, loadFareData } from './fares.js';
 import { initMinibusSegmentsEditor, loadMinibusSegmentEditsFromFile } from './minibus-segments-editor.js';
 import { StreetScreenController } from './street-screen.js';
 import { applyDirectionsUrlState, initDirectionsUI, isDirectionsContextActive, redrawActiveDirections, setPoint } from './directions.js';
-import { flyToPointInView, beginMapCameraIntent, invalidateMapCameraIntent, isCurrentMapCameraIntent, getBandPadding } from './map-camera.js';
+import { flyToPointInView, beginMapCameraIntent, invalidateMapCameraIntent, isCurrentMapCameraIntent, getBandPadding, getCameraOrientation } from './map-camera.js';
 
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
@@ -1430,6 +1431,7 @@ async function reloadActiveTransitData(reason = 'manual', options = {}) {
         if (options.invalidateStaticCaches) {
             api.invalidateStaticTransitDataCaches();
             invalidateIntervalDataCache();
+            invalidateFareDataCache();
             arrivals.invalidateArrivalBottomInfo();
             cachedStopsConfig = null;
             window.stopsConfig = null;
@@ -1437,6 +1439,7 @@ async function reloadActiveTransitData(reason = 'manual', options = {}) {
             window.routesConfig = routesConfig;
             await loadRoutesConfig();
             await loadIntervalData();
+            await loadFareData();
         }
 
         const [stops, routes] = await Promise.all([
@@ -2032,7 +2035,8 @@ async function loadMinibusSegments() {
                         },
                         maxZoom: 16,
                         duration: 900,
-                        retainPadding: false
+                        retainPadding: false,
+                        ...getCameraOrientation()
                     });
                 }
 
@@ -2413,11 +2417,13 @@ function fitFilterBounds(originStop, targetIds) {
                         left: 50,
                         right: 50
                     },
-                    maxZoom: 16
+                    maxZoom: 16,
+                    ...getCameraOrientation()
                 });
                 if (camera) {
                     map.flyTo({
                         ...camera,
+                        ...getCameraOrientation(),
                         duration: 1200
                     });
                 }
@@ -4986,7 +4992,10 @@ async function updateRouteView(route, options = {}) {
                             padding: getBandPadding({ bottomAnchorSelector: '#route-info' }),
                             maxZoom: 15,
                             duration: 1200,
-                            retainPadding: false
+                            retainPadding: false,
+                            // Whole-route overviews intentionally flatten the
+                            // map, while preserving its current rotation.
+                            ...getCameraOrientation(map, { resetPitch: true })
                         });
                         window._routeBoundsFit = true;
                     } else if (options.centerOnStop && options.centerOnStop.lat && options.centerOnStop.lon && !options.preserveBounds) {
@@ -5728,7 +5737,6 @@ document.getElementById('close-panel').addEventListener('click', (e) => {
     } finally {
         clearHistory(); // Clear history on close
         Router.update(null, false, [], getMapHash());
-        map.easeTo({ pitch: 0, duration: 250, essential: true });
     }
 });
 
@@ -5748,7 +5756,6 @@ document.getElementById('close-route-info').addEventListener('click', (e) => {
 
     // Also reset URL when closing route info
     Router.update(null, false, [], getMapHash());
-    map.easeTo({ pitch: 0, duration: 250, essential: true });
 });
 
 function clearRoute() {

@@ -250,6 +250,21 @@ function buildTickerItems(arrivals, language) {
     }).join('');
 }
 
+function getArrivalsModelSignature(stop, arrivals) {
+    return JSON.stringify({
+        stopId: String(stop?.id || ''),
+        arrivals: arrivals.map((arrival) => ({
+            routeId: arrival.routeId || '',
+            routeNumber: arrival.routeNumber || '',
+            directionIndex: arrival.directionIndex ?? 0,
+            destinationEn: arrival.destinationEn || '',
+            destinationKa: arrival.destinationKa || '',
+            minutes: arrival.minutes ?? null,
+            isScheduled: arrival.isScheduled === true
+        }))
+    });
+}
+
 export class StreetScreenController {
     constructor(options) {
         this.options = options;
@@ -268,6 +283,7 @@ export class StreetScreenController {
         this.lastWeatherAt = 0;
         this.statusMode = 'temp';
         this.currentModel = null;
+        this.modelSignature = null;
         this.syncToken = 0;
         this.languageTimer = null;
         this.modelTimer = null;
@@ -393,6 +409,9 @@ export class StreetScreenController {
         if (!this.overlayEl) return;
         this.language = getCurrentStopNamesLanguage() === 'ka' ? 'ka' : 'en';
         this.statusMode = 'temp';
+        // syncModel normally skips identical content. Opening starts from the
+        // loading state, so force it to paint the existing model again.
+        this.modelSignature = null;
         this.isOpen = true;
         this.overlayEl.classList.remove('hidden');
         this.overlayEl.setAttribute('aria-hidden', 'false');
@@ -529,18 +548,28 @@ export class StreetScreenController {
             return;
         }
         if (!stop || arrivals.length === 0) {
-            this.currentModel = {
+            const nextModel = {
                 stop,
                 arrivals: []
             };
+            const nextSignature = getArrivalsModelSignature(stop, []);
+            if (nextSignature === this.modelSignature) return;
+
+            this.currentModel = nextModel;
+            this.modelSignature = nextSignature;
             if (syncToken === this.syncToken) this.render();
             return;
         }
 
-        this.currentModel = {
+        const nextModel = {
             stop,
             arrivals
         };
+        const nextSignature = getArrivalsModelSignature(stop, arrivals);
+        if (nextSignature === this.modelSignature) return;
+
+        this.currentModel = nextModel;
+        this.modelSignature = nextSignature;
 
         if (syncToken === this.syncToken) {
             this.render();

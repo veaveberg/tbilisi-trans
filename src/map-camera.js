@@ -16,6 +16,16 @@ export function isCurrentMapCameraIntent(intentId) {
     return intentId === activeCameraIntentId;
 }
 
+// Bounds-based camera calculations default to a north-up, flat view. Capture
+// the current orientation before calculating a new view so routine map moves
+// do not unexpectedly change how the user is looking at the map.
+export function getCameraOrientation(mapInstance = map, { resetPitch = false } = {}) {
+    return {
+        bearing: mapInstance.getBearing(),
+        pitch: resetPitch ? 0 : mapInstance.getPitch()
+    };
+}
+
 function getElementBottom(selector) {
     if (!selector) return null;
     const element = document.querySelector(selector);
@@ -132,6 +142,7 @@ export function flyToPointInView(center, options = {}) {
     } = options;
     const intentId = beginMapCameraIntent();
     const target = mapboxgl.LngLat.convert(center);
+    const orientation = getCameraOrientation();
     const padding = getBandPadding({
         topAnchorSelector,
         bottomAnchorSelector
@@ -145,11 +156,13 @@ export function flyToPointInView(center, options = {}) {
     if (currentZoom >= 16 && zoom >= 16) {
         const camera = map.cameraForBounds(target.toBounds(radiusMeters), {
             padding,
-            maxZoom: zoom
+            maxZoom: zoom,
+            ...orientation
         });
         map.easeTo({
             ...camera,
             zoom: Math.min(zoom, 17),
+            ...orientation,
             duration,
             essential
         });
@@ -161,6 +174,7 @@ export function flyToPointInView(center, options = {}) {
         maxZoom: zoom,
         duration,
         retainPadding: false,
+        ...orientation,
         essential
     });
 

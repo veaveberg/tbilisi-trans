@@ -7,7 +7,7 @@ import { getCurrentMapLanguage, onLanguageChange, t } from './i18n.ts';
 import { setSheetState, setPanelState } from './panel-manager.js';
 import { setPoint, openDirections, toggleDirections, clearPoint } from './directions.js';
 import { getLastUserCoords } from './geolocation.js';
-import { flyToPointInView, getBandPadding, invalidateMapCameraIntent } from './map-camera.js';
+import { flyToPointInView, getBandPadding, getCameraOrientation, invalidateMapCameraIntent } from './map-camera.js';
 import { arrivalsController } from './arrivals-controller.js';
 
 let suggestionMarkers = [];
@@ -713,11 +713,13 @@ function selectPlace(place) {
 
     // Use fitBounds for streets (extent available), flyTo for point results
     if (place.extent) {
+        const orientation = getCameraOrientation();
         map.fitBounds(place.extent, {
             padding: getBandPadding({ bottomAnchorSelector: '#info-panel' }),
             maxZoom: 17,
             duration: 900,
-            retainPadding: false
+            retainPadding: false,
+            ...orientation
         });
     } else {
         flyToPointInView(coords, {

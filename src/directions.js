@@ -10,7 +10,7 @@ import { getSegmentForStop, generateSegmentGeometry, generateConnectionGeometry,
 import { setMapFocus } from './map-interactions.js';
 import { getLastUserCoords, stopTracking } from './geolocation.js';
 import { fetchArrivals, getArrivalMinutesValue, formatArrivalDisplayValue, formatScheduledTime, shouldShowLateDepotWarning, getV3Schedule, isArrivalsLiveDataStale } from './arrivals.js';
-import { getBandPadding } from './map-camera.js';
+import { getBandPadding, getCameraOrientation } from './map-camera.js';
 
 let metroSegments = null;
 let metroMidpoints = null;
@@ -661,7 +661,10 @@ function fitDirectionsRoute(featureCollection) {
         padding: panelPadding,
         maxZoom: 15,
         duration: 900,
-        retainPadding: false
+        retainPadding: false,
+        // Direction overviews intentionally return to a flat map, while
+        // keeping the user's current rotation.
+        ...getCameraOrientation(map, { resetPitch: true })
     });
 }
 

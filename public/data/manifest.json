@@ -1,8 +1,8 @@
 {
   "manifestVersion": 1,
-  "generatedAt": "2026-07-30T11:25:37.744Z",
-  "baseDatasetVersion": "260730-1525",
-  "correctionsVersion": "260730-1525",
+  "generatedAt": "2026-08-17T21:29:17.198Z",
+  "baseDatasetVersion": "260818-0129",
+  "correctionsVersion": "260818-0129",
   "minAppVersion": "26.5.3",
   "files": {
     "tbilisi_stops_en.json": {
@@ -140,6 +140,12 @@
       "sha256": "d19adc6cbdf760e0a9a53805e038259f5917fa7e7acb51df411df8ba97117920",
       "size": 467480,
       "url": "stops_overrides.csv"
+    },
+    "fares.csv": {
+      "category": "corrections",
+      "sha256": "a3633186a2b0dfd036f8fc0f861629de9b2fbe664709d7281b1c15479ea72fc5",
+      "size": 204,
+      "url": "fares.csv"
     },
     "route_intervals.json": {
       "category": "base",
