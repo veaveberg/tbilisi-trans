@@ -20,21 +20,30 @@ export default async function handler(req, res) {
     if (url.pathname.startsWith('/rustavi-proxy')) {
         targetBase = 'https://rustavi-transit.azrycloud.com';
         targetPath = url.pathname.replace('/rustavi-proxy', '');
+    } else if (url.pathname.startsWith('/kutaisi-proxy')) {
+        targetBase = 'https://pis.tbc-pts.azrycloud.com';
+        targetPath = url.pathname.replace('/kutaisi-proxy', '');
+    } else if (url.pathname.startsWith('/batumi-proxy')) {
+        targetBase = 'https://thetamaps.site:54321';
+        targetPath = url.pathname.replace('/batumi-proxy', '');
     }
 
     const targetUrl = targetBase + targetPath + url.search;
 
     try {
+        const headers = {
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': targetBase + '/',
+            'Origin': targetBase
+        };
+        if (!targetBase.includes('thetamaps.site')) {
+            headers['x-api-key'] = 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f';
+        }
         const response = await fetch(targetUrl, {
             method: req.method,
-            headers: {
-                'Accept': 'application/json, text/plain, */*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': targetBase + '/',
-                'Origin': targetBase,
-                'x-api-key': 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f',
-            },
+            headers,
         });
 
         const data = await response.text();

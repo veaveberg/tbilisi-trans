@@ -390,7 +390,9 @@ export default defineConfig({
                         // Real-time data: Network Only (do not cache)
                         urlPattern: ({ url }) =>
                             url.pathname.includes('/arrival-times') ||
-                            url.pathname.includes('/positions'),
+                            url.pathname.includes('/positions') ||
+                            url.pathname.includes('/getLiveData') ||
+                            url.pathname.includes('/getBusLocsOnRoute'),
                         handler: 'NetworkOnly',
                         options: {
                             cacheName: 'api-realtime-v2',
@@ -403,7 +405,7 @@ export default defineConfig({
                     {
                         // Static/Structural API data: Cache aggressively
                         urlPattern: ({ url }) =>
-                            url.pathname.startsWith('/pis-gateway/api/') &&
+                            url.pathname.includes('/pis-gateway/api/') &&
                             !url.pathname.includes('/arrival-times') &&
                             !url.pathname.includes('/positions'),
                         handler: 'StaleWhileRevalidate',
@@ -526,6 +528,50 @@ export default defineConfig({
                 configure: (proxy, _options) => {
                     proxy.on('proxyReq', (proxyReq, req, _res) => {
                         proxyReq.removeHeader('cookie');
+                        proxyReq.removeHeader('sec-ch-ua');
+                        proxyReq.removeHeader('sec-ch-ua-mobile');
+                        proxyReq.removeHeader('sec-ch-ua-platform');
+                    });
+                }
+            },
+            '/kutaisi-proxy': {
+                target: 'https://pis.tbc-pts.azrycloud.com',
+                changeOrigin: true,
+                secure: false,
+                rewrite: (path) => path.replace(/^\/kutaisi-proxy/, ''),
+                headers: {
+                    'Referer': 'https://pis.tbc-pts.azrycloud.com/',
+                    'Origin': 'https://pis.tbc-pts.azrycloud.com',
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'x-api-key': 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f',
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                },
+                xfwd: false,
+                configure: (proxy) => {
+                    proxy.on('proxyReq', (proxyReq) => {
+                        proxyReq.removeHeader('cookie');
+                        proxyReq.removeHeader('sec-ch-ua');
+                        proxyReq.removeHeader('sec-ch-ua-mobile');
+                        proxyReq.removeHeader('sec-ch-ua-platform');
+                    });
+                }
+            },
+            '/batumi-proxy': {
+                target: 'https://thetamaps.site:54321',
+                changeOrigin: true,
+                secure: true,
+                rewrite: (path) => path.replace(/^\/batumi-proxy/, ''),
+                headers: {
+                    'Referer': 'https://thetamaps.site:54321/',
+                    'Origin': 'https://thetamaps.site:54321',
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'en-US,en;q=0.9'
+                },
+                configure: (proxy) => {
+                    proxy.on('proxyReq', (proxyReq) => {
+                        proxyReq.removeHeader('cookie');
+                        proxyReq.removeHeader('x-api-key');
                         proxyReq.removeHeader('sec-ch-ua');
                         proxyReq.removeHeader('sec-ch-ua-mobile');
                         proxyReq.removeHeader('sec-ch-ua-platform');

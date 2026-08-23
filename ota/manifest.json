@@ -1,8 +1,8 @@
 {
   "manifestVersion": 1,
-  "generatedAt": "2026-08-17T21:29:17.198Z",
-  "baseDatasetVersion": "260818-0129",
-  "correctionsVersion": "260818-0129",
+  "generatedAt": "2026-08-23T11:38:58.578Z",
+  "baseDatasetVersion": "260823-1538",
+  "correctionsVersion": "260823-1538",
   "minAppVersion": "26.5.3",
   "files": {
     "tbilisi_stops_en.json": {
@@ -129,6 +129,130 @@
       "url": "files/rustavi_schedules.json",
       "source": "rustavi"
     },
+    "kutaisi_stops_en.json": {
+      "category": "base",
+      "sha256": "238c1a45a8dd3844d3cab010b236f13fda49e8a8271f04c42a6033a693f36c36",
+      "size": 42625,
+      "url": "files/kutaisi_stops_en.json",
+      "source": "kutaisi",
+      "locale": "en"
+    },
+    "kutaisi_stops_ka.json": {
+      "category": "base",
+      "sha256": "7cbd696014db235b539411deff924bb4d78996f8d6db1d3e48378f7da73bba8e",
+      "size": 50070,
+      "url": "files/kutaisi_stops_ka.json",
+      "source": "kutaisi",
+      "locale": "ka"
+    },
+    "kutaisi_routes_en.json": {
+      "category": "base",
+      "sha256": "537014ca3223fd6824717377c1a980fd92de9d03b8a8d027560187cb67e0fb6d",
+      "size": 8901,
+      "url": "files/kutaisi_routes_en.json",
+      "source": "kutaisi",
+      "locale": "en"
+    },
+    "kutaisi_routes_ka.json": {
+      "category": "base",
+      "sha256": "537014ca3223fd6824717377c1a980fd92de9d03b8a8d027560187cb67e0fb6d",
+      "size": 8901,
+      "url": "files/kutaisi_routes_ka.json",
+      "source": "kutaisi",
+      "locale": "ka"
+    },
+    "kutaisi_routes_details_en.json": {
+      "category": "base",
+      "sha256": "84d16dd271e0b476565b1884b25ec485669723d41c94a1361e8d09eaf0a2016a",
+      "size": 126851,
+      "url": "files/kutaisi_routes_details_en.json",
+      "source": "kutaisi",
+      "locale": "en"
+    },
+    "kutaisi_routes_details_ka.json": {
+      "category": "base",
+      "sha256": "6795f0938f540ae9e91851db97b02c3cced32ac35dc45ad3c079349580f0c8ac",
+      "size": 143981,
+      "url": "files/kutaisi_routes_details_ka.json",
+      "source": "kutaisi",
+      "locale": "ka"
+    },
+    "kutaisi_polylines.json": {
+      "category": "base",
+      "sha256": "850ec9f877642e9c1d2654bf2ec2e4d7ec23e93e422e2187fd3d9490a015d68a",
+      "size": 24665,
+      "url": "files/kutaisi_polylines.json",
+      "source": "kutaisi"
+    },
+    "kutaisi_schedules.json": {
+      "category": "base",
+      "sha256": "d0dbb17e0bf1390899011f369e92b57aa0d2cabf2ede885da4626a90a5be34f1",
+      "size": 332218,
+      "url": "files/kutaisi_schedules.json",
+      "source": "kutaisi"
+    },
+    "batumi_stops_en.json": {
+      "category": "base",
+      "sha256": "20d97d570ed8813ad2c2cad71893124bf34cf8e54cfb4425572449c1a96d8452",
+      "size": 84406,
+      "url": "files/batumi_stops_en.json",
+      "source": "batumi",
+      "locale": "en"
+    },
+    "batumi_stops_ka.json": {
+      "category": "base",
+      "sha256": "058abac2332d6de1a1f77b5540e474b61b248775463e619b97cb127b4a0d9b16",
+      "size": 97176,
+      "url": "files/batumi_stops_ka.json",
+      "source": "batumi",
+      "locale": "ka"
+    },
+    "batumi_routes_en.json": {
+      "category": "base",
+      "sha256": "867bffc17edc3ced5873b241f19f6e93ab68cce646721b3e1bfa4461d33e37d2",
+      "size": 56054,
+      "url": "files/batumi_routes_en.json",
+      "source": "batumi",
+      "locale": "en"
+    },
+    "batumi_routes_ka.json": {
+      "category": "base",
+      "sha256": "28600992d6cedb7126e5a0f46dac8e93839b7f41e5e50fab7317b41454d70fac",
+      "size": 56879,
+      "url": "files/batumi_routes_ka.json",
+      "source": "batumi",
+      "locale": "ka"
+    },
+    "batumi_routes_details_en.json": {
+      "category": "base",
+      "sha256": "71016b5bd8ef774caa428fb348a89d97b0860f8bf290810c9af3923e136c4f19",
+      "size": 680920,
+      "url": "files/batumi_routes_details_en.json",
+      "source": "batumi",
+      "locale": "en"
+    },
+    "batumi_routes_details_ka.json": {
+      "category": "base",
+      "sha256": "3aea9d82d76085a6ae89f61bf37edc18837ae9da6856c4c08fa62caccbf1626d",
+      "size": 768544,
+      "url": "files/batumi_routes_details_ka.json",
+      "source": "batumi",
+      "locale": "ka"
+    },
+    "batumi_polylines.json": {
+      "category": "base",
+      "sha256": "174dbd4840e481f8fc40401388f70d4ceb1fa8a53269187301bcfd881737eca4",
+      "size": 377669,
+      "url": "files/batumi_polylines.json",
+      "source": "batumi"
+    },
+    "batumi_schedules.json": {
+      "category": "base",
+      "sha256": "ee562b09aeec5194c7a02e5ed20ec5b816037ff50fa825f486448b52da587f75",
+      "size": 746490,
+      "url": "files/batumi_schedules.json",
+      "source": "batumi"
+    },
     "routes_overrides.csv": {
       "category": "corrections",
       "sha256": "82e9cd24b9e358678d11897be6a54414fe88a05bcb71275b46281046a8d32ec6",
@@ -149,8 +273,8 @@
     },
     "route_intervals.json": {
       "category": "base",
-      "sha256": "9dc94f5473ced130f4c2d00fc44789bee9891c0c01e8a1004d6170538f17d397",
-      "size": 165503,
+      "sha256": "1bb1cffd0fc4002fc77221e5b00359f6ececddf232081ffc98086fce3498187b",
+      "size": 184723,
       "url": "files/route_intervals.json"
     },
     "long_segments.geojson": {

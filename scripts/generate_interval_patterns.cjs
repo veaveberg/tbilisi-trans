@@ -15,6 +15,18 @@ const sources = [
         name: 'rustavi',
         schedules: 'rustavi_schedules.json',
         routes: 'rustavi_routes_en.json'
+    },
+    {
+        name: 'kutaisi',
+        appPrefix: 'k',
+        schedules: 'kutaisi_schedules.json',
+        routes: 'kutaisi_routes_en.json'
+    },
+    {
+        name: 'batumi',
+        appPrefix: 'b',
+        schedules: 'batumi_schedules.json',
+        routes: 'batumi_routes_en.json'
     }
 ];
 
@@ -195,7 +207,10 @@ try {
             if (!analysis) return;
 
             // Use full route ID as key
-            allPatterns[route.id] = {
+            const outputRouteId = source.appPrefix
+                ? `${source.appPrefix}${String(route.id).replace(/^\d+:/, '')}`
+                : route.id;
+            allPatterns[outputRouteId] = {
                 shortName: route.shortName,
                 longName: route.longName,
                 mode: route.mode,

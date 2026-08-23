@@ -59,5 +59,12 @@ export async function getOtaDataFileText(filename) {
 export async function getOtaDataFileJson(filename) {
     const text = await getOtaDataFileText(filename);
     if (!text) return null;
-    return JSON.parse(text);
+    try {
+        return JSON.parse(text);
+    } catch (err) {
+        // An older/incomplete OTA installation must never prevent the bundled
+        // dataset from loading. Treat non-JSON OTA content as a cache miss.
+        console.warn(`[OTA] Ignoring invalid JSON for ${filename}`);
+        return null;
+    }
 }

@@ -22,11 +22,19 @@ async function fetchWithRetry(url, options, retries = 3) {
     }
 }
 
-const SOURCE = {
-    id: 'rustavi',
-    prefix: 'rustavi',
-    apiBase: 'https://rustavi-transit.azrycloud.com/pis-gateway/api/v2'
+const SOURCES = {
+    rustavi: {
+        id: 'rustavi',
+        apiBase: 'https://rustavi-transit.azrycloud.com/pis-gateway/api/v2'
+    },
+    kutaisi: {
+        id: 'kutaisi',
+        apiBase: 'https://pis.tbc-pts.azrycloud.com/pis-gateway/api/v2'
+    }
 };
+const SOURCE_ID = process.env.TRANSIT_PREFETCH_SOURCE || 'rustavi';
+const SOURCE = SOURCES[SOURCE_ID];
+if (!SOURCE) throw new Error(`Unsupported Azry source: ${SOURCE_ID}`);
 
 const API_KEY = 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f';
 const OUTPUT_DIR = path.join(__dirname, '../public/data');
@@ -194,17 +202,73 @@ async function processSource(source) {
         }
     }
 
-    // 3. Save Files
-    for (const locale of LOCALES) {
-        fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_stops_${locale}.json`), JSON.stringify(dataByLocale[locale].stops));
-        fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_routes_${locale}.json`), JSON.stringify(dataByLocale[locale].routes));
-        fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_routes_details_${locale}.json`), JSON.stringify(dataByLocale[locale].details));
-        console.log(`Saved ${locale} files for ${source.id}`);
-    }
+    validateDataset(source, dataByLocale, schedules, polylines);
 
-    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_schedules.json`), JSON.stringify(schedules));
-    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_polylines.json`), JSON.stringify(polylines));
-    console.log(`Saved detailed data for ${source.id}`);
+    // 3. Publish the complete validated dataset from a staging directory.
+    const stagingDir = fs.mkdtempSync(path.join(OUTPUT_DIR, `.${source.id}-staging-`));
+    const filenames = [];
+    for (const locale of LOCALES) {
+        const entries = [
+            [`${source.id}_stops_${locale}.json`, dataByLocale[locale].stops],
+            [`${source.id}_routes_${locale}.json`, dataByLocale[locale].routes],
+            [`${source.id}_routes_details_${locale}.json`, dataByLocale[locale].details]
+        ];
+        for (const [filename, value] of entries) {
+            fs.writeFileSync(path.join(stagingDir, filename), JSON.stringify(value));
+            filenames.push(filename);
+        }
+    }
+    fs.writeFileSync(path.join(stagingDir, `${source.id}_schedules.json`), JSON.stringify(schedules));
+    fs.writeFileSync(path.join(stagingDir, `${source.id}_polylines.json`), JSON.stringify(polylines));
+    filenames.push(`${source.id}_schedules.json`, `${source.id}_polylines.json`);
+
+    for (const filename of filenames) {
+        JSON.parse(fs.readFileSync(path.join(stagingDir, filename), 'utf8'));
+    }
+    for (const filename of filenames) {
+        fs.renameSync(path.join(stagingDir, filename), path.join(OUTPUT_DIR, filename));
+    }
+    fs.rmdirSync(stagingDir);
+    console.log(`Published ${filenames.length} validated files for ${source.id}`);
 }
 
-processSource(SOURCE).catch(console.error);
+function validateDataset(source, dataByLocale, schedules, polylines) {
+    const enStops = dataByLocale.en.stops;
+    const enRoutes = dataByLocale.en.routes;
+    if (!Array.isArray(enStops) || enStops.length === 0) throw new Error('Validation failed: no English stops');
+    if (!Array.isArray(enRoutes) || enRoutes.length === 0) throw new Error('Validation failed: no English routes');
+
+    const expectedRouteIds = new Set(enRoutes.map(route => route.id));
+    for (const locale of LOCALES) {
+        const localeRouteIds = new Set(dataByLocale[locale].routes.map(route => route.id));
+        if (localeRouteIds.size !== expectedRouteIds.size || [...expectedRouteIds].some(id => !localeRouteIds.has(id))) {
+            throw new Error(`Validation failed: ${locale} route IDs differ from English`);
+        }
+        const detailIds = Object.keys(dataByLocale[locale].details);
+        if (detailIds.length !== expectedRouteIds.size) {
+            throw new Error(`Validation failed: ${locale} has ${detailIds.length}/${expectedRouteIds.size} route details`);
+        }
+
+        const stopIds = new Set(dataByLocale[locale].stops.map(stop => stop.id));
+        for (const [routeId, details] of Object.entries(dataByLocale[locale].details)) {
+            for (const entry of details._stopsOfPatterns || []) {
+                const stopId = entry?.stop?.id;
+                if (stopId && !stopIds.has(stopId)) {
+                    throw new Error(`Validation failed: ${locale} route ${routeId} references missing stop ${stopId}`);
+                }
+            }
+        }
+    }
+
+    if (source.id === 'kutaisi') {
+        const invalidId = [...enStops, ...enRoutes].find(item => !String(item.id || '').startsWith('1:'));
+        if (invalidId) throw new Error(`Validation failed: unexpected Kutaisi ID ${invalidId.id}`);
+    }
+    if (Object.keys(schedules).length === 0) throw new Error('Validation failed: no schedules');
+    if (Object.keys(polylines).length === 0) throw new Error('Validation failed: no polylines');
+}
+
+processSource(SOURCE).catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+});

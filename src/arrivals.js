@@ -160,7 +160,7 @@ function resolveRouteForStop(routeLike, stopId, options = {}) {
     // tagged with its physical stop, so use that source before comparing the
     // normalized IDs; otherwise a Rustavi live arrival can be attached to a
     // similarly named Tbilisi route and lose its real-time data on refresh.
-    const sourceId = String(stopId || '').startsWith('r') ? 'rustavi' : 'tbilisi';
+    const sourceId = api.getSourceForId(stopId)?.id || 'tbilisi';
     const sourceRoutes = allRoutes.filter(route => route?._source === sourceId);
     const candidates = sourceRoutes.length > 0 ? sourceRoutes : allRoutes;
 
@@ -1064,7 +1064,7 @@ export async function fetchV3Routes() {
 /**
  * Parse schedule response into next arrival times
  */
-export function parseSchedule(schedule, potentialIds, patternSuffix = null, routeShortName = null) {
+export function parseSchedule(schedule, potentialIds, patternSuffix = null, routeShortName = null, routeId = null) {
     if (!schedule || !Array.isArray(schedule)) {
         if (schedule !== null && schedule !== undefined) {
             console.warn(`[V3 Debug] Invalid schedule format`, schedule);
@@ -1113,14 +1113,9 @@ export function parseSchedule(schedule, potentialIds, patternSuffix = null, rout
                 // Matching logic
                 return potentialIds.some(pid => {
                     const pIdStr = String(pid);
-                    const normalize = (id) => String(id).replace(/^\d+:/, '').replace(/^[rR]/, '');
-                    const pIdNorm = normalize(pIdStr);
-                    const sIdNorm = normalize(sId);
                     const sCode = String(s.code || '');
-                    if (pIdStr === sId) return true;
-                    if (pIdNorm === sIdNorm) return true;
-                    if (sCode && normalize(sCode) === pIdNorm) return true;
-                    return false;
+                    return scheduleStopIdMatches(sId, pIdStr, routeId) ||
+                        (sCode && scheduleStopIdMatches(sCode, pIdStr, routeId));
                 });
             });
 
@@ -1281,7 +1276,7 @@ export async function getV3Schedule(routeShortName, stopId, explicitRouteId = nu
     }
 
     const { schedule, patternSuffix } = result;
-    return parseSchedule(schedule, stopIds, patternSuffix, routeShortName);
+    return parseSchedule(schedule, stopIds, patternSuffix, routeShortName, routeId);
 }
 
 function isLoopRoute(route) {
@@ -1289,11 +1284,11 @@ function isLoopRoute(route) {
     if (value === true || value === 1 || String(value).toLowerCase() === 'true') return true;
     const pattern = getStaticRouteDetails(route?.id)?.patterns?.[0];
     return !!(pattern?.firstStop?.id && pattern?.lastStop?.id &&
-        stopIdsMatch(pattern.firstStop.id, pattern.lastStop.id));
+        stopIdsMatch(pattern.firstStop.id, pattern.lastStop.id, route?.id));
 }
 
-function stopIdsMatch(first, second) {
-    return String(first) === String(second) || normalizeRouteId(first) === normalizeRouteId(second);
+function stopIdsMatch(first, second, routeId = null) {
+    return scheduleStopIdMatches(first, second, routeId);
 }
 
 function getLoopScheduleDirectionsKey(routeId, stopIds) {
@@ -1328,7 +1323,7 @@ async function loadLoopScheduleDirections(route, stopIds) {
         const matchingIndexesByStop = new Map();
         stops.forEach((stop, index) => {
             const scheduleStopId = stop?.id || stop?.code;
-            if (!scheduleStopId || !stopIds.some(stopId => stopIdsMatch(scheduleStopId, stopId))) return;
+            if (!scheduleStopId || !stopIds.some(stopId => stopIdsMatch(scheduleStopId, stopId, route.id))) return;
             const key = normalizeRouteId(scheduleStopId);
             const indexes = matchingIndexesByStop.get(key) || [];
             indexes.push(index);
@@ -1350,7 +1345,7 @@ async function loadLoopScheduleDirections(route, stopIds) {
                 ...entry,
                 stops: [entry.stops?.[matchingIndexes[directionIndex]], { id: '__loop_schedule_end__' }]
             }));
-            const parsed = parseSchedule(occurrenceSchedule, stopIds, suffix, route.shortName);
+            const parsed = parseSchedule(occurrenceSchedule, stopIds, suffix, route.shortName, route.id);
             const fallbackHeadsign = directionIndex === 0
                 ? route.longName
                 : details?.patterns?.[0]?.firstStop?.name || route.longName;
@@ -1449,7 +1444,18 @@ function selectScheduleForTbilisiToday(schedule, info = getTbilisiDayInfo()) {
     return first ? { entry: first, reason: 'first-available-fallback', label: formatDayLabel(first.fromDay, first.toDay) } : null;
 }
 
-function getScheduleStopsForDirection(scheduleEntry, stopIds, explicitSuffix = null) {
+function scheduleStopIdMatches(scheduleStopId, candidateId, routeId = null) {
+    const scheduleValue = String(scheduleStopId || '');
+    const candidateValue = String(candidateId || '');
+    if (!scheduleValue || !candidateValue) return false;
+    if (scheduleValue === candidateValue) return true;
+
+    const source = api.getSourceForId(routeId || candidateValue);
+    if (!source) return normalizeRouteId(scheduleValue) === normalizeRouteId(candidateValue);
+    return api.processId(scheduleValue, source) === api.processId(candidateValue, source);
+}
+
+function getScheduleStopsForDirection(scheduleEntry, stopIds, explicitSuffix = null, routeId = null) {
     const stops = Array.isArray(scheduleEntry?.stops) ? scheduleEntry.stops : [];
     const matchedStops = stops.filter((stop, index) => {
         if (index === stops.length - 1) return false;
@@ -1457,9 +1463,8 @@ function getScheduleStopsForDirection(scheduleEntry, stopIds, explicitSuffix = n
         const stopCode = String(stop?.code || '');
         return stopIds.some(candidateId => {
             const candidate = String(candidateId);
-            return candidate === stopId ||
-                normalizeRouteId(candidate) === normalizeRouteId(stopId) ||
-                (stopCode && normalizeRouteId(stopCode) === normalizeRouteId(candidate));
+            return scheduleStopIdMatches(stopId, candidate, routeId) ||
+                (stopCode && scheduleStopIdMatches(stopCode, candidate, routeId));
         });
     });
 
@@ -1548,7 +1553,7 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
         // Calculate summary (First - Last, Interval)
         let summaryTimes = '';
         let summaryInterval = '';
-        const matchedStops = getScheduleStopsForDirection(entry, stopIds, explicitSuffix);
+        const matchedStops = getScheduleStopsForDirection(entry, stopIds, explicitSuffix, routeId);
 
         if (matchedStops.length > 0) {
             const allTimes = [];
@@ -1618,7 +1623,7 @@ export async function getFullScheduleGrouped(routeShortName, stopId, explicitRou
         return null;
     }
 
-    const matchedStops = getScheduleStopsForDirection(daySchedule, stopIds, explicitSuffix);
+    const matchedStops = getScheduleStopsForDirection(daySchedule, stopIds, explicitSuffix, routeId);
 
     if (matchedStops.length === 0) {
         console.warn('[ScheduleDebug] Full schedule stop match failed', {
@@ -1787,7 +1792,7 @@ export async function fetchArrivals(stopId) {
         return normalizeArrivalRouteFields({ ...a }, actualStopId);
     });
     const arrivalsBySource = normalizedCombined.reduce((summary, arrival) => {
-        const source = String(arrival?._sourceStopId || '').startsWith('r') ? 'rustavi' : 'tbilisi';
+        const source = api.getSourceForId(arrival?._sourceStopId)?.id || 'tbilisi';
         if (!summary[source]) summary[source] = { total: 0, live: 0, unresolved: 0 };
         summary[source].total += 1;
         if (arrival.realtime === true || arrival.realtime === 1 || arrival.realtime === 'true') summary[source].live += 1;
@@ -2311,9 +2316,19 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
             }
         }
 
-        // Group Key: ShortName + Direction Index (or Headsign if fuzzy)
-        // We use DirectionIndex as primary differentiator for grouped rows.
-        const groupKey = loopAmbiguous ? `${routeIdForKey}_loop` : `${routeIdForKey}_${directionIndex}`;
+        // Keep the DOM identity independent from route-details hydration. Before
+        // static details are available, directionIndex is inferred from the
+        // numeric part of the suffix; afterwards it may be the suffix's index
+        // in a differently ordered patterns array. The API pattern suffix is
+        // stable across both renders, so use it for live-card grouping while
+        // retaining the resolved direction index for schedule matching.
+        const patternSuffixIdentity = String(a.patternSuffix || '').trim();
+        const patternDirectionIdentity = patternSuffixIdentity
+            ? patternSuffixIdentity.split(':')[0]
+            : '';
+        const groupKey = loopAmbiguous
+            ? `${routeIdForKey}_loop`
+            : `${routeIdForKey}_${patternDirectionIdentity ? `pattern-${patternDirectionIdentity}` : `direction-${directionIndex}`}`;
         if (a.shortName === '387' || a.shortName === '397') {
             console.log('[Arrivals Debug][Loop] Live groupKey', {
                 shortName: a.shortName,
@@ -2325,7 +2340,9 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 headsign
             });
         }
-        representedKeys.add(groupKey);
+        // Scheduled fallbacks are keyed by resolved direction, so record that
+        // logical identity separately from the live card's stable DOM key.
+        representedKeys.add(`${routeIdForKey}_${directionIndex}`);
         liveRouteKeys.add(routeIdForKey);
 
         if (!liveGroups.has(groupKey)) {
@@ -2671,6 +2688,9 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
     });
 
     const activeIds = new Set();
+    const activeRouteIds = new Set(renderList.map(item =>
+        String(item.data?.id || item.data?.shortName || 'unknown')
+    ));
 
     const emptyId = 'arrivals-empty-msg';
     const isActuallyLoading = window.arrivalsLoading;
@@ -3216,6 +3236,22 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                 el.style.opacity = '0';
                 el.style.transform = 'scale(0.95)';
                 setTimeout(() => el.remove(), 200);
+                return;
+            }
+            // A live route can acquire richer direction metadata after its
+            // first render. If another active card now represents that same
+            // canonical route, this element is an obsolete identity—not a
+            // disappeared bus—so replace it immediately instead of showing a
+            // dimmed duplicate for the normal 15-second expiry window.
+            const obsoleteRouteId = el.getAttribute('data-route-id');
+            if (obsoleteRouteId && activeRouteIds.has(String(obsoleteRouteId))) {
+                el.style.opacity = '0';
+                el.style.transform = 'scale(0.95)';
+                const removalToken = `${Date.now()}-${Math.random()}`;
+                el.dataset.removalToken = removalToken;
+                setTimeout(() => {
+                    if (el.dataset.removalToken === removalToken) el.remove();
+                }, 200);
                 return;
             }
             // IMMEDIATE CLEANUP: If the item belongs to an invalid direction for this stop, remove it NOW.

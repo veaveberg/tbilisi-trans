@@ -8658,5 +8658,950 @@
         "interval": 18
       }
     ]
+  },
+  "kR1318": {
+    "shortName": "3",
+    "longName": "წითელი ხიდი-სადგური რიონი",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 480,
+    "lastDeparture": 1290,
+    "pattern": [
+      {
+        "start": 8,
+        "end": 20,
+        "interval": 30
+      },
+      {
+        "start": 20,
+        "end": 21,
+        "interval": 45
+      }
+    ]
+  },
+  "kR1333": {
+    "shortName": "4",
+    "longName": "ავტოქარხანა - წითელი ხიდი",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 455,
+    "lastDeparture": 1325,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 21,
+        "interval": 15
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "interval": 60
+      }
+    ]
+  },
+  "kR1300": {
+    "shortName": "5",
+    "longName": "თაბუკაშვილი გუმათი",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 475,
+    "lastDeparture": 1339,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 19,
+        "interval": 27
+      },
+      {
+        "start": 19,
+        "end": 20,
+        "interval": 41
+      },
+      {
+        "start": 20,
+        "end": 21,
+        "interval": 54
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "gap": true
+      }
+    ]
+  },
+  "kR3492": {
+    "shortName": "6",
+    "longName": "გუმათი",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 465,
+    "lastDeparture": 1245,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 10,
+        "interval": 65
+      },
+      {
+        "start": 10,
+        "end": 11,
+        "gap": true
+      },
+      {
+        "start": 11,
+        "end": 20,
+        "interval": 65
+      }
+    ]
+  },
+  "kR14375": {
+    "shortName": "7",
+    "longName": "სათაფლიის მღვიმე",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 603,
+    "lastDeparture": 963,
+    "pattern": [
+      {
+        "start": 10,
+        "end": 16,
+        "interval": 60
+      }
+    ]
+  },
+  "kR1482": {
+    "shortName": "10",
+    "longName": "სულხან-საბა",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 490,
+    "lastDeparture": 1330,
+    "pattern": [
+      {
+        "start": 8,
+        "end": 20,
+        "interval": 24
+      },
+      {
+        "start": 20,
+        "end": 21,
+        "interval": 40
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "gap": true
+      }
+    ]
+  },
+  "kR1353": {
+    "shortName": "19",
+    "longName": "ნიკეა-წითელი ხიდი",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 465,
+    "lastDeparture": 1365,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 20,
+        "interval": 15
+      },
+      {
+        "start": 20,
+        "end": 22,
+        "interval": 33
+      }
+    ]
+  },
+  "kR1461": {
+    "shortName": "1L",
+    "longName": "მარცხენა წრიული",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 458,
+    "lastDeparture": 1330,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 20,
+        "interval": 8
+      },
+      {
+        "start": 20,
+        "end": 21,
+        "interval": 18
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "interval": 28
+      }
+    ]
+  },
+  "kR1269": {
+    "shortName": "1R",
+    "longName": "მარჯვენა წრიული",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 453,
+    "lastDeparture": 1303,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 20,
+        "interval": 10
+      },
+      {
+        "start": 20,
+        "end": 22,
+        "interval": 20
+      }
+    ]
+  },
+  "kR1343": {
+    "shortName": "20",
+    "longName": "თაბუკაშვილი-წითელი ხიდი",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 474,
+    "lastDeparture": 1329,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 20,
+        "interval": 15
+      },
+      {
+        "start": 20,
+        "end": 21,
+        "interval": 19
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "interval": 45
+      }
+    ]
+  },
+  "kR1375": {
+    "shortName": "25",
+    "longName": "ავტო ქარხანა-ახალგაზრდობის გამზირი",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 465,
+    "lastDeparture": 1257,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 19,
+        "interval": 33
+      },
+      {
+        "start": 19,
+        "end": 20,
+        "interval": 66
+      },
+      {
+        "start": 20,
+        "end": 21,
+        "interval": 33
+      }
+    ]
+  },
+  "kR1649": {
+    "shortName": "31",
+    "longName": "ბავშვთა საავადმყოფო",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 463,
+    "lastDeparture": 1313,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 20,
+        "interval": 17
+      },
+      {
+        "start": 20,
+        "end": 22,
+        "interval": 34
+      }
+    ]
+  },
+  "kR3487": {
+    "shortName": "41",
+    "longName": "ჭავჭავაძე.კუპრაძე",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 465,
+    "lastDeparture": 1320,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 22,
+        "interval": 45
+      }
+    ]
+  },
+  "kR3189": {
+    "shortName": "110",
+    "longName": "ვაჟა ფშაველა - ნიკოლაძე",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 440,
+    "lastDeparture": 1200,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 20,
+        "interval": 40
+      }
+    ]
+  },
+  "kR3312": {
+    "shortName": "111",
+    "longName": "ჩანჩიბაძე-ბაგრატის ტაძარი",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 463,
+    "lastDeparture": 1223,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 20,
+        "interval": 40
+      }
+    ]
+  },
+  "kR3326": {
+    "shortName": "112",
+    "longName": "ცაცხვები - გორკი",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 462,
+    "lastDeparture": 1222,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 20,
+        "interval": 40
+      }
+    ]
+  },
+  "kR3349": {
+    "shortName": "114",
+    "longName": "ვარკამიშვილი.რუას ქუჩა",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 467,
+    "lastDeparture": 1247,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 21,
+        "interval": 30
+      }
+    ]
+  },
+  "kR3231": {
+    "shortName": "118",
+    "longName": "გამსახურდიას ქ. - სულხან-საბა",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 480,
+    "lastDeparture": 1250,
+    "pattern": [
+      {
+        "start": 8,
+        "end": 14,
+        "interval": 70
+      },
+      {
+        "start": 14,
+        "end": 15,
+        "gap": true
+      },
+      {
+        "start": 15,
+        "end": 20,
+        "interval": 70
+      }
+    ]
+  },
+  "kR3272": {
+    "shortName": "126",
+    "longName": "ვარლამიშვილი - მარჯვენა დასახლება",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 450,
+    "lastDeparture": 1200,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 9,
+        "interval": 75
+      },
+      {
+        "start": 9,
+        "end": 10,
+        "gap": true
+      },
+      {
+        "start": 10,
+        "end": 14,
+        "interval": 75
+      },
+      {
+        "start": 14,
+        "end": 15,
+        "gap": true
+      },
+      {
+        "start": 15,
+        "end": 19,
+        "interval": 75
+      },
+      {
+        "start": 19,
+        "end": 20,
+        "gap": true
+      }
+    ]
+  },
+  "kR6174": {
+    "shortName": "133",
+    "longName": "ვარლამიშვილი-გელათის ქუჩა",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 450,
+    "lastDeparture": 1230,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 20,
+        "interval": 60
+      }
+    ]
+  },
+  "kR19776": {
+    "shortName": "137",
+    "longName": "137",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 539,
+    "lastDeparture": 1259,
+    "pattern": [
+      {
+        "start": 8,
+        "end": 9,
+        "interval": 120
+      },
+      {
+        "start": 9,
+        "end": 10,
+        "gap": true
+      },
+      {
+        "start": 10,
+        "end": 11,
+        "interval": 120
+      },
+      {
+        "start": 11,
+        "end": 12,
+        "gap": true
+      },
+      {
+        "start": 12,
+        "end": 13,
+        "interval": 120
+      },
+      {
+        "start": 13,
+        "end": 14,
+        "gap": true
+      },
+      {
+        "start": 14,
+        "end": 15,
+        "interval": 120
+      },
+      {
+        "start": 15,
+        "end": 16,
+        "gap": true
+      },
+      {
+        "start": 16,
+        "end": 17,
+        "interval": 120
+      },
+      {
+        "start": 17,
+        "end": 18,
+        "gap": true
+      },
+      {
+        "start": 18,
+        "end": 19,
+        "interval": 120
+      },
+      {
+        "start": 19,
+        "end": 20,
+        "gap": true
+      }
+    ]
+  },
+  "kR3241": {
+    "shortName": "141",
+    "longName": "ვარლამიშვილი - თბილისის ქ.",
+    "mode": "BUS",
+    "source": "kutaisi",
+    "firstDeparture": 450,
+    "lastDeparture": 1250,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 21,
+        "interval": 50
+      }
+    ]
+  },
+  "b5ed2bd4f657784b5a98a8c7e": {
+    "shortName": "2",
+    "longName": "Adlia street  № – Akhalsheni",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 405,
+    "lastDeparture": 1289,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 21,
+        "interval": 34
+      }
+    ]
+  },
+  "b5ed6077c340f60873ff9e1be": {
+    "shortName": "2A",
+    "longName": "Akhalsheni – Adlia street  №",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 422,
+    "lastDeparture": 1306,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 22,
+        "interval": 34
+      }
+    ]
+  },
+  "b5ed60865340f60873ff9e1bf": {
+    "shortName": "3",
+    "longName": "Abkhazeti Street №9 – endstop route 3",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 415,
+    "lastDeparture": 1420,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 22,
+        "interval": 15
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 20
+      },
+      {
+        "start": 23,
+        "end": 0,
+        "interval": 30
+      }
+    ]
+  },
+  "b5ed60aa5340f60873ff9e1c4": {
+    "shortName": "8",
+    "longName": "Davit Agmashenebel Street № 64 – 1905 ბაღის ქუჩა",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 405,
+    "lastDeparture": 1365,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 22,
+        "interval": 16
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 32
+      }
+    ]
+  },
+  "b5ed60b25340f60873ff9e1c5": {
+    "shortName": "9",
+    "longName": "Jemal Katamadze Street №39 – Ivane Meskhi Street N7",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 408,
+    "lastDeparture": 1310,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 22,
+        "interval": 22
+      }
+    ]
+  },
+  "b5ed60be3340f60873ff9e1c6": {
+    "shortName": "10A",
+    "longName": "Airport – Tbilisi Street",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 410,
+    "lastDeparture": 1294,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 22,
+        "interval": 34
+      }
+    ]
+  },
+  "b5ed60d70340f60873ff9e1c8": {
+    "shortName": "12",
+    "longName": "1463 ავტოსადგური ბათუმი – Fridon Khalvash Avenue № 364",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 390,
+    "lastDeparture": 1374,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 21,
+        "interval": 12
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "interval": 24
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 18
+      }
+    ]
+  },
+  "b5ed60e97340f60873ff9e1cb": {
+    "shortName": "15",
+    "longName": "700 ზედაღელის ქ. N15 ბოლო გაჩ. – 1284 გიორგი ცაბაძის  ქუჩა №5",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 426,
+    "lastDeparture": 1290,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 21,
+        "interval": 32
+      }
+    ]
+  },
+  "b5ed60f32340f60873ff9e1cc": {
+    "shortName": "16",
+    "longName": "1463 ავტოსადგური ბათუმი – Sarpi",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 401,
+    "lastDeparture": 1353,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 21,
+        "interval": 17
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "interval": 28
+      }
+    ]
+  },
+  "b5f9f0704eb714303efce5631": {
+    "shortName": "6",
+    "longName": "1442 ლადო ასათიანის ქუჩა #4 – Buknari",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 390,
+    "lastDeparture": 1278,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 21,
+        "interval": 24
+      }
+    ]
+  },
+  "b60acde9ffcc7a224160c587c": {
+    "shortName": "1",
+    "longName": "Davit Agmashenebel Street № 64 – Svishevsky Street",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 410,
+    "lastDeparture": 1394,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 22,
+        "interval": 12
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 24
+      }
+    ]
+  },
+  "b615182e95dc186cad86e0fd2": {
+    "shortName": "14",
+    "longName": "1700 მე 20 საჯარო სკოლა – 1026 ლეხ და მარია კაჩინსკების ქუჩა,",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 430,
+    "lastDeparture": 1390,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 22,
+        "interval": 16
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 32
+      }
+    ]
+  },
+  "b648994879327c728200b3f52": {
+    "shortName": "1A",
+    "longName": "Davit Agmashenebel Street № 64 – Vladimir Mayakovsky Street №89",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 476,
+    "lastDeparture": 1427,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 23,
+        "interval": 6
+      },
+      {
+        "start": 23,
+        "end": 0,
+        "interval": 24
+      }
+    ]
+  },
+  "b648996c69327c728200b3f63": {
+    "shortName": "13",
+    "longName": "1141 მიხეილ ლერმონტოვის ქუჩა # 131 – Cable car",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 460,
+    "lastDeparture": 1422,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 22,
+        "interval": 13
+      },
+      {
+        "start": 22,
+        "end": 0,
+        "interval": 24
+      }
+    ]
+  },
+  "b64901c96e25b40c6e2150b34": {
+    "shortName": "10",
+    "longName": "Botanical garden – Airport",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 400,
+    "lastDeparture": 1318,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 22,
+        "interval": 34
+      }
+    ]
+  },
+  "b66de91d980df11324f155751": {
+    "shortName": "20",
+    "longName": "Tbilisi Square – 1601  სვიმონ კანანელის ქუჩა,",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 441,
+    "lastDeparture": 1389,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 22,
+        "interval": 12
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 24
+      }
+    ]
+  },
+  "b6724af35cabac5486baeb625": {
+    "shortName": "27",
+    "longName": "Davit Agmashenebel Street № 64 – Buknari",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 410,
+    "lastDeparture": 1364,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 21,
+        "interval": 18
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "interval": 27
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 36
+      }
+    ]
+  },
+  "b67402e01d04d3a04c35d84c2": {
+    "shortName": "7A",
+    "longName": "Davit Agmashenebel Street № 64 – public school №13",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 460,
+    "lastDeparture": 1405,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 21,
+        "interval": 15
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "interval": 19
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 30
+      }
+    ]
+  },
+  "b6740347dd04d3a04c35d84e4": {
+    "shortName": "7",
+    "longName": "Davit Agmashenebel Street № 64 – Aleksandre Sulaberidze Street №78",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 450,
+    "lastDeparture": 1410,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 22,
+        "interval": 15
+      },
+      {
+        "start": 22,
+        "end": 0,
+        "interval": 30
+      }
+    ]
+  },
+  "b675bf5b960b00f8db1965a52": {
+    "shortName": "19",
+    "longName": "Davit Agmashenebel Street № 64 – 1583 თამარის დასახლება, 331",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 410,
+    "lastDeparture": 1350,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 21,
+        "interval": 20
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "interval": 40
+      }
+    ]
+  },
+  "b67ae3607e37f0ecf8032068f": {
+    "shortName": "4",
+    "longName": "Davit Agmashenebel Street № 64 – Svishevsky Street №2",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 486,
+    "lastDeparture": 1438,
+    "pattern": [
+      {
+        "start": 8,
+        "end": 0,
+        "interval": 14
+      }
+    ]
+  },
+  "b6941c100f141b1861c3958a0": {
+    "shortName": "11",
+    "longName": "Davit Agmashenebel Street № 64 – Peria Street",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 420,
+    "lastDeparture": 1368,
+    "pattern": [
+      {
+        "start": 7,
+        "end": 22,
+        "interval": 12
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 24
+      }
+    ]
+  },
+  "b69429301f141b1861c395bec": {
+    "shortName": "21",
+    "longName": "1708 შარაშიძის ქუჩა – 1589 ზედაღელის ქუჩა, 57",
+    "mode": "BUS",
+    "source": "batumi",
+    "firstDeparture": 406,
+    "lastDeparture": 1316,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 22,
+        "interval": 35
+      }
+    ]
   }
 }

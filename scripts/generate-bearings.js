@@ -8,6 +8,27 @@ const __dirname = path.dirname(__filename);
 
 const DATA_DIR = path.join(__dirname, '../public/data');
 const OUTPUT_FILE = path.join(__dirname, '../src/data/stop_bearings.json');
+const SOURCE_CONFIGS = [
+    { id: 'tbilisi', prefix: '', polylines: 'tbilisi_polylines.json', details: 'tbilisi_routes_details_en.json' },
+    { id: 'rustavi', prefix: 'r', polylines: 'rustavi_polylines.json', details: 'rustavi_routes_details_en.json' },
+    { id: 'kutaisi', prefix: 'k', polylines: 'kutaisi_polylines.json', details: 'kutaisi_routes_details_en.json' },
+    { id: 'batumi', prefix: 'b', polylines: 'batumi_polylines.json', details: 'batumi_routes_details_en.json' }
+];
+
+function getSelectedSources() {
+    const sourceArgIndex = process.argv.findIndex(arg => arg === '--source');
+    const inlineSourceArg = process.argv.find(arg => arg.startsWith('--source='));
+    const requestedId = inlineSourceArg
+        ? inlineSourceArg.slice('--source='.length)
+        : (sourceArgIndex !== -1 ? process.argv[sourceArgIndex + 1] : null);
+
+    if (!requestedId || requestedId === 'all') return SOURCE_CONFIGS;
+    const selected = SOURCE_CONFIGS.find(source => source.id === requestedId);
+    if (!selected) {
+        throw new Error(`Unknown source "${requestedId}". Expected one of: ${SOURCE_CONFIGS.map(source => source.id).join(', ')}, all`);
+    }
+    return [selected];
+}
 
 // Helper: Calculate Bearings
 function toRad(deg) { return deg * Math.PI / 180; }
@@ -185,13 +206,11 @@ function decodePolyline(encoded) {
 }
 
 // Load polylines - returns Map of "routeId:suffix" -> decoded polyline points
-function loadPolylines() {
+function loadPolylines(selectedSources) {
     const polylines = new Map();
 
-    const files = ['tbilisi_polylines.json', 'rustavi_polylines.json'];
-
-    for (const file of files) {
-        const filePath = path.join(DATA_DIR, file);
+    for (const source of selectedSources) {
+        const filePath = path.join(DATA_DIR, source.polylines);
         if (!fs.existsSync(filePath)) continue;
 
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -200,13 +219,19 @@ function loadPolylines() {
         for (const [outerKey, suffixData] of Object.entries(data)) {
             if (typeof suffixData === 'object') {
                 for (const [suffix, polylineInfo] of Object.entries(suffixData)) {
-                    if (polylineInfo && polylineInfo.encodedValue) {
-                        // Parse route ID from outer key
-                        // Example: "1:R216088_1_01" -> routeId = "1:R216088"
-                        const parts = outerKey.split('_');
-                        const routeId = parts[0];
-                        const key = `${routeId}:${suffix}`;
-                        polylines.set(key, decodePolyline(polylineInfo.encodedValue));
+                    const polylineValue = Array.isArray(polylineInfo)
+                        ? polylineInfo
+                        : polylineInfo?.encodedValue;
+                    if (polylineValue) {
+                        // Strip the encoded suffix from the outer key instead
+                        // of splitting on every underscore; some route IDs
+                        // legitimately contain underscores themselves.
+                        const suffixToken = `_${String(suffix).replace(/:/g, '_')}`;
+                        const routeId = outerKey.endsWith(suffixToken)
+                            ? outerKey.slice(0, -suffixToken.length)
+                            : outerKey.split('_')[0];
+                        const key = `${source.id}|${routeId}:${suffix}`;
+                        polylines.set(key, decodePolyline(polylineValue));
                     }
                 }
             }
@@ -218,24 +243,18 @@ function loadPolylines() {
 }
 
 // Load route details - returns Map of routeId -> { patterns, _stopsOfPatterns, isRustavi }
-function loadRouteDetails() {
+function loadRouteDetails(selectedSources) {
     const routeDetails = new Map();
 
-    const files = [
-        { file: 'tbilisi_routes_details_en.json', isRustavi: false },
-        { file: 'rustavi_routes_details_en.json', isRustavi: true }
-    ];
-
-    for (const { file, isRustavi } of files) {
-        const filePath = path.join(DATA_DIR, file);
+    for (const source of selectedSources) {
+        const filePath = path.join(DATA_DIR, source.details);
         if (!fs.existsSync(filePath)) continue;
 
         const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
 
         for (const [routeId, details] of Object.entries(data)) {
             if (details) {
-                details._isRustavi = isRustavi;
-                routeDetails.set(routeId, details);
+                routeDetails.set(`${source.id}|${routeId}`, { source, routeId, details });
             }
         }
     }
@@ -245,39 +264,45 @@ function loadRouteDetails() {
 }
 
 // Normalize stop ID for app format
-// Rustavi: 1:145 -> r145, Tbilisi: 1:799 -> 1:799
-function normalizeStopId(rawId, isRustavi) {
-    if (!isRustavi) return rawId;
-
-    // Convert 1:xxx to rxxx
-    if (rawId.startsWith('1:')) {
-        return 'r' + rawId.substring(2);
+// Rustavi: 1:145 -> r145, Kutaisi: 1:145 -> k145,
+// Tbilisi retains its fully qualified upstream ID.
+function normalizeStopId(rawId, source) {
+    if (!source.prefix) return rawId;
+    if (rawId.startsWith('1:') || rawId.startsWith('2:')) {
+        return source.prefix + rawId.substring(2);
     }
-    return rawId;
+    return rawId.startsWith(source.prefix) ? rawId : source.prefix + rawId;
 }
 
 async function main() {
     try {
         console.log('Loading local data files...\n');
 
-        const polylines = loadPolylines();
-        const routeDetails = loadRouteDetails();
+        const selectedSources = getSelectedSources();
+        console.log(`Sources: ${selectedSources.map(source => source.id).join(', ')}`);
+        const polylines = loadPolylines(selectedSources);
+        const routeDetails = loadRouteDetails(selectedSources);
 
         const stopBearings = {}; // stopId -> [bearings]
+        const ambiguousStopIds = new Set(); // same physical stop used in both route directions
         let processedPatterns = 0;
         let bearingsAdded = 0;
 
         console.log('\nProcessing routes...');
 
-        for (const [routeId, details] of routeDetails) {
+        for (const { source, routeId, details } of routeDetails.values()) {
             if (!details.patterns || !details._stopsOfPatterns) continue;
-
-            const isRustavi = details._isRustavi || false;
 
             // Build a map of stop -> patternSuffixes from _stopsOfPatterns
             const stopToPatterns = new Map();
             for (const entry of details._stopsOfPatterns) {
                 if (entry.stop && entry.patternSuffixes) {
+                    const directionIds = new Set(entry.patternSuffixes.map(suffix =>
+                        String(suffix).split(':')[0]
+                    ));
+                    if (directionIds.size > 1) {
+                        ambiguousStopIds.add(normalizeStopId(entry.stop.id, source));
+                    }
                     stopToPatterns.set(entry.stop.id, {
                         stop: entry.stop,
                         suffixes: entry.patternSuffixes
@@ -288,7 +313,7 @@ async function main() {
             // For each pattern, find the polyline and calculate bearings for its stops
             for (const pattern of details.patterns) {
                 const suffix = pattern.patternSuffix;
-                const polylineKey = `${routeId}:${suffix}`;
+                const polylineKey = `${source.id}|${routeId}:${suffix}`;
                 const polylinePoints = polylines.get(polylineKey);
 
                 if (!polylinePoints || polylinePoints.length < 2) continue;
@@ -303,8 +328,7 @@ async function main() {
                     const bearing = getBearingFromPolyline(stop.lat, stop.lon, polylinePoints);
                     if (bearing === null) continue;
 
-                    // Normalize stop ID (Rustavi: 1:xxx -> rxxx)
-                    const stopId = normalizeStopId(rawStopId, isRustavi);
+                    const stopId = normalizeStopId(rawStopId, source);
 
                     if (!stopBearings[stopId]) {
                         stopBearings[stopId] = [];
@@ -319,13 +343,20 @@ async function main() {
 
         console.log(`Processed ${processedPatterns} patterns, added ${bearingsAdded} bearing samples.`);
         console.log(`Found bearings for ${Object.keys(stopBearings).length} unique stops.`);
+        console.log(`Marked ${ambiguousStopIds.size} bidirectional stops as rotation 0 (unknown).`);
         console.log('\nCalculating average bearings...');
 
-        const finalData = {};
+        const generatedData = {};
         let count = 0;
 
         for (const [id, bearings] of Object.entries(stopBearings)) {
             if (bearings.length === 0) continue;
+
+            if (ambiguousStopIds.has(id)) {
+                generatedData[id] = 0;
+                count++;
+                continue;
+            }
 
             // Average the bearings using vector sum (handles circular wrap-around)
             let sinSum = 0;
@@ -337,12 +368,29 @@ async function main() {
             const avgRad = Math.atan2(sinSum, cosSum);
             const avgDeg = (toDeg(avgRad) + 360) % 360;
 
-            finalData[id] = Math.round(avgDeg);
+            generatedData[id] = Math.round(avgDeg);
             count++;
         }
 
+        // A source-scoped run must not recalculate or discard the other
+        // cities. Remove only the selected namespace and merge its fresh
+        // values into the existing generated file.
+        let finalData = {};
+        if (selectedSources.length !== SOURCE_CONFIGS.length && fs.existsSync(OUTPUT_FILE)) {
+            finalData = JSON.parse(fs.readFileSync(OUTPUT_FILE, 'utf-8'));
+            for (const source of selectedSources) {
+                for (const id of Object.keys(finalData)) {
+                    const belongsToSource = source.prefix
+                        ? id.startsWith(source.prefix)
+                        : /^\d+:/.test(id);
+                    if (belongsToSource) delete finalData[id];
+                }
+            }
+        }
+        Object.assign(finalData, generatedData);
+
         fs.writeFileSync(OUTPUT_FILE, JSON.stringify(finalData));
-        console.log(`\nDone! Saved bearings for ${count} stops to ${OUTPUT_FILE}`);
+        console.log(`\nDone! Generated bearings for ${count} stops; saved ${Object.keys(finalData).length} total to ${OUTPUT_FILE}`);
 
     } catch (err) {
         console.error('\nFatal Error:', err);

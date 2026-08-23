@@ -3954,6 +3954,8 @@ function inferRouteSource(route) {
     if (route._source) return route._source;
     const rid = String(route.id || '');
     if (rid.startsWith('r') || rid.startsWith('rustavi:')) return 'rustavi';
+    if (rid.startsWith('k') || rid.startsWith('kutaisi:')) return 'kutaisi';
+    if (rid.startsWith('b') || rid.startsWith('batumi:')) return 'batumi';
     return rid ? 'tbilisi' : null;
 }
 

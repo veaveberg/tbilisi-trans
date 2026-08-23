@@ -13,6 +13,9 @@ function getTTL(url) {
     if (url.includes('/arrival-times')) return 15000; // 15 seconds for live arrivals
     if (url.includes('/schedule')) return 300000;      // 5 minutes for schedules
     if (url.includes('/positions')) return 5000;       // 5 seconds for live bus positions
+    if (url.includes('/getBusLocsOnRoute')) return 4000;
+    if (url.includes('/getLiveData')) return 30000;
+    if (url.includes('/getDbData') || url.includes('/getPointsBetweenStations') || url.includes('/getGeogpsBusStops')) return 600000;
     if (url.includes('/polylines') || url.includes('/stops-of-patterns')) return 3600000; // 1 hour for structural data
     return 60000; // 1 minute default for others
 }
@@ -47,6 +50,12 @@ app.use('*', async (req, res) => {
         if (url.startsWith('/rustavi-proxy')) {
             targetBase = 'https://rustavi-transit.azrycloud.com';
             targetPath = url.replace('/rustavi-proxy', '');
+        } else if (url.startsWith('/kutaisi-proxy')) {
+            targetBase = 'https://pis.tbc-pts.azrycloud.com';
+            targetPath = url.replace('/kutaisi-proxy', '');
+        } else if (url.startsWith('/batumi-proxy')) {
+            targetBase = 'https://thetamaps.site:54321';
+            targetPath = url.replace('/batumi-proxy', '');
         }
 
         const targetUrl = targetBase + targetPath;
@@ -75,6 +84,7 @@ app.use('*', async (req, res) => {
             'Origin': targetBase,
             'x-api-key': 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f',
         };
+        if (targetBase.includes('thetamaps.site')) delete headers['x-api-key'];
 
         const fetchStart = Date.now();
         const response = await fetch(targetUrl, {
@@ -115,4 +125,3 @@ app.listen(PORT, () => {
     console.log(`[Proxy] Server running on port ${PORT}`);
     console.log(`[Proxy] Health check: http://localhost:${PORT}/health`);
 });
-

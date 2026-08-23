@@ -1,5 +1,13 @@
 import { db } from './db.js';
 import { sources } from './data/sources.js';
+import {
+    getSourceSeparator,
+    namespaceVehicleId,
+    sourceForAppId,
+    staticRouteResourceKeys,
+    toApiId,
+    toAppId
+} from './data/source-identity.js';
 import { RouteGeometry } from './route-geometry.js';
 import { getTransitDataLocale } from './i18n.ts';
 import { getOtaDataFileJson, getOtaDataFileText } from './ota-data.js';
@@ -14,23 +22,16 @@ export const API_KEY = 'c0a2f304-551a-4d08-b8df-2c53ecd57f9f';
 // Default Source (Tbilisi) for fallback or single-source calls
 const defaultSource = sources.find(s => s.id === 'tbilisi') || sources[0];
 
+export function getSourceForId(id) {
+    return sourceForAppId(id, sources, defaultSource);
+}
+
 // Helper to get base URL for a source (handling proxy for dev if needed)
 function getApiBaseUrl(source) {
-    if (import.meta.env.DEV) {
-        // Proxy logic
-        if (source.id === 'tbilisi') return '/pis-gateway/api/v2';
-        if (source.id === 'rustavi') return '/rustavi-proxy/pis-gateway/api/v2';
-        return source.apiBase;
-    }
     return source.apiBase;
 }
 
 function getApiV3BaseUrl(source) {
-    if (import.meta.env.DEV) {
-        if (source.id === 'tbilisi') return '/pis-gateway/api/v2'.replace('/v2', '/v3');
-        if (source.id === 'rustavi') return '/rustavi-proxy/pis-gateway/api/v3';
-        return source.apiBaseV3;
-    }
     return source.apiBaseV3;
 }
 
@@ -233,7 +234,9 @@ export function getApiStatusColor(code) {
 // Consolidated Fallback Cache
 const staticCache = {
     tbilisi: { details: null, schedules: null, polylines: null },
-    rustavi: { details: null, schedules: null, polylines: null }
+    rustavi: { details: null, schedules: null, polylines: null },
+    kutaisi: { details: null, schedules: null, polylines: null },
+    batumi: { details: null, schedules: null, polylines: null }
 };
 
 const staticStopToRoutes = new Map(); // stopId -> Set<routeId>
@@ -307,7 +310,7 @@ export function preloadStaticRoutesDetails() {
     }
 
     preloadPromise = (async () => {
-        const sourcesToLoad = sources.filter(s => s.id === 'tbilisi' || s.id === 'rustavi');
+        const sourcesToLoad = sources;
 
         console.log('[API] Preloading static route details for filtering...');
 
@@ -489,6 +492,27 @@ export function getStaticRouteDetails(routeId) {
 
 const pendingCacheRequests = new Map();
 
+async function fetchStaticJsonCandidate(url) {
+    const res = await fetch(url, {
+        headers: { Accept: 'application/json' }
+    });
+    if (!res.ok) {
+        throw new Error(`${res.status} while loading ${url}`);
+    }
+
+    const text = await res.text();
+    const trimmed = text.trimStart();
+    if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
+        throw new Error(`Received HTML instead of JSON from ${url}`);
+    }
+
+    try {
+        return JSON.parse(text);
+    } catch (err) {
+        throw new Error(`Invalid JSON from ${url}: ${err.message}`);
+    }
+}
+
 async function getStaticCache(sourceId, type) {
     if (!staticCache[sourceId]) staticCache[sourceId] = {};
     if (staticCache[sourceId][type]) return staticCache[sourceId][type];
@@ -517,11 +541,23 @@ async function getStaticCache(sourceId, type) {
             }
 
             const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-            const res = await fetch(`${basePath}data/${filename}`);
-            if (!res.ok) throw new Error(`Failed to load ${filename}`);
-            const data = await res.json();
-            staticCache[sourceId][type] = data;
-            return data;
+            const candidates = [
+                `${basePath}data/${filename}`,
+                `${basePath}ota/files/${filename}`
+            ];
+            const errors = [];
+
+            for (const url of candidates) {
+                try {
+                    const data = await fetchStaticJsonCandidate(url);
+                    staticCache[sourceId][type] = data;
+                    return data;
+                } catch (err) {
+                    errors.push(err.message);
+                }
+            }
+
+            throw new Error(errors.join('; '));
         } catch (e) {
             console.warn(`[Fallback] Error loading ${sourceId} ${type} cache:`, e);
             return null;
@@ -541,18 +577,15 @@ async function fetchStaticFallback(endpoint) {
         const urlObj = new URL(endpoint, 'http://dummy.com');
         const pathname = urlObj.pathname;
         const basePath = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
-        const locale = urlObj.searchParams.get('locale') || getActiveLocale(); // Detect Source
-        // Explicitly check for Rustavi in URL or ID prefix
-        let isRustavi = pathname.includes('rustavi') || endpoint.includes('rustavi');
-
-        // Secondary check: ID prefix if available
+        const locale = urlObj.searchParams.get('locale') || getActiveLocale();
         const stopMatch = pathname.match(/\/stops\/([^\/]+)/);
         const idRouteMatch = pathname.match(/\/routes\/([^\/]+)/);
         const idInUrl = (stopMatch ? stopMatch[1] : (idRouteMatch ? idRouteMatch[1] : ''));
-        if (decodeURIComponent(idInUrl).startsWith('r')) isRustavi = true;
-
-        const sourceId = isRustavi ? 'rustavi' : 'tbilisi';
-        const sourceConfig = sources.find(s => s.id === sourceId);
+        const decodedId = decodeURIComponent(idInUrl);
+        const sourceConfig = sources.find(source =>
+            source.proxyPath && pathname.includes(source.proxyPath)
+        ) || sourceForAppId(decodedId, sources, defaultSource);
+        const sourceId = sourceConfig.id;
 
         const stopRoutesMatch = pathname.match(/\/stops\/([^\/]+)\/routes/);
         if (stopRoutesMatch) {
@@ -904,80 +937,15 @@ export async function fetchWithRetry(url, options = {}, retries = 3, backoff = 1
 // --- Data Processing Helpers ---
 
 function getSeparator(source) {
-    return source.separator !== undefined ? source.separator : ':';
+    return getSourceSeparator(source);
 }
 
 export function processId(id, source) {
-    if (!id || typeof id !== 'string') return id;
-    let finalId = id;
-    // 1. Strip internal prefixes (e.g. "1:", "2:")
-    if (source.stripPrefixes && Array.isArray(source.stripPrefixes)) {
-        for (const prefix of source.stripPrefixes) {
-            if (finalId.startsWith(prefix)) {
-                finalId = finalId.slice(prefix.length);
-                break;
-            }
-        }
-    } else if (source.stripPrefix && finalId.startsWith(source.stripPrefix)) {
-        finalId = finalId.slice(source.stripPrefix.length);
-    }
-    // 2. Add source prefix (e.g. "r")
-    if (source.prefix) {
-        const sep = getSeparator(source);
-        const prefixMatch = source.prefix + sep;
-        // Use case-sensitive matching when separator is empty to avoid
-        // confusing 'R826' with 'r'-prefixed IDs
-        const hasPrefix = sep === ''
-            ? finalId.startsWith(prefixMatch)
-            : finalId.toLowerCase().startsWith(prefixMatch.toLowerCase());
-        if (!hasPrefix) {
-            finalId = source.prefix + sep + finalId;
-        }
-    }
-    return finalId;
+    return toAppId(id, source);
 }
 
 export function restoreApiId(id, source) {
-    if (!id || typeof id !== 'string') return id;
-    let apiId = id;
-    // 1. Remove source prefix (e.g. 'r' from 'r123')
-    if (source.prefix) {
-        const sep = getSeparator(source);
-        const prefixMatch = source.prefix.toLowerCase() + sep;
-        if (apiId.toLowerCase().startsWith(prefixMatch)) {
-            apiId = apiId.slice(prefixMatch.length);
-        }
-    }
-
-    // 2. Strip ANY existing internal prefixes (e.g. '1:', '2:') before re-adding primary
-    if (source.stripPrefixes && Array.isArray(source.stripPrefixes)) {
-        for (const prefix of source.stripPrefixes) {
-            if (apiId.startsWith(prefix)) {
-                apiId = apiId.slice(prefix.length);
-                break;
-            }
-        }
-    } else if (source.stripPrefix && apiId.startsWith(source.stripPrefix)) {
-        apiId = apiId.slice(source.stripPrefix.length);
-    }
-
-    // 3. Re-add primary internal prefix
-    if (source.stripPrefixes && Array.isArray(source.stripPrefixes) && source.stripPrefixes.length > 0) {
-        const primaryPrefix = source.stripPrefixes[0];
-
-        // Defensive: If this ID starts with a known prefix of ANOTHER source, don't add ours
-        // This avoids things like "1:r123"
-        const isOtherSource = sources.some(s => s.id !== source.id && s.prefix && (apiId === s.prefix || apiId.startsWith(s.prefix)));
-
-        if (!apiId.startsWith(primaryPrefix) && !isOtherSource) {
-            apiId = primaryPrefix + apiId;
-        }
-    } else if (source.stripPrefix) {
-        if (!apiId.startsWith(source.stripPrefix)) {
-            apiId = source.stripPrefix + apiId;
-        }
-    }
-    return apiId;
+    return toApiId(id, source, sources);
 }
 
 
@@ -1163,51 +1131,15 @@ async function fetchFromSmartSource(configFn, id, options = {}) {
         return true;
     };
 
-    // Determine Source Priority based on ID Prefix
-    let attemptOrder = [defaultSource, ...sources.filter(s => s.id !== defaultSource.id)];
-
-    // Explicit Prefix Check (e.g. "rustavi:..." or "r...")
-    const explicitSource = sources.find(s => {
-        if (!s.prefix) return false;
-        const sep = getSeparator(s);
-        const prefixMatch = s.prefix.toLowerCase() + sep;
-        return typeof id === 'string' && id.toLowerCase().startsWith(prefixMatch);
-    });
-
-    if (explicitSource) {
-        attemptOrder = [explicitSource, ...sources.filter(s => s.id !== explicitSource.id)];
-    }
+    const explicitSource = sourceForAppId(id, sources, null);
+    // A namespaced app ID belongs to exactly one provider. Ambiguous legacy/raw
+    // IDs retain the old Tbilisi-first fallback order.
+    const attemptOrder = explicitSource
+        ? [explicitSource]
+        : [defaultSource, ...sources.filter(s => s.id !== defaultSource.id)];
 
     // Try sources in order
     for (const source of attemptOrder) {
-        // Strict Source Check:
-        // 1. If ID has a known prefix of ANOTHER source, skip this one.
-        const idStr = String(id);
-        const idPrefix = idStr.includes(':') ? idStr.split(':')[0] : (idStr.startsWith('r') ? 'r' : null);
-
-        // If ID has NO prefix, it's implicitly Tbilisi (numeric).
-        if (!idPrefix) {
-            if (source.id !== defaultSource.id) {
-                // console.log(`[SmartFetch] Skipping ${source.id} for numeric ID ${id} (Assumed Tbilisi)`);
-                continue;
-            }
-        }
-        // If ID HAS a prefix, ensure it matches the current source
-        else {
-            const idSep = idPrefix === 'r' ? '' : ':';
-            const matchedSource = sources.find(s => {
-                if (s.prefix === idPrefix) return true;
-                if (s.stripPrefixes && Array.isArray(s.stripPrefixes)) {
-                    return s.stripPrefixes.some(p => p === idPrefix + idSep);
-                }
-                return s.stripPrefix === idPrefix + idSep;
-            });
-            if (matchedSource && matchedSource.id !== source.id) {
-                // console.log(`[SmartFetch] Skipping ${source.id} for ID ${id} (Expected ${matchedSource.id})`);
-                continue;
-            }
-        }
-
         try {
             // Restore API ID (add 1:, remove r, etc)
             const apiId = restoreApiId(id, source);
@@ -1276,21 +1208,20 @@ async function fetchWithSourceHint(configFn, id, knownSourceId, options = {}) {
 
 
 export async function fetchStopRoutes(stopId, sourceId = null, options = {}) {
-    // For Rustavi stops, always prefer local static data over the live API.
-    // The live Rustavi API returns routes that may have been manually overridden
-    // (removed from the local schedule), so we use our static index as the source of truth.
-    const isRustaviStop = /^r\d/.test(stopId) || sourceId === 'rustavi';
-    if (isRustaviStop) {
+    // Non-default sources prefer the validated static route graph. This preserves
+    // local corrections and prevents an ID from falling through to another city.
+    const inferredSource = sources.find(source => source.id === sourceId)
+        || sourceForAppId(stopId, sources, defaultSource);
+    if (inferredSource.id !== defaultSource.id) {
         await preloadStaticRoutesDetails();
         if (staticStopToRoutes.has(stopId)) {
             const routeIds = Array.from(staticStopToRoutes.get(stopId));
             if (routeIds.length > 0) {
-                const rustaviSource = sources.find(s => s.id === 'rustavi');
                 const routes = routeIds
                     .map(rid => staticRouteDetails.get(rid))
                     .filter(Boolean)
-                    .map(rd => processRoute(rd, rustaviSource));
-                routes._sourceId = 'rustavi';
+                    .map(rd => processRoute(rd, inferredSource));
+                routes._sourceId = inferredSource.id;
                 return routes;
             }
         }
@@ -1545,14 +1476,12 @@ export async function fetchRouteStopsV3(routeId, patternSuffix, options = {}) {
         }
     }
 
-    // 2b. For Rustavi routes, always prefer static data over live API.
-    // The Rustavi live API may return stops that have been manually overridden
-    // in the local static files. _stopsOfPatterns is the authoritative source.
-    const isRustaviRoute = routeId.startsWith('r') || routeId.toLowerCase().startsWith('rustavi:');
-    if (isRustaviRoute && staticRouteDetails.has(routeId)) {
+    // 2b. For non-default sources, validated pattern stops are authoritative.
+    const routeSource = sourceForAppId(routeId, sources, defaultSource);
+    if (routeSource.id !== defaultSource.id && staticRouteDetails.has(routeId)) {
         const details = staticRouteDetails.get(routeId);
         if (details._stopsOfPatterns && Array.isArray(details._stopsOfPatterns)) {
-            const source = sources.find(s => s.id === (details._sourceId || 'rustavi'));
+            const source = sources.find(s => s.id === (details._sourceId || routeSource.id));
             const stopsForPattern = details._stopsOfPatterns
                 .filter(entry => !realSuffix || entry.patternSuffixes?.includes(realSuffix))
                 .map(entry => processStop(entry.stop, source));
@@ -1566,7 +1495,7 @@ export async function fetchRouteStopsV3(routeId, patternSuffix, options = {}) {
     let raw;
     try {
         if (options.strategy === 'cache-only') {
-            raw = await fetchStaticFallback(urlGen(defaultSource, routeId));
+            raw = await fetchStaticFallback(urlGen(routeSource, routeId));
         } else {
             raw = await fetchFromSmartSource(urlGen, routeId, options);
         }
@@ -1611,11 +1540,61 @@ export async function fetchRouteStopsV3(routeId, patternSuffix, options = {}) {
     return stops;
 }
 
+const batumiPositionsCache = new Map();
+const BATUMI_POSITIONS_TTL = 4000;
+
+async function fetchBatumiPositions(routeId, source) {
+    const apiRouteId = restoreApiId(routeId, source);
+    const cacheKey = `${source.id}:${apiRouteId}`;
+    const cached = batumiPositionsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < BATUMI_POSITIONS_TTL) return cached.data;
+
+    const url = `${getApiBaseUrl(source)}/api/getBusLocsOnRoute?routeId=${encodeURIComponent(apiRouteId)}`;
+    const response = await fetch(url, {
+        headers: { accept: 'application/json, text/plain, */*' },
+        credentials: 'omit',
+        mode: 'cors'
+    });
+    if (!response.ok) throw new Error(`Batumi positions failed: ${response.status}`);
+    const payload = await response.json();
+    const positions = (Array.isArray(payload?.data) ? payload.data : []).map(bus => ({
+        lat: Number(bus.Lat ?? bus.lat),
+        lon: Number(bus.Lon ?? bus.lon),
+        heading: Number.isFinite(Number(bus.Heading ?? bus.heading)) ? Number(bus.Heading ?? bus.heading) : 0,
+        vehicleId: namespaceVehicleId(bus.Name || bus.id || '', source),
+        _batumiStatus: Number(bus.Status),
+        _source: source.id
+    })).filter(bus => Number.isFinite(bus.lat) && Number.isFinite(bus.lon));
+    batumiPositionsCache.set(cacheKey, { data: positions, timestamp: Date.now() });
+    return positions;
+}
+
+function groupBatumiPositionsBySuffix(positions, suffixes) {
+    const output = {};
+    for (const suffix of suffixes) {
+        const realSuffix = suffix.includes('_PART') ? suffix.split('_PART')[0] : suffix;
+        output[suffix] = positions.filter(bus =>
+            bus._batumiStatus > 0 && batumiPatternSuffix(bus._batumiStatus) === realSuffix
+        );
+    }
+    return output;
+}
+
 export async function fetchBusPositionsV3(routeId, patternSuffix) {
     // Handle virtual suffix for positions too?
     // Buses don't have virtual patterns. They are on the global route.
     // We should map virtual suffix to real suffix.
     const realSuffix = patternSuffix.includes('_PART') ? patternSuffix.split('_PART')[0] : patternSuffix;
+
+    const routeSource = sourceForAppId(routeId, sources, defaultSource);
+    if (routeSource?.adapter === 'batumi') {
+        try {
+            return groupBatumiPositionsBySuffix(await fetchBatumiPositions(routeId, routeSource), [patternSuffix]);
+        } catch (error) {
+            console.warn(`[Batumi] Positions failed for ${routeId}`, error);
+            return { [patternSuffix]: [] };
+        }
+    }
 
     const urlGen = (s, id) => `${getApiV3BaseUrl(s)}/routes/${encodeURIComponent(id)}/positions?patternSuffixes=${encodeURIComponent(realSuffix)}`;
 
@@ -1626,6 +1605,14 @@ export async function fetchBusPositionsV3(routeId, patternSuffix) {
         const res = await fetch(url, { headers: { 'x-api-key': API_KEY } });
         if (!res.ok) throw new Error('Not OK');
         const data = await res.json();
+        Object.values(data || {}).forEach(positions => {
+            if (!Array.isArray(positions)) return;
+            positions.forEach(position => {
+                position._source = source.id;
+                position.vehicleId = namespaceVehicleId(position.vehicleId, source);
+                if (position.nextStopId) position.nextStopId = processId(position.nextStopId, source);
+            });
+        });
 
         // Data is keyed by suffix. Remap keys if virtual?
         // API returns { "patternSuffix": [buses] }
@@ -1641,15 +1628,10 @@ export async function fetchBusPositionsV3(routeId, patternSuffix) {
     }
 
     try {
-        return await tryFetch(defaultSource);
+        return await tryFetch(routeSource);
     } catch (e) {
-        // Try others
-        for (const source of sources) {
-            if (source.id === defaultSource.id) continue;
-            try {
-                return await tryFetch(source);
-            } catch (err) { }
-        }
+        // Explicitly namespaced IDs must never leak into another provider.
+        if (routeSource !== defaultSource) return [];
     }
     return [];
 }
@@ -1657,6 +1639,16 @@ export async function fetchBusPositionsV3(routeId, patternSuffix) {
 export async function fetchBusPositionsV3Multi(routeId, patternSuffixes = []) {
     const requested = Array.isArray(patternSuffixes) ? patternSuffixes.filter(Boolean) : [];
     if (requested.length === 0) return {};
+
+    const routeSource = sourceForAppId(routeId, sources, defaultSource);
+    if (routeSource?.adapter === 'batumi') {
+        try {
+            return groupBatumiPositionsBySuffix(await fetchBatumiPositions(routeId, routeSource), requested);
+        } catch (error) {
+            console.warn(`[Batumi] Positions failed for ${routeId}`, error);
+            return Object.fromEntries(requested.map(suffix => [suffix, []]));
+        }
+    }
 
     const aliases = {};
     const realSuffixesSet = new Set();
@@ -1679,6 +1671,14 @@ export async function fetchBusPositionsV3Multi(routeId, patternSuffixes = []) {
         const res = await fetch(url, { headers: { 'x-api-key': API_KEY } });
         if (!res.ok) throw new Error('Not OK');
         const data = await res.json();
+        Object.values(data || {}).forEach(positions => {
+            if (!Array.isArray(positions)) return;
+            positions.forEach(position => {
+                position._source = source.id;
+                position.vehicleId = namespaceVehicleId(position.vehicleId, source);
+                if (position.nextStopId) position.nextStopId = processId(position.nextStopId, source);
+            });
+        });
         const out = { ...data };
         Object.keys(aliases).forEach((virtual) => {
             const real = aliases[virtual];
@@ -1688,14 +1688,9 @@ export async function fetchBusPositionsV3Multi(routeId, patternSuffixes = []) {
     }
 
     try {
-        return await tryFetch(defaultSource);
+        return await tryFetch(routeSource);
     } catch (e) {
-        for (const source of sources) {
-            if (source.id === defaultSource.id) continue;
-            try {
-                return await tryFetch(source);
-            } catch (err) { }
-        }
+        if (routeSource !== defaultSource) return {};
     }
     return {};
 }
@@ -1727,23 +1722,18 @@ export async function fetchRoutePolylineV3(routeId, patternSuffixes, options = {
 
     // 1. Try local static cache first (preferred for better caching/performance)
     try {
-        const sourceId = routeId.startsWith('r') ? 'rustavi' : 'tbilisi';
-        const sourceConfig = sources.find(s => s.id === sourceId);
+        const sourceConfig = sourceForAppId(routeId, sources, defaultSource);
+        const sourceId = sourceConfig.id;
         const appRouteId = processId(routeId, sourceConfig);
 
         const cache = await getStaticCache(sourceId, 'polylines');
         if (cache) {
             const tempPolylineData = {};
-            const primaryPrefix = sourceConfig.stripPrefixes ? sourceConfig.stripPrefixes[0] : (sourceConfig.stripPrefix || '');
-
             for (const suffix of realSuffixesSet) {
-                const safeSuffix = suffix.replace(/:/g, '_').replace(/,/g, '-');
-                const key = `${primaryPrefix}${appRouteId}_${safeSuffix}`;
-                if (cache[key]) {
-                    Object.assign(tempPolylineData, cache[key]);
-                } else if (cache[`${appRouteId}_${safeSuffix}`]) {
-                    // Fallback for keys without prefix
-                    Object.assign(tempPolylineData, cache[`${appRouteId}_${safeSuffix}`]);
+                const candidateKeys = staticRouteResourceKeys(routeId, suffix, sourceConfig, sources);
+                const matchedKey = candidateKeys.find(key => cache[key]);
+                if (matchedKey) {
+                    Object.assign(tempPolylineData, cache[matchedKey]);
                 }
             }
             if (Object.keys(tempPolylineData).length > 0) {
@@ -1759,7 +1749,7 @@ export async function fetchRoutePolylineV3(routeId, patternSuffixes, options = {
     if (!polylineData) {
         try {
             if (options.strategy === 'cache-only') {
-                polylineData = await fetchStaticFallback(urlGen(defaultSource, routeId));
+                polylineData = await fetchStaticFallback(urlGen(sourceForAppId(routeId, sources, defaultSource), routeId));
             } else {
                 polylineData = await fetchFromSmartSource(urlGen, routeId, options);
             }
@@ -1883,6 +1873,92 @@ async function fetchArrivalTimesJson(url) {
     return res;
 }
 
+const batumiLiveRouteCache = new Map();
+const BATUMI_LIVE_ROUTE_TTL = 30000;
+
+function batumiPatternSuffix(status) {
+    const numericStatus = Number(status);
+    return `${Number.isFinite(numericStatus) ? Math.max(0, numericStatus - 1) : 0}:01`;
+}
+
+async function fetchBatumiRouteLive(source, routeId) {
+    const apiRouteId = restoreApiId(routeId, source);
+    const cacheKey = `${source.id}:${apiRouteId}`;
+    const cached = batumiLiveRouteCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < BATUMI_LIVE_ROUTE_TTL) return cached.data;
+
+    const url = `${getApiBaseUrl(source)}/api/getLiveData?routeId=${encodeURIComponent(apiRouteId)}`;
+    const response = await fetch(url, {
+        headers: { accept: 'application/json, text/plain, */*' },
+        credentials: 'omit',
+        mode: 'cors'
+    });
+    if (!response.ok) throw new Error(`Batumi live route failed: ${response.status}`);
+    const payload = await response.json();
+    const data = payload?.data || {};
+    batumiLiveRouteCache.set(cacheKey, { data, timestamp: Date.now() });
+    return data;
+}
+
+async function fetchBatumiArrivalsForStop(stopId, source, routeId = null, limit = 30) {
+    await preloadStaticRoutesDetails();
+    const routeIds = routeId
+        ? [processId(routeId, source)]
+        : Array.from(staticStopToRoutes.get(stopId) || []);
+    const upstreamStopId = restoreApiId(stopId, source);
+
+    const results = await Promise.all(routeIds.map(async appRouteId => {
+        try {
+            const details = getStaticRouteDetails(appRouteId);
+            const live = await fetchBatumiRouteLive(source, appRouteId);
+            const arrivalEntries = Array.isArray(live.arrivalTime)
+                ? live.arrivalTime
+                : Object.values(live.arrivalTime || {});
+            const stopArrival = arrivalEntries.find(entry => String(entry?.stop_id) === String(upstreamStopId));
+            if (!stopArrival?.arrival_times) return [];
+
+            const stopEntry = details?._stopsOfPatterns?.find(entry =>
+                String(restoreApiId(entry?.stop?.id || '', source)) === String(upstreamStopId)
+            );
+            const fallbackSuffix = stopEntry?.patternSuffixes?.[0] || '0:01';
+            const busesById = new Map((Array.isArray(live.buses) ? live.buses : Object.values(live.buses || {}))
+                .filter(Boolean)
+                .map(bus => [String(bus.id || bus._id || bus.name || ''), bus]));
+
+            return Object.values(stopArrival.arrival_times).flatMap(value => {
+                if (!value || !Number.isFinite(Number(value.minute))) return [];
+                const bus = busesById.get(String(value.bus_id || ''));
+                const suffix = bus?.bus_info?.status !== undefined
+                    ? batumiPatternSuffix(bus.bus_info.status)
+                    : fallbackSuffix;
+                const pattern = details?.patterns?.find(candidate => candidate.patternSuffix === suffix);
+                return [{
+                    id: appRouteId,
+                    routeId: appRouteId,
+                    shortName: details?.shortName || '',
+                    longName: details?.longName || '',
+                    headsign: pattern?.headsign || details?.longName || '',
+                    patternSuffix: suffix,
+                    vehicleMode: 'BUS',
+                    realtime: true,
+                    realtimeArrivalMinutes: Number(value.minute),
+                    scheduledArrivalMinutes: Number(value.minute),
+                    vehicleId: namespaceVehicleId(value.bus_id || value.bus_name || '', source),
+                    _sourceStopId: stopId,
+                    _source: source.id
+                }];
+            });
+        } catch (error) {
+            console.warn(`[Batumi] Live arrivals failed for ${appRouteId}`, error);
+            return [];
+        }
+    }));
+
+    return results.flat()
+        .sort((a, b) => a.realtimeArrivalMinutes - b.realtimeArrivalMinutes)
+        .slice(0, limit);
+}
+
 export async function fetchRouteArrivalsForStop(stopId, routeId) {
     if (!stopId || !routeId) return [];
 
@@ -1890,9 +1966,17 @@ export async function fetchRouteArrivalsForStop(stopId, routeId) {
     const cached = getCachedArrivals(cacheKey);
     if (cached) return cached;
 
+    const routedSource = sourceForAppId(stopId, sources, defaultSource);
+    if (routedSource?.adapter === 'batumi') {
+        const arrivals = await fetchBatumiArrivalsForStop(stopId, routedSource, routeId, 5);
+        setCachedArrivals(cacheKey, arrivals);
+        return arrivals;
+    }
+
     async function tryFetch(source) {
         const apiStopId = restoreApiId(stopId, source);
-        const url = `${getApiBaseUrl(source)}/stops/${encodeURIComponent(apiStopId)}/arrival-times?routeId=${encodeURIComponent(routeId)}&maxNumberOfArrivalTimes=5&locale=${getActiveLocale()}&ignoreScheduledArrivalTimes=false`;
+        const apiRouteId = restoreApiId(routeId, source);
+        const url = `${getApiBaseUrl(source)}/stops/${encodeURIComponent(apiStopId)}/arrival-times?routeId=${encodeURIComponent(apiRouteId)}&maxNumberOfArrivalTimes=5&locale=${getActiveLocale()}&ignoreScheduledArrivalTimes=false`;
         const res = await fetchArrivalTimesJson(url);
         if (!res.ok) throw new Error(`Fail: ${res.status}`);
         const arrivals = await res.json();
@@ -1901,17 +1985,12 @@ export async function fetchRouteArrivalsForStop(stopId, routeId) {
         return taggedArrivals;
     }
 
-    let bestSource = defaultSource;
-    for (const s of sources) {
-        if (s.prefix && (stopId === s.prefix || String(stopId).startsWith(s.prefix))) {
-            bestSource = s;
-            break;
-        }
-    }
+    const bestSource = sourceForAppId(stopId, sources, defaultSource);
 
     try {
         return await tryFetch(bestSource);
     } catch (e) {
+        if (bestSource !== defaultSource) throw e;
         for (const source of sources) {
             if (source.id === bestSource.id) continue;
             try {
@@ -1943,6 +2022,18 @@ export async function fetchArrivalsForStopIds(ids, options = {}) {
             return cached;
         }
 
+        const routedSource = sourceForAppId(id, sources, defaultSource);
+        if (routedSource?.adapter === 'batumi') {
+            try {
+                const arrivals = await fetchBatumiArrivalsForStop(id, routedSource, null, maxNumberOfArrivalTimes);
+                setCachedArrivals(stopCacheKey, arrivals);
+                return arrivals;
+            } catch (error) {
+                console.warn(`[Batumi] Failed to fetch arrivals for ${id}`, error);
+                return [];
+            }
+        }
+
         // Use smart source fetch logic
         // We need a custom url generator for arrivals
         const urlGen = (s, i) => `${getApiBaseUrl(s)}/stops/${encodeURIComponent(i)}/arrival-times?locale=${getActiveLocale()}&ignoreScheduledArrivalTimes=false&maxNumberOfArrivalTimes=${maxNumberOfArrivalTimes}`;
@@ -1965,17 +2056,12 @@ export async function fetchArrivalsForStopIds(ids, options = {}) {
 
             // Source Detection Logic:
             // Find the best source to try first based on ID prefix
-            let bestSource = defaultSource;
-            for (const s of sources) {
-                if (s.prefix && (id === s.prefix || id.startsWith(s.prefix))) {
-                    bestSource = s;
-                    break;
-                }
-            }
+            const bestSource = sourceForAppId(id, sources, defaultSource);
 
             try {
                 return await tryFetch(bestSource);
             } catch (e) {
+                if (bestSource !== defaultSource) throw e;
                 // Try others
                 for (const source of sources) {
                     if (source.id === bestSource.id) continue;
@@ -2068,12 +2154,7 @@ function getRouteSourceCandidates(routeId) {
         addSource(staticDetails._sourceId);
     }
 
-    const routeIdStr = String(routeId || '');
-    if (/^rustavi:/i.test(routeIdStr) || /^r\d/.test(routeIdStr)) {
-        addSource('rustavi');
-    } else {
-        addSource('tbilisi');
-    }
+    addSource(sourceForAppId(routeId, sources, defaultSource)?.id);
 
     sources.forEach(source => addSource(source.id));
     return candidates;
@@ -2125,6 +2206,8 @@ export async function getStaticScheduleForRouteSuffix(routeId, suffix) {
 
 export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = null, options = {}) {
     if (!routeId || !stopIds || stopIds.length === 0) return null;
+    const routeSource = sourceForAppId(routeId, sources, defaultSource);
+    const normalizeForRoute = (id) => processId(String(id || ''), routeSource);
 
     // 1. Get Patterns with Stops (Association Data)
     // Use separate cache key to avoid collision with full route details patterns
@@ -2141,7 +2224,7 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
                 if (routeData) {
                     // Optimization: Use Side-Loaded stops of patterns if available (from Convex)
                     if (routeData._stopsOfPatterns && Array.isArray(routeData._stopsOfPatterns) && routeData._stopsOfPatterns.length > 0) {
-                        const source = sources.find(s => s.id === (routeData._source || 'tbilisi'));
+                        const source = sources.find(s => s.id === (routeData._sourceId || routeData._source || 'tbilisi'));
                         return routeData._stopsOfPatterns.map(p => ({
                             ...p,
                             stop: processStop(p.stop, source)
@@ -2218,12 +2301,11 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
         if (!p || !p.stop) return false;
         const pId = String(p.stop.id);
         const pCode = String(p.stop.code || '');
-        const normalize = (id) => String(id).replace(/^[rR]/, '').replace(/^\d+:/, '');
         return stopIds.some(targetId => {
             const targetStr = String(targetId);
             if (targetStr === pId) return true;
-            if (normalize(targetStr) === normalize(pId)) return true;
-            if (pCode && normalize(pCode) === normalize(targetStr)) return true;
+            if (normalizeForRoute(targetStr) === normalizeForRoute(pId)) return true;
+            if (pCode && normalizeForRoute(pCode) === normalizeForRoute(targetStr)) return true;
             return false;
         });
     });
@@ -2266,8 +2348,7 @@ export async function fetchScheduleForStop(routeId, stopIds, explicitSuffix = nu
                 const nonTerminus = stopEntry.patternSuffixes.find(sfx => {
                     const p = routeDataForPrioritization.patterns.find(pat => pat.patternSuffix === sfx);
                     if (!p || !p.lastStop) return true;
-                    const normalize = (id) => String(id).replace(/^\d+:/, '').replace(/^[rR]/, '');
-                    const isLast = stopIds.some(sid => normalize(sid) === normalize(p.lastStop.id));
+                    const isLast = stopIds.some(sid => normalizeForRoute(sid) === normalizeForRoute(p.lastStop.id));
                     return !isLast;
                 });
                 if (nonTerminus) suffix = nonTerminus;
@@ -2391,7 +2472,8 @@ export async function calculateBusETAs(routeId, patternSuffix, targetStopId, opt
         const stops = daySchedule.stops;
 
         // 3. Find target stop index
-        const normalize = (id) => String(id).replace(/^\d+:/, '').replace(/^[rR]/, '');
+        const routeSource = sourceForAppId(routeId, sources, defaultSource);
+        const normalize = (id) => processId(String(id || ''), routeSource);
         const targetNorm = normalize(targetStopId);
 
         const targetIndex = stops.findIndex(s =>
@@ -2440,7 +2522,7 @@ export async function calculateBusETAs(routeId, patternSuffix, targetStopId, opt
         for (let i = startIdx; i <= endIdx && upstreamStops.length < 4; i++) {
             if (stops[i] && stops[i].id) {
                 upstreamStops.push({
-                    id: stops[i].id,
+                    id: processId(String(stops[i].id), routeSource),
                     index: i,
                     travelTimeToTarget: 0
                 });

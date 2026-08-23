@@ -80,6 +80,8 @@ function getSourceArg() {
     if (sourceFlag) return sourceFlag.split('=')[1];
     if (process.argv.includes('--tbilisi')) return 'tbilisi';
     if (process.argv.includes('--rustavi')) return 'rustavi';
+    if (process.argv.includes('--kutaisi')) return 'kutaisi';
+    if (process.argv.includes('--batumi')) return 'batumi';
     return null;
 }
 
@@ -87,7 +89,9 @@ function getPrefetchScript(source) {
     if (!source) return 'prefetch';
     if (source === 'tbilisi') return 'prefetch:tbilisi';
     if (source === 'rustavi') return 'prefetch:rustavi';
-    throw new Error(`Unknown source "${source}". Expected "tbilisi" or "rustavi".`);
+    if (source === 'kutaisi') return 'prefetch:kutaisi';
+    if (source === 'batumi') return 'prefetch:batumi';
+    throw new Error(`Unknown source "${source}". Expected "tbilisi", "rustavi", "kutaisi", or "batumi".`);
 }
 
 async function main() {
