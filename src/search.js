@@ -9,6 +9,14 @@ import { setPoint, openDirections, toggleDirections, clearPoint } from './direct
 import { getLastUserCoords } from './geolocation.js';
 import { flyToPointInView, getBandPadding, getCameraOrientation, invalidateMapCameraIntent } from './map-camera.js';
 import { arrivalsController } from './arrivals-controller.js';
+import {
+    GEORGIA_SEARCH_BBOX,
+    findLocalSearchResults,
+    getCityName,
+    getSearchContext,
+    isSearchableQuery,
+    rankPlaces
+} from './search-ranking.js';
 
 let suggestionMarkers = [];
 
@@ -50,6 +58,7 @@ export function setupSearch(callbacks, dataProviders) {
     const clearBtn = document.getElementById('search-clear');
     const closeBtn = document.getElementById('search-close');
     let debounceTimeout;
+    let searchRequestId = 0;
 
     // DEBUG: Log clicks in suggestions to diagnose blocking
     // suggestions.addEventListener('click', (e) => {
@@ -106,7 +115,7 @@ export function setupSearch(callbacks, dataProviders) {
         const query = input.value.trim();
         if (query === '') {
             renderFullHistory();
-        } else if (query.length >= 2) {
+        } else if (isSearchableQuery(query)) {
             suggestions.classList.remove('hidden');
             // Re-trigger input event to refresh results
             input.dispatchEvent(new Event('input'));
@@ -134,13 +143,14 @@ export function setupSearch(callbacks, dataProviders) {
     closeBtn.addEventListener('click', dismissSearch);
 
     input.addEventListener('input', (e) => {
-        const query = e.target.value.toLowerCase();
+        const query = e.target.value.trim().toLowerCase();
+        const requestId = ++searchRequestId;
         updateClearBtn();
 
         clearTimeout(debounceTimeout);
         debounceTimeout = setTimeout(async () => {
 
-            if (query.length < 2) {
+            if (!isSearchableQuery(query)) {
                 if (query.length === 0) {
                     renderFullHistory();
                     clearSearchSuggestionMarkers();
@@ -154,16 +164,13 @@ export function setupSearch(callbacks, dataProviders) {
             // 1. Local Search (Stops & Routes) - Render IMMEDIATELY
             const allStops = appData.getAllStops();
             const allRoutes = appData.getAllRoutes();
-
-            const matchedStops = allStops.filter(stop =>
-                (stop.name && stop.name.toLowerCase().includes(query)) ||
-                (stop.code && stop.code.includes(query))
-            ).slice(0, 5);
-
-            const matchedRoutes = allRoutes.filter(route =>
-                (route.shortName && route.shortName.toLowerCase().includes(query)) ||
-                (route.longName && route.longName.toLowerCase().includes(query))
-            ).slice(0, 5);
+            const searchContext = getSearchContext(map, getLastUserCoords());
+            const { stops: matchedStops, routes: matchedRoutes } = findLocalSearchResults(
+                allStops,
+                allRoutes,
+                query,
+                searchContext.preferredCityId
+            );
 
             // Render local first to be responsive (no places yet)
             renderSuggestions(matchedStops, matchedRoutes, [], query);
@@ -174,30 +181,11 @@ export function setupSearch(callbacks, dataProviders) {
             // 2. Remote Search (Photon/OSM Geocoding) - Addresses in Georgia
             let matchedPlaces = [];
             try {
-                // Bias towards map center if available, otherwise Tbilisi city center
-                const center = map.getCenter ? map.getCenter() : { lng: 44.78, lat: 41.72 };
-                const lang = getCurrentMapLanguage() === 'ka' ? 'ka' : 'en';
-
-                // Tbilisi + Rustavi bounding box: minLng, minLat, maxLng, maxLat
-                const tbilisiBbox = '44.5,41.5,45.1,42.0';
-                const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=10&lat=${center.lat}&lon=${center.lng}&lang=${lang}&bbox=${tbilisiBbox}`;
-                const res = await fetch(photonUrl);
-                if (res.ok) {
-                    const data = await res.json();
-                    // Normalize Photon features and filter to Georgia
-                    matchedPlaces = (data.features || [])
-                        .filter(f => f.properties?.countrycode === 'GE')
-                        .map(normalizePhotonFeature)
-                        .filter(Boolean)
-                        .slice(0, 7);
-
-                    // Re-render with ALL results (spinner is cleared inside)
-                    renderSuggestions(matchedStops, matchedRoutes, matchedPlaces, query);
-                } else {
-                    console.warn('[Search] Photon geocoding error:', res.status, res.statusText);
-                    removeGeocodingSpinner();
-                }
+                matchedPlaces = await fetchGeorgiaPlaces(query, searchContext);
+                if (requestId !== searchRequestId) return;
+                renderSuggestions(matchedStops, matchedRoutes, matchedPlaces, query);
             } catch (err) {
+                if (requestId !== searchRequestId) return;
                 console.warn('[Search] Photon geocoding exception', err);
                 removeGeocodingSpinner();
             }
@@ -245,6 +233,7 @@ export function setupSearch(callbacks, dataProviders) {
 
     if (fromInput && toInput && fromSuggestions && toSuggestions) {
         let dirDebounceTimeout;
+        const dirRequestIds = { from: 0, to: 0 };
 
         const positionSuggestions = (inputEl, suggestionsEl) => {
             const rect = inputEl.getBoundingClientRect();
@@ -293,6 +282,7 @@ export function setupSearch(callbacks, dataProviders) {
             positionSuggestions(inputEl, activeSuggestions);
 
             const query = inputEl.value.trim().toLowerCase();
+            const requestId = ++dirRequestIds[fieldType];
 
 
             // 1. If empty, show "My Location" (if available) + recent searches/history
@@ -341,17 +331,20 @@ export function setupSearch(callbacks, dataProviders) {
                 return;
             }
 
-            if (query.length < 2) {
+            if (!isSearchableQuery(query)) {
                 activeSuggestions.classList.add('hidden');
                 return;
             }
 
             // 2. Query stops matching text
             const allStops = appData.getAllStops();
-            const matchedStops = allStops.filter(stop =>
-                (stop.name && stop.name.toLowerCase().includes(query)) ||
-                (stop.code && stop.code.includes(query))
-            ).slice(0, 5);
+            const searchContext = getSearchContext(map, getLastUserCoords());
+            const { stops: matchedStops } = findLocalSearchResults(
+                allStops,
+                [],
+                query,
+                searchContext.preferredCityId
+            );
 
             // Prevent jumping by maintaining current height while loading
             const currentHeight = activeSuggestions.offsetHeight;
@@ -369,25 +362,12 @@ export function setupSearch(callbacks, dataProviders) {
             dirDebounceTimeout = setTimeout(async () => {
                 let matchedPlaces = [];
                 try {
-                    const center = map.getCenter ? map.getCenter() : { lng: 44.78, lat: 41.72 };
-                    const lang = getCurrentMapLanguage() === 'ka' ? 'ka' : 'en';
-                    const tbilisiBbox = '44.5,41.5,45.1,42.0';
-                    const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=10&lat=${center.lat}&lon=${center.lng}&lang=${lang}&bbox=${tbilisiBbox}`;
-                    const res = await fetch(photonUrl);
-                    if (res.ok) {
-                        const data = await res.json();
-                        matchedPlaces = (data.features || [])
-                            .filter(f => f.properties?.countrycode === 'GE')
-                            .map(normalizePhotonFeature)
-                            .filter(Boolean)
-                            .slice(0, 7);
-                        activeSuggestions.style.minHeight = '';
-                        renderDirSuggestionsList(matchedStops, matchedPlaces, query, fieldType);
-                    } else {
-                        activeSuggestions.style.minHeight = '';
-                        removeDirGeocodingSpinner(fieldType);
-                    }
+                    matchedPlaces = await fetchGeorgiaPlaces(query, searchContext);
+                    if (requestId !== dirRequestIds[fieldType]) return;
+                    activeSuggestions.style.minHeight = '';
+                    renderDirSuggestionsList(matchedStops, matchedPlaces, query, fieldType);
                 } catch (err) {
+                    if (requestId !== dirRequestIds[fieldType]) return;
                     activeSuggestions.style.minHeight = '';
                     removeDirGeocodingSpinner(fieldType);
                 }
@@ -473,6 +453,93 @@ function normalizePhotonFeature(feature) {
     } catch (e) {
         return null;
     }
+}
+
+function isPlaceInsideBbox(place, bbox) {
+    const [west, south, east, north] = String(bbox).split(',').map(Number);
+    const lng = Number(place.center?.[0]);
+    const lat = Number(place.center?.[1]);
+    return [west, south, east, north, lng, lat].every(Number.isFinite) &&
+        lng >= west && lng <= east && lat >= south && lat <= north;
+}
+
+async function fetchPhotonPlaces(query, bias, bbox, photonLanguage, scopedCityId = null) {
+    const photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=20&lat=${bias.lat}&lon=${bias.lng}&lang=${photonLanguage}&bbox=${bbox}`;
+    const response = await fetch(photonUrl);
+    if (!response.ok) {
+        throw new Error(`Photon geocoding failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    return (data.features || [])
+        .filter(feature => String(feature.properties?.countrycode || '').toUpperCase() === 'GE')
+        .map(normalizePhotonFeature)
+        .filter(place => place && (!scopedCityId || isPlaceInsideBbox(place, bbox)))
+        .map(place => scopedCityId ? { ...place, _cityId: scopedCityId } : place);
+}
+
+function deduplicatePlaces(places) {
+    const seen = new Set();
+    return places.filter(place => {
+        const key = `${place.text}|${Number(place.center?.[0]).toFixed(5)}|${Number(place.center?.[1]).toFixed(5)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+async function fetchGeorgiaPlaces(query, searchContext) {
+    const language = getCurrentMapLanguage();
+    const photonLanguage = language === 'ka' ? 'ka' : 'en';
+    const bias = searchContext?.bias || { lng: 44.8015, lat: 41.7151 };
+    const preferredCityId = searchContext?.preferredCityId || null;
+    let preferredCityPlaces = [];
+
+    if (preferredCityId && searchContext?.searchBbox) {
+        try {
+            preferredCityPlaces = await fetchPhotonPlaces(
+                query,
+                bias,
+                searchContext.searchBbox,
+                photonLanguage,
+                preferredCityId
+            );
+            if (preferredCityPlaces.length >= 7) {
+                return rankPlaces(preferredCityPlaces, query, preferredCityId, 7);
+            }
+        } catch (error) {
+            console.warn('[Search] Preferred-city geocoding failed; falling back to Georgia', error);
+        }
+    }
+
+    try {
+        const nationwidePlaces = await fetchPhotonPlaces(
+            query,
+            bias,
+            GEORGIA_SEARCH_BBOX,
+            photonLanguage
+        );
+        return rankPlaces(
+            deduplicatePlaces([...preferredCityPlaces, ...nationwidePlaces]),
+            query,
+            preferredCityId,
+            7
+        );
+    } catch (error) {
+        if (preferredCityPlaces.length > 0) {
+            return rankPlaces(preferredCityPlaces, query, preferredCityId, 7);
+        }
+        throw error;
+    }
+}
+
+function getResultCityLabel(data) {
+    const cityId = data?._source || data?._cityId;
+    return getCityName(cityId, getCurrentMapLanguage());
+}
+
+function joinSuggestionSubtext(...parts) {
+    return parts.filter(Boolean).join(' · ');
 }
 
 function getCurrentStopForHistory(data) {
@@ -593,17 +660,19 @@ function createSuggestionElement(item, historyType = null) {
 
     if (type === 'route') {
         const route = data;
+        const cityLabel = getResultCityLabel(route);
         iconHTML = `<div class="suggestion-icon route" style="background: ${isHistory ? 'var(--bg-secondary)' : 'var(--primary-light)'}; color: ${isHistory ? 'var(--text-secondary)' : 'var(--primary-dark)'};">${isHistory ? '🕒' : '🚌'}</div>`;
         textHTML = `
             <div style="font-weight:600;">Route ${route.shortName}</div>
-            <div class="suggestion-subtext">${route.longName}</div>
+            <div class="suggestion-subtext">${joinSuggestionSubtext(cityLabel, route.longName)}</div>
         `;
     } else if (type === 'stop') {
         const stop = getCurrentStopForHistory(data) || data;
+        const cityLabel = getResultCityLabel(stop);
         iconHTML = `<div class="suggestion-icon stop" style="background: ${isHistory ? 'var(--bg-secondary)' : 'var(--primary-light)'}; color: ${isHistory ? 'var(--text-secondary)' : 'var(--primary)'};">${isHistory ? '🕒' : '🚏'}</div>`;
         textHTML = `
             <div style="font-weight:600;">${stop.name}</div>
-            <div class="suggestion-subtext">${t('codeLabel', stop.code || 'N/A')}</div>
+            <div class="suggestion-subtext">${joinSuggestionSubtext(cityLabel, t('codeLabel', stop.code || 'N/A'))}</div>
         `;
     } else if (type === 'place') {
         const placeIcon = data.placeType === 'house' ? '🏠' : data.placeType === 'street' ? '🛣️' : '📍';
@@ -970,13 +1039,14 @@ function renderDirSuggestionsList(stops, places, query, fieldType) {
     stops.forEach(stop => {
         const div = document.createElement('div');
         div.className = 'suggestion-item';
+        const cityLabel = getResultCityLabel(stop);
         div.innerHTML = `
             <div class="suggestion-icon stop" style="background: var(--primary-light); color: var(--primary);">
                 🚏
             </div>
             <div class="suggestion-text">
                 <div style="font-weight:600;">${stop.name}</div>
-                <div class="suggestion-subtext">${t('codeLabel', stop.code || 'N/A')}</div>
+                <div class="suggestion-subtext">${joinSuggestionSubtext(cityLabel, t('codeLabel', stop.code || 'N/A'))}</div>
             </div>
         `;
         div.addEventListener('click', () => {

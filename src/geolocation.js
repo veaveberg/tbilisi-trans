@@ -56,6 +56,7 @@ const TBILISI_REGION_BBOX = Object.freeze({
     north: 42.0
 });
 const FOLLOW_SMOOTHING_FACTOR = 0.35;
+const LOCATION_BUTTON_MIN_ZOOM = 14;
 const FOLLOW_SNAP_DISTANCE_METERS = 250;
 const LOCATION_MARKER_ANIMATION_MS = 650;
 const LOCATION_MARKER_SNAP_DISTANCE_METERS = 1000;
@@ -589,11 +590,19 @@ function isFollowCameraBlocked() {
     return isUserInteracting || isUserRotating || isDragging || isPitching || isReCentering;
 }
 
+function getLocationButtonZoom(map) {
+    const currentZoom = map?.getZoom?.();
+    return Number.isFinite(currentZoom)
+        ? Math.max(currentZoom, LOCATION_BUTTON_MIN_ZOOM)
+        : LOCATION_BUTTON_MIN_ZOOM;
+}
+
 function centerFollowCamera(map, options = {}) {
     const {
         duration = 500,
         force = false,
-        useSmoothing = false
+        useSmoothing = false,
+        zoom
     } = options;
 
     if (!map || !lastUserCoords || !isFollowModeActive()) return false;
@@ -609,6 +618,9 @@ function centerFollowCamera(map, options = {}) {
         easing: (t) => t * (2 - t),
         essential: true
     };
+    if (Number.isFinite(zoom)) {
+        cameraOptions.zoom = zoom;
+    }
 
     if (currentLocationState === LOCATION_STATES.HEADING && latestHeading !== null) {
         setHeadingMapBearing(map, latestHeading);
@@ -936,6 +948,8 @@ export function setupGeolocation(map) {
     if (locateBtn) {
         locateBtn.addEventListener('click', () => {
             lastLocateClickTime = Date.now();
+            // An explicit location request takes priority over the startup camera flow.
+            isAutoFlyOnLaunch = false;
 
             if (!isNative && checkHeadingSupport() && typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                 const granted = localStorage.getItem('compassPermissionGranted') === 'true';
@@ -985,7 +999,11 @@ export function setupGeolocation(map) {
                 smoothedFollowCoords = lastUserCoords ? { ...lastUserCoords } : null;
 
                 if (lastUserCoords) {
-                    centerFollowCamera(map, { force: true, duration: 500 });
+                    centerFollowCamera(map, {
+                        force: true,
+                        duration: 500,
+                        zoom: getLocationButtonZoom(map)
+                    });
                     if (isNative) {
                         refreshLocationMarker(map, {
                             activateFollow: true,
@@ -1261,6 +1279,7 @@ export function setupGeolocation(map) {
         lastUserCoords = { lng: coords.longitude, lat: coords.latitude };
         repairUserLocationMarker(map, e);
 
+        const shouldUseLocationButtonZoom = isWaitingForFirstLocation;
         if (isWaitingForFirstLocation) {
             isWaitingForFirstLocation = false;
             const locateBtn = document.getElementById('locate-me');
@@ -1292,7 +1311,11 @@ export function setupGeolocation(map) {
 
         const shouldFollow = (currentLocationState === LOCATION_STATES.FOLLOW || currentLocationState === LOCATION_STATES.HEADING) && !isUserInteracting && !isUserRotating && !isDragging && !isPitching && !isReCentering;
         if (shouldFollow) {
-            centerFollowCamera(map, { duration: 500, useSmoothing: true });
+            centerFollowCamera(map, {
+                duration: 500,
+                useSmoothing: true,
+                zoom: shouldUseLocationButtonZoom ? getLocationButtonZoom(map) : undefined
+            });
         } else {
             smoothedFollowCoords = null;
             scheduleFollowCameraSync(map, { delayMs: 150 });

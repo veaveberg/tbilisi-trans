@@ -88,8 +88,8 @@
       display: none !important;
     }
   </style>
-  <script type="module" crossorigin src="/tbilisi-trans/assets/index-DxE_8ZGu.js"></script>
-  <link rel="stylesheet" crossorigin href="/tbilisi-trans/assets/index-IzQKgVa8.css">
+  <script type="module" crossorigin src="/tbilisi-trans/assets/index-CXMGVx2e.js"></script>
+  <link rel="stylesheet" crossorigin href="/tbilisi-trans/assets/index-zGFUOCDs.css">
 <link rel="manifest" href="/tbilisi-trans/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/tbilisi-trans/registerSW.js"></script></head>
 
 <body class="loading">
@@ -724,12 +724,13 @@
             </div>
           </details>
 
+          <div id="directions-routing-warning" class="directions-routing-warning hidden"></div>
           <div id="directions-placeholder" class="directions-placeholder">
             Select two points to preview route options.
           </div>
           <div id="directions-results" class="directions-results hidden"></div>
           <div id="directions-options-disclaimer" class="directions-options-disclaimer">
-            Doesn’t support Rustavi buses and Mtatsminda Park cable-car and funicular yet
+            Mtatsminda Park cable car and funicular are not supported yet
           </div>
         </div>
       </div>
@@ -775,7 +776,7 @@
       </div>
 
       <button id="reset-view" class="reset-view-btn hidden">
-        <span>📍</span> Return to Tbilisi
+        <span>📍</span> <span id="reset-view-label">Return to Georgia</span>
       </button>
 
       <!-- All Routes Editor Modal -->

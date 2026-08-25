@@ -14,6 +14,7 @@ const PROD_BASE = import.meta.env.VITE_API_BASE_URL || (window.location.origin +
 export const sources = [
     {
         id: 'tbilisi',
+        supportsDirections: true,
         proxyPath: '/pis-gateway',
         stripPrefixes: ['1:'],
         apiBase: isCapacitor
@@ -25,6 +26,7 @@ export const sources = [
     },
     {
         id: 'rustavi',
+        supportsDirections: true,
         proxyPath: '/rustavi-proxy',
         prefix: 'r',
         separator: '',
@@ -38,6 +40,7 @@ export const sources = [
     },
     {
         id: 'kutaisi',
+        supportsDirections: true,
         enabled: import.meta.env.VITE_ENABLE_KUTAISI !== '0',
         proxyPath: '/kutaisi-proxy',
         prefix: 'k',
@@ -52,6 +55,7 @@ export const sources = [
     },
     {
         id: 'batumi',
+        supportsDirections: false,
         adapter: 'batumi',
         enabled: import.meta.env.VITE_ENABLE_BATUMI !== '0',
         proxyPath: '/batumi-proxy',

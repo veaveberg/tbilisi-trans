@@ -37,6 +37,7 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         unfavorite: 'Unfavorite',
         copyLink: 'Copy link',
         streetScreen: 'Show board',
+        returnToGeorgia: 'Return to Georgia',
         close: 'Close',
         minimize: 'Minimize',
         directionsTitle: 'Directions',
@@ -80,7 +81,9 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         tomorrow: 'Tomorrow',
         cantGetRoutes: "Can't get the routes",
         routeOptionsEmpty: 'Select two points to preview route options.',
-        directionsDisclaimer: 'Doesn’t support Rustavi buses and Mtatsminda Park cable-car and funicular yet',
+        directionsUnsupportedArea: 'Directions are currently supported only within Tbilisi, Rustavi, and Kutaisi. Mtatsminda Park cable car and funicular are not supported yet.',
+        directionsCrossCity: 'Cross-city directions are not supported yet. Both points must be within the same supported city. Mtatsminda Park cable car and funicular are not supported yet.',
+        directionsDisclaimer: 'Mtatsminda Park cable car and funicular are not supported yet',
         directionsFromHere: 'From here',
         directionsToHere: 'To here',
         location: 'Location',
@@ -196,6 +199,7 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         unfavorite: 'რჩეულებიდან ამოღება',
         copyLink: 'ბმულის კოპირება',
         streetScreen: 'ტაბლოს ჩვენება',
+        returnToGeorgia: 'საქართველოში დაბრუნება',
         close: 'დახურვა',
         minimize: 'ჩაკეცვა',
         directionsTitle: 'მიმართულებები',
@@ -239,7 +243,9 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         tomorrow: 'ხვალ',
         cantGetRoutes: 'მარშრუტების აგება ვერ მოხერხდა',
         routeOptionsEmpty: 'აირჩიეთ ორი წერტილი მარშრუტის ვარიანტების სანახავად.',
-        directionsDisclaimer: 'რუსთავის ავტობუსები, მთაწმინდის საბაგირო და ფუნიკულიორი ჯერ არ არის მხარდაჭერილი',
+        directionsUnsupportedArea: 'მარშრუტების დაგეგმვა ამჟამად მხარდაჭერილია მხოლოდ თბილისის, რუსთავისა და ქუთაისის ფარგლებში. მთაწმინდის საბაგირო და ფუნიკულიორი ჯერ არ არის მხარდაჭერილი.',
+        directionsCrossCity: 'ქალაქებს შორის მარშრუტების დაგეგმვა ჯერ არ არის მხარდაჭერილი. ორივე წერტილი ერთსა და იმავე მხარდაჭერილ ქალაქში უნდა იყოს. მთაწმინდის საბაგირო და ფუნიკულიორი ჯერ არ არის მხარდაჭერილი.',
+        directionsDisclaimer: 'მთაწმინდის საბაგირო და ფუნიკულიორი ჯერ არ არის მხარდაჭერილი',
         directionsFromHere: 'აქედან',
         directionsToHere: 'აქამდე',
         location: 'მდებარეობა',
@@ -355,6 +361,7 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         unfavorite: 'Убрать из избранного',
         copyLink: 'Копировать ссылку',
         streetScreen: 'Показать табло',
+        returnToGeorgia: 'Вернуться в Грузию',
         close: 'Закрыть',
         minimize: 'Свернуть',
         directionsTitle: 'Маршруты',
@@ -398,7 +405,9 @@ const STRINGS: Record<AppLanguage, StringTable> = {
         tomorrow: 'Завтра',
         cantGetRoutes: 'Не удалось построить маршруты',
         routeOptionsEmpty: 'Выберите две точки, чтобы посмотреть варианты маршрута.',
-        directionsDisclaimer: 'Руставские автобусы, канатная дорога и фуникулер на Мтацминду пока не поддерживаются',
+        directionsUnsupportedArea: 'Маршруты пока поддерживаются только в пределах Тбилиси, Рустави и Кутаиси. Канатная дорога и фуникулер парка Мтацминда пока не поддерживаются.',
+        directionsCrossCity: 'Междугородние маршруты пока не поддерживаются. Обе точки должны находиться в одном поддерживаемом городе. Канатная дорога и фуникулер парка Мтацминда пока не поддерживаются.',
+        directionsDisclaimer: 'Канатная дорога и фуникулер парка Мтацминда пока не поддерживаются',
         directionsFromHere: 'Отсюда',
         directionsToHere: 'Сюда',
         location: 'Позиция',
@@ -793,6 +802,7 @@ export function applyStaticText() {
     setTitle('copy-link-btn', t('copyLink'));
     setText('open-street-screen-label', t('streetScreen'));
     setTitle('open-street-screen-btn', t('streetScreen'));
+    setText('reset-view-label', t('returnToGeorgia'));
     setTitle('close-panel', t('close'));
     setText('edit-toggle-loc', t('location'));
     setText('edit-toggle-rot', t('rotation'));

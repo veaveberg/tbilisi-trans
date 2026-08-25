@@ -11,6 +11,7 @@ import { setMapFocus } from './map-interactions.js';
 import { getLastUserCoords, stopTracking } from './geolocation.js';
 import { fetchArrivals, getArrivalMinutesValue, formatArrivalDisplayValue, formatScheduledTime, shouldShowLateDepotWarning, getV3Schedule, isArrivalsLiveDataStale } from './arrivals.js';
 import { getBandPadding, getCameraOrientation } from './map-camera.js';
+import { resolveDirectionsRegion } from './directions-regions.js';
 
 let metroSegments = null;
 let metroMidpoints = null;
@@ -208,6 +209,9 @@ const state = {
         selectedRouteIndex: 0,
         status: 'idle',
         message: '',
+        messageKey: null,
+        warningText: '',
+        sourceId: null,
         transferMarkers: []
     },
     time: {
@@ -543,7 +547,7 @@ function buildRouteFeatures(result, routeIndex = 0) {
                     properties: {
                         id: segment.id || String(index),
                         mode: modeUpper,
-                        color: getRouteColorByShortName(segment.routeShortName, segment.from, segment.to, segment.mode) || getModeColor(segment.mode, segment.color),
+                        color: getRouteColorByShortName(segment.routeShortName, segment.from, segment.to, segment.mode, segment.sourceId) || getModeColor(segment.mode, segment.color),
                         text: segment.text || ''
                     }
                 };
@@ -755,6 +759,7 @@ function buildTransferPoints(result, routeIndex = 0) {
                     nextRouteShortName: nextLeg.routeShortName,
                     nextRouteColor: nextLeg.color,
                     nextRouteMode: nextLeg.mode,
+                    nextRouteSourceId: nextLeg.sourceId,
                     filterRouteShortName: nextLeg.routeShortName,
                     filterRouteMode: nextLeg.mode
                 });
@@ -778,6 +783,7 @@ function buildTransferPoints(result, routeIndex = 0) {
                     nextRouteShortName: nextLeg.routeShortName,
                     nextRouteColor: nextLeg.color,
                     nextRouteMode: nextLeg.mode,
+                    nextRouteSourceId: nextLeg.sourceId,
                     filterRouteShortName: nextLeg.routeShortName,
                     filterRouteMode: nextLeg.mode
                 });
@@ -1027,7 +1033,7 @@ function renderTransferMarkers(result, routeIndex = 0) {
             chip.className = 'directions-transfer-chip';
             chip.textContent = pt.nextRouteShortName;
             
-            const color = getRouteColorByShortName(pt.nextRouteShortName, null, null, pt.nextRouteMode || 'BUS') 
+            const color = getRouteColorByShortName(pt.nextRouteShortName, null, null, pt.nextRouteMode || 'BUS', pt.nextRouteSourceId)
                           || getModeColor(pt.nextRouteMode || 'BUS', pt.nextRouteColor);
             chip.style.setProperty('--chip-color', color);
             el.appendChild(chip);
@@ -1240,9 +1246,13 @@ function getEquivalentStopIds(stopId, includeHubs = true) {
     return Array.from(equivalents);
 }
 
-function inferRouteType(shortName, mode) {
+function inferRouteType(shortName, mode, sourceId = null) {
     const name = String(shortName || '').trim();
     if (!name || mode !== 'BUS') return 'regular';
+
+    if (sourceId === 'rustavi') return 'rustavi';
+    if (sourceId && sourceId !== 'tbilisi') return 'regular';
+    if (sourceId === 'tbilisi' && (name.length === 1 || name.length === 2)) return 'regular';
 
     if (name.length === 3) {
         if (name.startsWith('4') || name.startsWith('5')) {
@@ -1256,7 +1266,7 @@ function inferRouteType(shortName, mode) {
     return 'regular';
 }
 
-function getRouteColorByShortName(shortName, fromStop, toStop, mode = 'BUS') {
+function getRouteColorByShortName(shortName, fromStop, toStop, mode = 'BUS', sourceId = null) {
     if (mode === 'WALK') return null;
 
     if (mode === 'GONDOLA' || mode === 'CABLE_CAR') {
@@ -1273,7 +1283,7 @@ function getRouteColorByShortName(shortName, fromStop, toStop, mode = 'BUS') {
         return '#ef4444'; // Red Line
     }
 
-    const type = inferRouteType(shortName, mode);
+    const type = inferRouteType(shortName, mode, sourceId);
     const isDark = document.body.classList.contains('dark-mode');
 
     if (type === 'rustavi') {
@@ -1283,12 +1293,16 @@ function getRouteColorByShortName(shortName, fromStop, toStop, mode = 'BUS') {
         return isDark ? '#0a84ff' : '#0033B4';
     }
 
-    // Try to resolve Tbilisi regular bus custom color if available in allRoutes
-    if (window.allRoutes) {
-        const match = window.allRoutes.find(r => String(r.shortName) === String(shortName));
-        if (match && window.dataProvider && window.dataProvider.getRouteDisplayColor) {
-            return window.dataProvider.getRouteDisplayColor(match);
-        }
+    // Resolve against the merged route catalog and keep city sources isolated.
+    const routeCatalog = window.dataProvider?.getAllRoutes?.()
+        || window.__streetScreenAllRoutes
+        || window.allRoutes
+        || [];
+    const match = routeCatalog.find(route =>
+        String(route.shortName) === String(shortName) && (!sourceId || route._source === sourceId)
+    );
+    if (match && window.dataProvider?.getRouteDisplayColor) {
+        return window.dataProvider.getRouteDisplayColor(match);
     }
 
     return '#00B38B';
@@ -1477,7 +1491,7 @@ function getAlternativeRoutes(fromStop, toStop, currentRouteShortName, mode) {
 
 function makeLegIcon(segment) {
     const mode = segment.mode;
-    const resolvedColor = getRouteColorByShortName(segment.routeShortName, segment.from, segment.to, segment.mode) || segment.color || '#64748b';
+    const resolvedColor = getRouteColorByShortName(segment.routeShortName, segment.from, segment.to, segment.mode, segment.sourceId) || segment.color || '#64748b';
 
     if (mode === 'WALK') {
         const icon = document.createElement('span');
@@ -1516,7 +1530,7 @@ function makeLegIcon(segment) {
         // Find alternative routes
         const alts = getAlternativeRoutes(segment.from, segment.to, segment.routeShortName, 'BUS');
         for (const altShortName of alts) {
-            const altColor = getRouteColorByShortName(altShortName, segment.from, segment.to, 'BUS') || resolvedColor;
+            const altColor = getRouteColorByShortName(altShortName, segment.from, segment.to, 'BUS', segment.sourceId) || resolvedColor;
             const altPlaque = makeRoutePlaque(altShortName, altColor, 'BUS');
             container.appendChild(altPlaque);
         }
@@ -1553,7 +1567,7 @@ function makeLegIcon(segment) {
         // Find alternative routes
         const alts = getAlternativeRoutes(segment.from, segment.to, segment.routeShortName, mode);
         for (const altShortName of alts) {
-            const altColor = getRouteColorByShortName(altShortName, segment.from, segment.to, mode) || resolvedColor;
+            const altColor = getRouteColorByShortName(altShortName, segment.from, segment.to, mode, segment.sourceId) || resolvedColor;
             const altPlaque = makeRoutePlaque(altShortName, altColor, mode);
             container.appendChild(altPlaque);
         }
@@ -1588,7 +1602,7 @@ function makeLegIcon(segment) {
         // Find alternative routes
         const alts = getAlternativeRoutes(segment.from, segment.to, segment.routeShortName, mode);
         for (const altShortName of alts) {
-            const altColor = getRouteColorByShortName(altShortName, segment.from, segment.to, mode) || resolvedColor;
+            const altColor = getRouteColorByShortName(altShortName, segment.from, segment.to, mode, segment.sourceId) || resolvedColor;
             const altPlaque = makeRoutePlaque(altShortName, altColor, mode);
             container.appendChild(altPlaque);
         }
@@ -1608,7 +1622,7 @@ function makeLegIcon(segment) {
 
     const alts = getAlternativeRoutes(segment.from, segment.to, segment.routeShortName, mode);
     for (const altShortName of alts) {
-        const altColor = getRouteColorByShortName(altShortName, segment.from, segment.to, mode) || resolvedColor;
+        const altColor = getRouteColorByShortName(altShortName, segment.from, segment.to, mode, segment.sourceId) || resolvedColor;
         const altPlaque = makeRoutePlaque(altShortName, altColor, mode);
         container.appendChild(altPlaque);
     }
@@ -2050,15 +2064,25 @@ function buildRouteOptionElement(route, index, isSelected) {
 function renderDirectionsStatus() {
     const placeholder = document.getElementById('directions-placeholder');
     const resultsContainer = document.getElementById('directions-results');
+    const disclaimer = document.getElementById('directions-options-disclaimer');
+    const routingWarning = document.getElementById('directions-routing-warning');
     if (!placeholder) return;
+
+    const warningText = state.from && state.to ? state.routing.warningText : '';
+    if (routingWarning) {
+        routingWarning.textContent = warningText;
+        routingWarning.classList.toggle('hidden', !warningText);
+    }
 
     stopArrivalsCache.clear();
 
     // Clear previous results
     if (resultsContainer) resultsContainer.innerHTML = '';
 
-    placeholder.classList.toggle('directions-placeholder-error', state.routing.status === 'error');
+    const hasRoutingError = state.routing.status === 'error' || state.routing.status === 'unsupported';
+    placeholder.classList.toggle('directions-placeholder-error', hasRoutingError);
     placeholder.classList.toggle('directions-placeholder-loading', state.routing.status === 'loading');
+    disclaimer?.classList.toggle('hidden', state.routing.status === 'unsupported');
 
     if (!state.from || !state.to) {
         placeholder.textContent = t('routeOptionsEmpty');
@@ -2084,6 +2108,14 @@ function renderDirectionsStatus() {
         return;
     }
 
+    if (state.routing.status === 'unsupported') {
+        placeholder.textContent = t(state.routing.messageKey || 'directionsUnsupportedArea');
+        placeholder.classList.remove('hidden');
+        if (resultsContainer) resultsContainer.classList.add('hidden');
+        stopDirectionsRefreshTimer();
+        return;
+    }
+
     if (state.routing.status === 'success' && state.routing.result) {
         let routes = state.routing.result.routes || [];
 
@@ -2093,25 +2125,6 @@ function renderDirectionsStatus() {
             if (resultsContainer) resultsContainer.classList.add('hidden');
             return;
         }
-
-        const isRustaviOption = (opt) => {
-            if (!opt || !opt.segments) return false;
-            return opt.segments.some(seg => inferRouteType(seg.routeShortName, seg.mode) === 'rustavi');
-        };
-
-        // Sort routes in-place: Tbilisi routes first, Rustavi routes at the end
-        if (state.routing.result.routes) {
-            state.routing.result.routes.sort((a, b) => {
-                const isA = isRustaviOption(a);
-                const isB = isRustaviOption(b);
-                if (isA !== isB) {
-                    return isA ? 1 : -1;
-                }
-                return 0; // Maintain original duration sorting as fallback
-            });
-        }
-
-        routes = state.routing.result.routes || [];
 
         // Hide placeholder, show results
         placeholder.classList.add('hidden');
@@ -2140,7 +2153,20 @@ async function runDirectionsFetch({ fit = true } = {}) {
     if (!state.from || !state.to) {
         state.routing.status = 'idle';
         state.routing.message = '';
+        state.routing.warningText = '';
         clearDirectionsRoute();
+        renderDirectionsStatus();
+        return;
+    }
+
+    const routingRegion = resolveDirectionsRegion(state.from, state.to);
+    if (routingRegion.status !== 'supported') {
+        clearDirectionsRoute();
+        state.routing.status = 'unsupported';
+        state.routing.message = '';
+        state.routing.messageKey = routingRegion.messageKey;
+        state.routing.warningText = '';
+        state.routing.sourceId = null;
         renderDirectionsStatus();
         return;
     }
@@ -2155,20 +2181,29 @@ async function runDirectionsFetch({ fit = true } = {}) {
     state.routing.abortController = abortController;
     state.routing.status = 'loading';
     state.routing.message = '';
+    state.routing.messageKey = null;
+    state.routing.warningText = routingRegion.warningText || '';
+    state.routing.sourceId = routingRegion.sourceId;
     state.routing.selectedRouteIndex = 0;
     renderDirectionsStatus();
 
     try {
-        const result = await fetchDirections(getDirectionsRequestDraft(), { signal: abortController.signal });
+        const result = await fetchDirections(getDirectionsRequestDraft(), {
+            sourceId: routingRegion.sourceId,
+            signal: abortController.signal
+        });
         if (requestId !== state.routing.requestId) return;
         state.routing.status = 'success';
         state.routing.message = result.routes?.[0]?.summaryText || '';
+        state.routing.messageKey = null;
         renderDirectionsResult(result, { fit });
         renderDirectionsStatus();
     } catch (err) {
         if (err?.name === 'AbortError' || requestId !== state.routing.requestId) return;
         state.routing.status = 'error';
         state.routing.message = err?.message || String(err);
+        state.routing.messageKey = null;
+        state.routing.warningText = '';
         clearDirectionsRoute();
         renderDirectionsStatus();
     } finally {
@@ -2187,10 +2222,25 @@ function scheduleDirectionsFetch({ delay = 300, fit = true } = {}) {
     if (!state.from || !state.to) {
         state.routing.status = 'idle';
         state.routing.message = '';
+        state.routing.warningText = '';
         clearDirectionsRoute();
         renderDirectionsStatus();
         return;
     }
+
+    const routingRegion = resolveDirectionsRegion(state.from, state.to);
+    if (routingRegion.status !== 'supported') {
+        clearDirectionsRoute();
+        state.routing.status = 'unsupported';
+        state.routing.message = '';
+        state.routing.messageKey = routingRegion.messageKey;
+        state.routing.warningText = '';
+        state.routing.sourceId = null;
+        renderDirectionsStatus();
+        return;
+    }
+
+    state.routing.warningText = routingRegion.warningText || '';
 
     state.routing.debounceTimer = setTimeout(() => {
         state.routing.debounceTimer = null;
@@ -3524,6 +3574,7 @@ export function initDirectionsUI() {
     onLanguageChange((change) => {
         if (change.target === 'ui') {
             syncDirectionsLanguage();
+            renderDirectionsStatus();
         }
         if (change.target === 'map') {
             geocodeCache.clear();

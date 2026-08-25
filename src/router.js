@@ -51,6 +51,16 @@ export const Router = {
     buildBase: getBuildBasePath(),
     _lastParsedPath: null,
     _lastParsedState: null,
+    // Assigned by the app after its stop data has loaded. Keeps routing
+    // source-agnostic while allowing cities to expose public stop codes.
+    stopIdFormatter: null,
+
+    formatStopIdForUrl(stopId) {
+        const formatted = typeof this.stopIdFormatter === 'function'
+            ? this.stopIdFormatter(stopId)
+            : null;
+        return formatted || String(stopId).replace(/^1:/, '');
+    },
 
     init() {
         console.log('[Router] Initializing...');
@@ -286,8 +296,7 @@ export const Router = {
             return;
         }
 
-        // Clean ID for URL: Remove "1:" prefix
-        const cleanId = (id) => String(id).replace(/^1:/, '');
+        const cleanId = (id) => this.formatStopIdForUrl(id);
 
         // Don't include mapHash for stop URLs - the stop ID leads to the correct location
         let url = `${this.base}stop${cleanId(stopId)}`;
@@ -351,7 +360,7 @@ export const Router = {
     updateNested(stopId, shortName, direction = 0) {
         if (!stopId || !shortName) return;
         // Clean ID
-        const cleanStopId = String(stopId).replace(/^1:/, '');
+        const cleanStopId = this.formatStopIdForUrl(stopId);
         const suffix = direction === 1 ? 'b' : 'a';
 
         let url = `${this.base}stop${cleanStopId}/bus${shortName}${suffix}`;

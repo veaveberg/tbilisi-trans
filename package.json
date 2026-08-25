@@ -28,6 +28,8 @@
     "data:archive-and-manifest": "node scripts/update-data.js --skip-fetch",
     "verify:directions-url": "node scripts/verify-directions-url.js",
     "test:source-ids": "node scripts/test-id-restore.mjs",
+    "test:batumi-live": "node scripts/test-batumi-live.mjs",
+    "test:batumi-stop-url": "node scripts/test-batumi-stop-url.mjs",
     "check:live-bus-fit": "node scripts/check-live-bus-polyline-fit.js",
     "build": "vite build",
     "build:all": "npm run data:update && vite build",

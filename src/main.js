@@ -11,13 +11,14 @@ import './css/street-screen.css';
 import mapboxgl from 'mapbox-gl';
 
 import { Router } from './router.js';
+import { getBatumiStopUrlId, resolveBatumiStopUrlId } from './data/batumi-stop-url.js';
 import * as api from './api.js';
 import { RouteGeometry } from './route-geometry.js';
 import { setSheetState, setPanelState, closeAllPanels, setupPanelDrag } from './panel-manager.js';
 import * as metro from './metro.js';
 const { handleMetroStop } = metro;
 import { setupGeolocation, isTrackingActive, stopTracking, isUserInteractingWithMap, LOCATION_STATES, refreshLocationMarker } from './geolocation.js';
-import { map, getMapHash } from './map-setup.js';
+import { map, getMapHash, GEORGIA_CENTER, fitMapToGeorgia, isMapViewportOutsideGeorgia, isMapZoomedOutBeyondGeorgia } from './map-setup.js';
 import { setupVisuals, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, renderLiveBuses, registerLiveBusLine, clearLiveBuses, holdLiveBuses, refreshLiveBusTheme, decorateLiveBusFeatures, setMapLightPreset } from './map-visuals.js';
 import { setMapFocus, refreshMapFocusDimTheme, setupHoverHandlers, setupClickHandlers, clearStopHoverState, consumeMapTapForSearch, runMapAction, resolvePlaceClickDetails } from './map-interactions.js';
 import stopRotations from './data/stop_bearings.json';
@@ -61,6 +62,15 @@ let stopToRoutesMap = new Map();
 const hydratedStops = new Set();
 let lastRouteUpdateId = 0;
 const redirectMap = new Map();
+
+Router.stopIdFormatter = (stopId) => {
+    const stop = allStops.find(candidate => String(candidate.id) === String(stopId));
+    return getBatumiStopUrlId(stop);
+};
+
+function resolvePublicStopId(stopId) {
+    return resolveBatumiStopUrlId(stopId, allStops) || stopId;
+}
 
 function cancelPendingFilterBounds() {
     window._pendingFilterBounds = null;
@@ -2475,7 +2485,7 @@ async function handleDeepLinksInternal() {
         return true;
     }
     if (state.stopId) {
-        const rawStopId = state.stopId;
+        const rawStopId = resolvePublicStopId(state.stopId);
         // Router might force '1:' prefix for nested routes, but internal IDs might be '3955'
         const cleanId = String(rawStopId).replace(/^1:/, '');
         const prefixedStopId = rawStopId.includes(':') ? rawStopId : `1:${cleanId}`;
@@ -2522,7 +2532,8 @@ async function handleDeepLinksInternal() {
                 if (state.targetIds && state.targetIds.length > 0) {
                     state.targetIds.forEach(tid => {
                         // Normalize Target ID (e.g. '930' -> '1:930')
-                        const normTid = redirectMap.get(tid) || tid;
+                        const resolvedTargetId = resolvePublicStopId(tid);
+                        const normTid = redirectMap.get(resolvedTargetId) || resolvedTargetId;
                         // Add all equivalent stops (matching applyFilter behavior)
                         // This ensures merged stops, hub stops, and redirects are all included
                         const equivalentStops = getEquivalentStops(normTid);
@@ -2643,24 +2654,14 @@ initDirectionsUI();
 
 // Zoom Logic for Reset Button
 const resetBtn = document.getElementById('reset-view');
-const HOME_REGION_BBOX = Object.freeze({
-    west: 44.5,
-    south: 41.5,
-    east: 45.1,
-    north: 42.0
-});
-const HOME_CENTER = Object.freeze({
-    lng: 44.78,
-    lat: 41.72
-});
-const RETURN_ANIMATION_MAX_DISTANCE_METERS = 30000;
+const resetBtnLabel = document.getElementById('reset-view-label');
+const RETURN_ANIMATION_MAX_DISTANCE_METERS = 400000;
 
-function isWithinHomeRegion(lng, lat) {
-    return lng >= HOME_REGION_BBOX.west &&
-        lng <= HOME_REGION_BBOX.east &&
-        lat >= HOME_REGION_BBOX.south &&
-        lat <= HOME_REGION_BBOX.north;
+function syncResetViewLabel() {
+    if (resetBtnLabel) resetBtnLabel.textContent = t('returnToGeorgia');
 }
+
+syncResetViewLabel();
 
 function distanceMetersBetweenPoints(a, b) {
     const toRad = (deg) => deg * (Math.PI / 180);
@@ -2679,20 +2680,17 @@ resetBtn.addEventListener('click', () => {
     stopTracking();
     const center = map.getCenter();
     const current = { lng: center.lng, lat: center.lat };
-    const distanceToHome = distanceMetersBetweenPoints(current, HOME_CENTER);
+    const distanceToGeorgia = distanceMetersBetweenPoints(current, GEORGIA_CENTER);
 
-    if (distanceToHome <= RETURN_ANIMATION_MAX_DISTANCE_METERS) {
-        map.flyTo({ center: [HOME_CENTER.lng, HOME_CENTER.lat], zoom: 12 });
+    if (distanceToGeorgia <= RETURN_ANIMATION_MAX_DISTANCE_METERS) {
+        fitMapToGeorgia({ duration: 800 });
     } else {
-        map.jumpTo({ center: [HOME_CENTER.lng, HOME_CENTER.lat], zoom: 12 });
+        fitMapToGeorgia({ duration: 0 });
     }
 });
 
 map.on('moveend', () => {
-    const zoom = map.getZoom();
-    const center = map.getCenter();
-    const outsideHomeRegion = !isWithinHomeRegion(center.lng, center.lat);
-    if (zoom < 10 || outsideHomeRegion) {
+    if (isMapViewportOutsideGeorgia() || isMapZoomedOutBeyondGeorgia()) {
         resetBtn.classList.remove('hidden');
     } else {
         resetBtn.classList.add('hidden');
@@ -3270,6 +3268,15 @@ function getRouteDisplayColor(route) {
         // Rustavi: Distinct Indigo
         if (isDark) return '#818cf8'; // Lighter Indigo
         return '#4f46e5'; // Deep Indigo
+    }
+
+    // Kutaisi and Batumi both publish a very dark navy route color. Preserve
+    // that official color in light mode, but use a readable sky blue at night.
+    const routeId = String(route.id || '');
+    const isKutaisiOrBatumi = route._source === 'kutaisi' || route._source === 'batumi' ||
+        routeId.startsWith('k') || routeId.startsWith('b');
+    if (isKutaisiOrBatumi && isDark) {
+        return '#5db7ef';
     }
 
     // 3. Identify Minibus (Tbilisi)

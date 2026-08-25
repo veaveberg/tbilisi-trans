@@ -1,4 +1,5 @@
-import { API_KEY, API_BASE_URL, decodePolyline } from './api.js';
+import { API_KEY, decodePolyline } from './api.js';
+import { sources } from './data/sources.js';
 import { getTransitDataLocale } from './i18n.ts';
 
 const DIRECTIONS_TEXT_LIMIT = 5000;
@@ -130,7 +131,7 @@ function decodeLegCoordinates(leg) {
     return [];
 }
 
-function normalizeLeg(leg, index) {
+function normalizeLeg(leg, index, sourceId) {
     const coordinates = decodeLegCoordinates(leg);
 
     const route = leg.route || {};
@@ -157,6 +158,7 @@ function normalizeLeg(leg, index) {
 
     return {
         id: route.shortName || String(index),
+        sourceId,
         mode,
         color,
         text: textParts.join(' '),
@@ -207,16 +209,18 @@ function summarizeItinerary(itinerary, index) {
     return parts.length ? parts.join(' · ') : `Route option ${index + 1}`;
 }
 
-export function normalizeDirectionsResponse(raw) {
+export function normalizeDirectionsResponse(raw, options = {}) {
+    const sourceId = options.sourceId || 'tbilisi';
     const itineraries = Array.isArray(raw?.itineraries) ? raw.itineraries : [];
 
     const routes = itineraries.map((itinerary, index) => {
         const segments = (itinerary.legs || [])
-            .map(normalizeLeg)
+            .map((leg, legIndex) => normalizeLeg(leg, legIndex, sourceId))
             .filter(segment => segment.coordinates.length > 1);
 
         return {
             id: String(index),
+            sourceId,
             summaryText: summarizeItinerary(itinerary, index),
             duration: itinerary.duration || 0,
             walkTime: itinerary.walkTime || 0,
@@ -230,6 +234,7 @@ export function normalizeDirectionsResponse(raw) {
 
     return {
         raw,
+        sourceId,
         routes,
         technicalText: formatDirectionsTechnicalText(raw, routes)
     };
@@ -250,14 +255,19 @@ export function formatDirectionsTechnicalText(raw, routes = []) {
 }
 
 /**
- * Fetch directions from the TTC plan API.
+ * Fetch directions from the selected city's plan API.
  *
- * Uses GET /pis-gateway/api/v2/plan with query parameters.
- * In dev mode, the Vite proxy forwards /pis-gateway/* to transit.ttc.com.ge.
+ * Uses GET /plan on the configured Tbilisi, Rustavi, or Kutaisi V2 source.
  */
 export async function fetchDirections(draft = {}, options = {}) {
+    const sourceId = options.sourceId || 'tbilisi';
+    const source = sources.find(candidate => candidate.id === sourceId && candidate.supportsDirections);
+    if (!source) {
+        throw new Error(`Directions are not configured for source: ${sourceId}`);
+    }
+
     const params = buildPlanQueryParams(draft);
-    const url = `${API_BASE_URL}/plan?${params.toString()}`;
+    const url = `${source.apiBase}/plan?${params.toString()}`;
 
     const response = await fetch(url, {
         method: 'GET',
@@ -280,5 +290,5 @@ export async function fetchDirections(draft = {}, options = {}) {
         throw new Error(`Directions API ${response.status}: ${message || response.statusText}`);
     }
 
-    return normalizeDirectionsResponse(raw);
+    return normalizeDirectionsResponse(raw, { sourceId });
 }

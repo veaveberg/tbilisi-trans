@@ -998,6 +998,22 @@ body.dark-mode .directions-calendar-popover {
     box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
 }
 
+.directions-routing-warning {
+    margin-top: 12px;
+    padding: 9px 11px;
+    border-radius: 9px;
+    background: rgba(255, 149, 0, 0.13);
+    color: #9a5b00;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+body.dark-mode .directions-routing-warning {
+    background: rgba(255, 159, 10, 0.17);
+    color: #ffb340;
+}
+
 .directions-placeholder {
     padding: 12px 0 0;
     border-top: 1px solid var(--border-light);

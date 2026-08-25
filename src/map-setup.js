@@ -40,6 +40,38 @@ const isDark = storedTheme === 'dark' || (storedTheme === 'system' && sysDark);
 const initialLightPreset = isDark ? 'night' : 'day';
 const BASEMAP_FONT = 'Open Sans';
 const LOCAL_FONT_FAMILY = 'Roboto, Inter, Arial, "Helvetica Neue", Helvetica, sans-serif';
+// Whole-country bounds. fitBounds derives a device-appropriate zoom from these.
+export const GEORGIA_BOUNDS = Object.freeze([[40.0, 41.0], [46.8, 43.6]]);
+export const GEORGIA_CENTER = Object.freeze({ lng: 43.4, lat: 42.3 });
+
+export function getGeorgiaFitOptions(options = {}) {
+    const compactViewport = Math.min(window.innerWidth, window.innerHeight) < 600;
+    const padding = compactViewport ? 20 : 40;
+    return {
+        padding,
+        maxZoom: 8,
+        ...options
+    };
+}
+
+export function fitMapToGeorgia(options = {}) {
+    map.fitBounds(GEORGIA_BOUNDS, getGeorgiaFitOptions(options));
+}
+
+export function isMapViewportOutsideGeorgia() {
+    const bounds = map.getBounds();
+    const [[west, south], [east, north]] = GEORGIA_BOUNDS;
+    return bounds.getEast() < west || bounds.getWest() > east ||
+        bounds.getNorth() < south || bounds.getSouth() > north;
+}
+
+// Keep the reset affordance available when the whole country is no longer
+// legible, while letting fitBounds choose the appropriate threshold per screen.
+export function isMapZoomedOutBeyondGeorgia() {
+    const fittedCamera = map.cameraForBounds(GEORGIA_BOUNDS, getGeorgiaFitOptions());
+    const fittedZoom = fittedCamera?.zoom;
+    return Number.isFinite(fittedZoom) && map.getZoom() < fittedZoom - 0.75;
+}
 
 export const map = new mapboxgl.Map({
     container: 'map',
@@ -55,16 +87,20 @@ export const map = new mapboxgl.Map({
             showTransitLabels: false
         }
     },
-    center: [44.78, 41.72], // Tbilisi center
-    zoom: 12,
+    center: [GEORGIA_CENTER.lng, GEORGIA_CENTER.lat],
+    zoom: 6,
     trackResize: false
 });
 
 attachMapPerformanceRecorder(map);
 markPerformanceEvent('map:created', {
-    center: [44.78, 41.72],
-    zoom: 12,
+    center: [GEORGIA_CENTER.lng, GEORGIA_CENTER.lat],
+    zoom: 6,
     style: 'mapbox://styles/mapbox/standard'
+});
+
+map.once('load', () => {
+    fitMapToGeorgia({ duration: 0 });
 });
 
 function installTapDragZoomAnchorPatch() {

@@ -130,7 +130,10 @@ function getStopIdFromUrlPath() {
     if (firstPart.startsWith('bus')) {
         return '';
     }
-    return firstPart.startsWith('stop') ? firstPart.slice(4) : firstPart;
+    const stopId = firstPart.startsWith('stop') ? firstPart.slice(4) : firstPart;
+    // City prefixes namespace IDs in URLs (b1152, k624, r43), but the board
+    // should show the passenger-facing number without that implementation detail.
+    return stopId.replace(/^[bkr](?=\d)/i, '');
 }
 
 function buildMinutesCellMarkup(minutes, key) {
@@ -690,6 +693,8 @@ export class StreetScreenController {
     renderStatus(options = {}) {
         if (!this.statusEl) return;
         const stopLabel = getStopIdFromUrlPath();
+        const stop = this.options.getCurrentStop?.() || this.currentModel?.stop;
+        const smsLabel = stop?._source === 'tbilisi' ? ' SMS:93344' : '';
         if (options.tempOnly === true) {
             this.statusEl.innerHTML = `
                 <div class="street-screen-status-item street-screen-status-item--id"></div>
@@ -709,7 +714,7 @@ export class StreetScreenController {
             })}<span class="street-screen-status-degree">${escapeHtml('°')}</span><span class="street-screen-status-value street-screen-status-value--unit">${escapeHtml('C')}</span>`
             : buildStatusTimeMarkup(formatTbilisiTime());
         this.statusEl.innerHTML = `
-            <div class="street-screen-status-item street-screen-status-item--id">ID:${escapeHtml(stopLabel)} SMS:93344</div>
+            <div class="street-screen-status-item street-screen-status-item--id">ID:${escapeHtml(stopLabel)}${smsLabel}</div>
             <div class="street-screen-status-item street-screen-status-item--right">${rightValue}</div>
         `;
     }

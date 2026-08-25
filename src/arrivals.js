@@ -1919,7 +1919,9 @@ function buildArrivalTimesMarkup(displayArrivals, timeElId, options = {}) {
         `
         : `<div id="${timeElId}" class="${primaryClasses.join(' ')}"${lateWarningIndices.has(0) || (loopSharedLive && !primary.isScheduled) ? lateStyleAttr : ''}>${primaryText}</div>`;
 
-    const secondaryEntries = scheduledOnly ? entries.slice(1, 3) : entries.slice(1, 3);
+    // Scheduled cards intentionally use the compact stack. It must begin with
+    // the closest scheduled arrival, not skip ahead to the second one.
+    const secondaryEntries = scheduledOnly ? entries.slice(0, 2) : entries.slice(1, 3);
     const secondaryMarkup = secondaryEntries.length > 0 ? `
         <div class="time-secondary-stack">
             ${secondaryEntries.map((entry, index) => {
@@ -1932,9 +1934,6 @@ function buildArrivalTimesMarkup(displayArrivals, timeElId, options = {}) {
         </div>
     ` : '';
 
-    // Scheduled arrivals are estimates shown as clock times. Reserve the
-    // primary display for live arrivals and use the second and third scheduled
-    // times in the compact stack to free width for route details.
     if (scheduledOnly) {
         return `
             <div class="time-container time-container-scheduled-only">
@@ -3166,10 +3165,9 @@ export function renderArrivals(arrivalsData, currentStopId = null) {
                         if (!isCardRenderCurrent(stableId, stopId, renderVersion)) return;
                         if (firstArrival) {
                             const currentType = currentDiv.getAttribute('data-item-type');
-                            // Scheduled-only cards intentionally render no
-                            // primary time; they show the second and third
-                            // arrivals in the compact stack. Do not require a
-                            // primary element before replacing that stack.
+                            // Scheduled-only cards keep the primary display
+                            // hidden, while their compact stack shows the
+                            // first and second upcoming departures.
                             const isStillScheduled = currentType === 'scheduled' || timeEl?.classList.contains('scheduled-time');
                             if (!isStillScheduled) return;
                             const minsFromNow = firstArrival.minutes;

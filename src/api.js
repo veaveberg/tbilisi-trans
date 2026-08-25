@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { sources } from './data/sources.js';
+import { normalizeBatumiArrivalMinutes } from './data/batumi-live.js';
 import {
     getSourceSeparator,
     namespaceVehicleId,
@@ -1926,7 +1927,8 @@ async function fetchBatumiArrivalsForStop(stopId, source, routeId = null, limit 
                 .map(bus => [String(bus.id || bus._id || bus.name || ''), bus]));
 
             return Object.values(stopArrival.arrival_times).flatMap(value => {
-                if (!value || !Number.isFinite(Number(value.minute))) return [];
+                const arrivalMinutes = normalizeBatumiArrivalMinutes(value?.minute);
+                if (arrivalMinutes === null) return [];
                 const bus = busesById.get(String(value.bus_id || ''));
                 const suffix = bus?.bus_info?.status !== undefined
                     ? batumiPatternSuffix(bus.bus_info.status)
@@ -1941,8 +1943,8 @@ async function fetchBatumiArrivalsForStop(stopId, source, routeId = null, limit 
                     patternSuffix: suffix,
                     vehicleMode: 'BUS',
                     realtime: true,
-                    realtimeArrivalMinutes: Number(value.minute),
-                    scheduledArrivalMinutes: Number(value.minute),
+                    realtimeArrivalMinutes: arrivalMinutes,
+                    scheduledArrivalMinutes: arrivalMinutes,
                     vehicleId: namespaceVehicleId(value.bus_id || value.bus_name || '', source),
                     _sourceStopId: stopId,
                     _source: source.id
