@@ -1479,21 +1479,6 @@
     "pattern": [
       {
         "start": 7,
-        "end": 12,
-        "interval": 19
-      },
-      {
-        "start": 12,
-        "end": 14,
-        "interval": 22
-      },
-      {
-        "start": 14,
-        "end": 15,
-        "interval": 28
-      },
-      {
-        "start": 15,
         "end": 21,
         "interval": 19
       },
@@ -1526,7 +1511,7 @@
   },
   "1:R30746": {
     "shortName": "344",
-    "longName": "Sadguris Moedani - Zemo Ponitchalis Dasakhleba",
+    "longName": "Station Square - Zemo Ponichala Settlement",
     "mode": "BUS",
     "source": "tbilisi",
     "firstDeparture": 390,
@@ -1966,7 +1951,7 @@
   },
   "1:R98471": {
     "shortName": "364",
-    "longName": "Tavisuplebis M-ni - Mtatsmindis Parki",
+    "longName": "Freedom Square - Mtatsminda Park",
     "mode": "BUS",
     "source": "tbilisi",
     "firstDeparture": 475,
@@ -5235,7 +5220,7 @@
     "mode": "BUS",
     "source": "tbilisi",
     "firstDeparture": 420,
-    "lastDeparture": 1360,
+    "lastDeparture": 1350,
     "pattern": [
       {
         "start": 7,
@@ -5254,8 +5239,13 @@
       },
       {
         "start": 17,
-        "end": 23,
+        "end": 22,
         "interval": 20
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 30
       }
     ]
   },
@@ -6380,7 +6370,7 @@
     "mode": "BUS",
     "source": "tbilisi",
     "firstDeparture": 420,
-    "lastDeparture": 1364,
+    "lastDeparture": 1380,
     "pattern": [
       {
         "start": 7,
@@ -6409,8 +6399,13 @@
       },
       {
         "start": 21,
-        "end": 23,
+        "end": 22,
         "interval": 20
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 30
       }
     ]
   },
@@ -6674,28 +6669,33 @@
     "longName": "გლდანის VI მ/რ - ილია ჭავჭავაძის გამზირი",
     "mode": "BUS",
     "source": "tbilisi",
-    "firstDeparture": 420,
+    "firstDeparture": 429,
     "lastDeparture": 1380,
     "pattern": [
       {
         "start": 7,
-        "end": 8,
+        "end": 12,
+        "interval": 18
+      },
+      {
+        "start": 12,
+        "end": 13,
+        "interval": 30
+      },
+      {
+        "start": 13,
+        "end": 15,
         "interval": 20
       },
       {
-        "start": 8,
-        "end": 10,
-        "interval": 15
+        "start": 15,
+        "end": 16,
+        "interval": 30
       },
       {
-        "start": 10,
-        "end": 17,
-        "interval": 20
-      },
-      {
-        "start": 17,
+        "start": 16,
         "end": 20,
-        "interval": 15
+        "interval": 18
       },
       {
         "start": 20,
@@ -8424,13 +8424,13 @@
     "longName": "ლილოს დასახლება - მ/ს \"ვარკეთილი\"",
     "mode": "BUS",
     "source": "tbilisi",
-    "firstDeparture": 390,
+    "firstDeparture": 375,
     "lastDeparture": 1414,
     "pattern": [
       {
         "start": 6,
         "end": 7,
-        "interval": 30
+        "interval": 15
       },
       {
         "start": 7,
