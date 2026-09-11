@@ -594,18 +594,18 @@
     "longName": "Gldani VII-VIII M/D - Baratashvili St",
     "mode": "BUS",
     "source": "tbilisi",
-    "firstDeparture": 460,
-    "lastDeparture": 1388,
+    "firstDeparture": 425,
+    "lastDeparture": 1352,
     "pattern": [
       {
         "start": 7,
-        "end": 22,
+        "end": 21,
         "interval": 18
       },
       {
-        "start": 22,
-        "end": 23,
-        "interval": 35
+        "start": 21,
+        "end": 22,
+        "interval": 29
       }
     ]
   },
@@ -634,11 +634,11 @@
     "longName": "Varketili M/D-4 - State University H/B",
     "mode": "BUS",
     "source": "tbilisi",
-    "firstDeparture": 390,
+    "firstDeparture": 450,
     "lastDeparture": 1374,
     "pattern": [
       {
-        "start": 6,
+        "start": 7,
         "end": 22,
         "interval": 12
       },
@@ -754,18 +754,33 @@
     "longName": "Didi Dighomi IV M/D - Baratashvili St",
     "mode": "BUS",
     "source": "tbilisi",
-    "firstDeparture": 443,
-    "lastDeparture": 1373,
+    "firstDeparture": 420,
+    "lastDeparture": 1365,
     "pattern": [
       {
         "start": 7,
-        "end": 15,
+        "end": 14,
         "interval": 16
       },
       {
+        "start": 14,
+        "end": 15,
+        "interval": 23
+      },
+      {
         "start": 15,
+        "end": 21,
+        "interval": 16
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "interval": 21
+      },
+      {
+        "start": 22,
         "end": 23,
-        "interval": 17
+        "interval": 31
       }
     ]
   },
@@ -1099,13 +1114,18 @@
     "longName": "Baratashvili St - Politkovskaya St",
     "mode": "BUS",
     "source": "tbilisi",
-    "firstDeparture": 440,
-    "lastDeparture": 1371,
+    "firstDeparture": 468,
+    "lastDeparture": 1380,
     "pattern": [
       {
         "start": 7,
-        "end": 22,
+        "end": 21,
         "interval": 19
+      },
+      {
+        "start": 21,
+        "end": 22,
+        "interval": 25
       },
       {
         "start": 22,
@@ -1204,33 +1224,33 @@
     "longName": "Krtsanisi Street - Station Square",
     "mode": "BUS",
     "source": "tbilisi",
-    "firstDeparture": 416,
+    "firstDeparture": 461,
     "lastDeparture": 1380,
     "pattern": [
       {
-        "start": 6,
-        "end": 11,
-        "interval": 16
-      },
-      {
-        "start": 11,
+        "start": 7,
         "end": 12,
-        "interval": 24
+        "interval": 16
       },
       {
         "start": 12,
         "end": 13,
-        "interval": 16
+        "interval": 24
       },
       {
         "start": 13,
+        "end": 14,
+        "interval": 16
+      },
+      {
+        "start": 14,
         "end": 22,
         "interval": 17
       },
       {
         "start": 22,
         "end": 23,
-        "interval": 26
+        "interval": 28
       }
     ]
   },
@@ -1804,7 +1824,7 @@
     "longName": "Nugzar Endeladze Square (Vake) - Baratashvili Str",
     "mode": "BUS",
     "source": "tbilisi",
-    "firstDeparture": 475,
+    "firstDeparture": 450,
     "lastDeparture": 1375,
     "pattern": [
       {
@@ -1814,21 +1834,26 @@
       },
       {
         "start": 12,
-        "end": 15,
-        "interval": 28
-      },
-      {
-        "start": 15,
-        "end": 16,
+        "end": 13,
         "interval": 38
       },
       {
-        "start": 16,
-        "end": 22,
+        "start": 13,
+        "end": 14,
         "interval": 25
       },
       {
-        "start": 22,
+        "start": 14,
+        "end": 15,
+        "interval": 50
+      },
+      {
+        "start": 15,
+        "end": 21,
+        "interval": 25
+      },
+      {
+        "start": 21,
         "end": 23,
         "interval": 50
       }
@@ -1839,28 +1864,23 @@
     "longName": "Baratashvili St - Vake-Bagebi",
     "mode": "BUS",
     "source": "tbilisi",
-    "firstDeparture": 423,
-    "lastDeparture": 1373,
+    "firstDeparture": 447,
+    "lastDeparture": 1372,
     "pattern": [
       {
         "start": 7,
-        "end": 13,
-        "interval": 15
-      },
-      {
-        "start": 13,
-        "end": 14,
-        "interval": 19
-      },
-      {
-        "start": 14,
-        "end": 21,
+        "end": 11,
         "interval": 14
+      },
+      {
+        "start": 11,
+        "end": 21,
+        "interval": 15
       },
       {
         "start": 21,
         "end": 23,
-        "interval": 29
+        "interval": 30
       }
     ]
   },
@@ -2726,26 +2746,6 @@
         "start": 20,
         "end": 23,
         "interval": 20
-      }
-    ]
-  },
-  "1:R98389": {
-    "shortName": "397",
-    "longName": "Baratashvili St - Saburtalo-Vake",
-    "mode": "BUS",
-    "source": "tbilisi",
-    "firstDeparture": 426,
-    "lastDeparture": 1350,
-    "pattern": [
-      {
-        "start": 7,
-        "end": 21,
-        "interval": 21
-      },
-      {
-        "start": 21,
-        "end": 22,
-        "interval": 28
       }
     ]
   },
@@ -7349,46 +7349,6 @@
       }
     ]
   },
-  "1:minibusR24571": {
-    "shortName": "532",
-    "longName": "დუმბაძის გამზ. - თავისუფლების მოედ.",
-    "mode": "BUS",
-    "source": "tbilisi",
-    "firstDeparture": 420,
-    "lastDeparture": 1350,
-    "pattern": [
-      {
-        "start": 7,
-        "end": 8,
-        "interval": 20
-      },
-      {
-        "start": 8,
-        "end": 10,
-        "interval": 15
-      },
-      {
-        "start": 10,
-        "end": 17,
-        "interval": 20
-      },
-      {
-        "start": 17,
-        "end": 20,
-        "interval": 15
-      },
-      {
-        "start": 20,
-        "end": 22,
-        "interval": 20
-      },
-      {
-        "start": 22,
-        "end": 23,
-        "interval": 30
-      }
-    ]
-  },
   "1:minibusR25747": {
     "shortName": "533",
     "longName": "გადასასვლელი ხიდი - იმერეთის ქ.",
@@ -7676,36 +7636,6 @@
         "start": 20,
         "end": 23,
         "interval": 15
-      }
-    ]
-  },
-  "1:minibusR24587": {
-    "shortName": "541",
-    "longName": "დიდი დიღმის IV მ/რ - ამაღლების ქ.",
-    "mode": "BUS",
-    "source": "tbilisi",
-    "firstDeparture": 390,
-    "lastDeparture": 1400,
-    "pattern": [
-      {
-        "start": 6,
-        "end": 7,
-        "interval": 30
-      },
-      {
-        "start": 7,
-        "end": 8,
-        "interval": 20
-      },
-      {
-        "start": 8,
-        "end": 21,
-        "interval": 12
-      },
-      {
-        "start": 21,
-        "end": 23,
-        "interval": 21
       }
     ]
   },
