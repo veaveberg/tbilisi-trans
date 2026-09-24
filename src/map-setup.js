@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import * as api from './api.js';
 import { getCurrentMapLanguage, onLanguageChange } from './i18n.ts';
 import { attachMapPerformanceRecorder, markPerformanceEvent } from './performance-recorder.js';
+import { getSearchCity } from './search-ranking.js';
 
 function getMapboxLanguageValue(language = getCurrentMapLanguage()) {
     switch (language) {
@@ -43,6 +44,41 @@ const LOCAL_FONT_FAMILY = 'Roboto, Inter, Arial, "Helvetica Neue", Helvetica, sa
 // Whole-country bounds. fitBounds derives a device-appropriate zoom from these.
 export const GEORGIA_BOUNDS = Object.freeze([[40.0, 41.0], [46.8, 43.6]]);
 export const GEORGIA_CENTER = Object.freeze({ lng: 43.4, lat: 42.3 });
+export const LAST_VIEWED_CITY_STORAGE_KEY = 'lastViewedCity';
+const DEFAULT_CITY_ID = 'tbilisi';
+const CITY_VIEW_ZOOM = 12;
+
+function getMapPositionFromHash(hash = window.location.hash) {
+    const parts = String(hash || '').replace(/^#/, '').split('/');
+    if (parts.length < 3) return null;
+
+    const [zoom, lat, lng] = parts.map(Number);
+    if (!Number.isFinite(zoom) || !Number.isFinite(lat) || !Number.isFinite(lng) ||
+        lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return null;
+    }
+
+    return { center: [lng, lat], zoom };
+}
+
+function getInitialMapPosition() {
+    const urlPosition = getMapPositionFromHash();
+    if (urlPosition) return urlPosition;
+
+    let savedCityId = null;
+    try {
+        savedCityId = localStorage.getItem(LAST_VIEWED_CITY_STORAGE_KEY);
+    } catch (error) {
+        // Storage can be unavailable in private or embedded browser contexts.
+    }
+    const city = getSearchCity(savedCityId) || getSearchCity(DEFAULT_CITY_ID);
+    return {
+        center: [city.center.lng, city.center.lat],
+        zoom: CITY_VIEW_ZOOM
+    };
+}
+
+const initialMapPosition = getInitialMapPosition();
 
 export function getGeorgiaFitOptions(options = {}) {
     const compactViewport = Math.min(window.innerWidth, window.innerHeight) < 600;
@@ -87,20 +123,16 @@ export const map = new mapboxgl.Map({
             showTransitLabels: false
         }
     },
-    center: [GEORGIA_CENTER.lng, GEORGIA_CENTER.lat],
-    zoom: 6,
+    center: initialMapPosition.center,
+    zoom: initialMapPosition.zoom,
     trackResize: false
 });
 
 attachMapPerformanceRecorder(map);
 markPerformanceEvent('map:created', {
-    center: [GEORGIA_CENTER.lng, GEORGIA_CENTER.lat],
-    zoom: 6,
+    center: initialMapPosition.center,
+    zoom: initialMapPosition.zoom,
     style: 'mapbox://styles/mapbox/standard'
-});
-
-map.once('load', () => {
-    fitMapToGeorgia({ duration: 0 });
 });
 
 function installTapDragZoomAnchorPatch() {
@@ -240,21 +272,6 @@ function installIOSMapEdgePanGuard() {
 
     canvas.addEventListener('touchend', releaseDragPan, { passive: true });
     canvas.addEventListener('touchcancel', releaseDragPan, { passive: true });
-}
-
-// Check for deep link hash (Standard Mapbox format: #zoom/lat/lng)
-const initialHash = window.location.hash;
-if (initialHash) {
-    const parts = initialHash.replace('#', '').split('/');
-    if (parts.length >= 3) {
-        const z = parseFloat(parts[0]);
-        const lat = parseFloat(parts[1]);
-        const lng = parseFloat(parts[2]);
-        if (!isNaN(z) && !isNaN(lat) && !isNaN(lng)) {
-            map.setZoom(z);
-            map.setCenter([lng, lat]);
-        }
-    }
 }
 
 // Debug: Expose map to window

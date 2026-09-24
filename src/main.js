@@ -18,7 +18,7 @@ import { setSheetState, setPanelState, closeAllPanels, setupPanelDrag } from './
 import * as metro from './metro.js';
 const { handleMetroStop } = metro;
 import { setupGeolocation, isTrackingActive, stopTracking, isUserInteractingWithMap, LOCATION_STATES, refreshLocationMarker } from './geolocation.js';
-import { map, getMapHash, GEORGIA_CENTER, fitMapToGeorgia, isMapViewportOutsideGeorgia, isMapZoomedOutBeyondGeorgia } from './map-setup.js';
+import { map, getMapHash, GEORGIA_CENTER, fitMapToGeorgia, isMapViewportOutsideGeorgia, isMapZoomedOutBeyondGeorgia, LAST_VIEWED_CITY_STORAGE_KEY } from './map-setup.js';
 import { setupVisuals, loadImages, addStopsToMap, updateMapTheme, getCircleRadiusExpression, updateLiveBuses, renderLiveBuses, registerLiveBusLine, clearLiveBuses, holdLiveBuses, refreshLiveBusTheme, decorateLiveBusFeatures, setMapLightPreset } from './map-visuals.js';
 import { setMapFocus, refreshMapFocusDimTheme, setupHoverHandlers, setupClickHandlers, clearStopHoverState, consumeMapTapForSearch, runMapAction, resolvePlaceClickDetails } from './map-interactions.js';
 import stopRotations from './data/stop_bearings.json';
@@ -34,6 +34,7 @@ import { initMinibusSegmentsEditor, loadMinibusSegmentEditsFromFile } from './mi
 import { StreetScreenController } from './street-screen.js';
 import { applyDirectionsUrlState, initDirectionsUI, isDirectionsContextActive, redrawActiveDirections, setPoint } from './directions.js';
 import { flyToPointInView, beginMapCameraIntent, invalidateMapCameraIntent, isCurrentMapCameraIntent, getBandPadding, getCameraOrientation } from './map-camera.js';
+import { getMapFocusedCity } from './search-ranking.js';
 
 import iconFilterOutline from './assets/icons/line.3.horizontal.decrease.circle.svg';
 // import iconFilterFill from './assets/icons/line.3.horizontal.decrease.circle.fill.svg'; // Only used in FilterManager now? No, need check.
@@ -558,6 +559,18 @@ const updateURLHash = () => {
 
 map.on('moveend', updateURLHash);
 map.on('dragend', updateURLHash); // Also update on dragend since moveend doesn't always fire
+
+// Store only a genuine city-level view. The saved city is used for a normal
+// launch, while an explicit #zoom/lat/lng URL always wins during map setup.
+map.on('moveend', () => {
+    const city = getMapFocusedCity(map);
+    if (!city) return;
+    try {
+        localStorage.setItem(LAST_VIEWED_CITY_STORAGE_KEY, city.id);
+    } catch (error) {
+        // Storage is optional; the current map session remains usable.
+    }
+});
 
 // Initialize Filter Icon
 const initialFilterBtn = document.getElementById('filter-routes-toggle');

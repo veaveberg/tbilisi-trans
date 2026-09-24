@@ -80,7 +80,9 @@ function mapContainsCity(mapInstance, city) {
     }
 }
 
-function getMapFocusedCity(mapInstance) {
+// A city is considered "looked at" only once it is actually in a useful
+// city-level view. This is shared by search ranking and map-view persistence.
+export function getMapFocusedCity(mapInstance) {
     const zoom = Number(mapInstance?.getZoom?.());
     if (!Number.isFinite(zoom) || zoom < MIN_CITY_FOCUS_ZOOM) return null;
 
@@ -128,6 +130,10 @@ export function getSearchContext(mapInstance, userCoords = null) {
 export function getCityName(cityId, language = 'en') {
     const city = SEARCH_CITIES.find(candidate => candidate.id === cityId);
     return city?.names?.[language] || city?.names?.en || '';
+}
+
+export function getSearchCity(cityId) {
+    return SEARCH_CITIES.find(candidate => candidate.id === cityId) || null;
 }
 
 function cityTier(item, preferredCityId) {
