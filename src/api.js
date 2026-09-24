@@ -2121,16 +2121,9 @@ export function getArrivalsBlocklist() {
         // მ/ს "რუსთაველი" — two IDs
         ['r17068', new Set(['23', '24'])],
         ['r17107', new Set(['23', '24'])],
-        // ფილარმონია — three IDs
-        ['r17024', new Set(['23', '24'])],
-        ['r17098', new Set(['23', '24'])],
-        ['r17106', new Set(['23', '24'])],
         // პირველი კლასიკური გიმნაზია — two IDs
         ['r17087', new Set(['23', '24'])],
         ['r17100', new Set(['23', '24'])],
-        // სიმონ ჯანაშიას ქუჩა — two IDs (Bus 24 only)
-        ['r17099', new Set(['24'])],
-        ['r17112', new Set(['24'])],
     ]);
     return blocklist;
 

@@ -202,6 +202,7 @@ async function processSource(source) {
         }
     }
 
+    applyRouteStopOverrides(source, dataByLocale);
     validateDataset(source, dataByLocale, schedules, polylines);
 
     // 3. Publish the complete validated dataset from a staging directory.
@@ -232,6 +233,42 @@ async function processSource(source) {
     console.log(`Published ${filenames.length} validated files for ${source.id}`);
 }
 
+function applyRouteStopOverrides(source, dataByLocale) {
+    if (source.id !== 'rustavi') return;
+
+    // Routes 23 and 24 currently bypass the closed central Rustaveli corridor.
+    // Keep the restored Simon Janashia Street and Tbilisi Concert Hall stops;
+    // only remove the remaining closed-corridor stops from route markers and
+    // the static stop index.
+    const closedStopIds = new Set([
+        '1:17017', '1:17025', // Opera Theatre
+        '1:17042', '1:17102', // Liberty Square
+        '1:17068', '1:17107', // Rustaveli metro
+        '1:17087', '1:17100'  // First Classical Gymnasium
+    ]);
+    const affectedRouteIds = new Set(['1:R15907', '1:R16671']);
+    let removed = 0;
+
+    for (const locale of LOCALES) {
+        for (const route of dataByLocale[locale].routes) {
+            if (!affectedRouteIds.has(route.id) || !Array.isArray(route.stops)) continue;
+            const before = route.stops.length;
+            route.stops = route.stops.filter(stopId => !closedStopIds.has(stopId));
+            removed += before - route.stops.length;
+        }
+
+        for (const routeId of affectedRouteIds) {
+            const details = dataByLocale[locale].details[routeId];
+            if (!Array.isArray(details?._stopsOfPatterns)) continue;
+            const before = details._stopsOfPatterns.length;
+            details._stopsOfPatterns = details._stopsOfPatterns.filter(entry => !closedStopIds.has(entry?.stop?.id));
+            removed += before - details._stopsOfPatterns.length;
+        }
+    }
+
+    console.log(`[Route Overrides] Removed ${removed} closed-corridor route-stop references for Rustavi 23/24`);
+}
+
 function validateDataset(source, dataByLocale, schedules, polylines) {
     const enStops = dataByLocale.en.stops;
     const enRoutes = dataByLocale.en.routes;
@@ -245,8 +282,13 @@ function validateDataset(source, dataByLocale, schedules, polylines) {
             throw new Error(`Validation failed: ${locale} route IDs differ from English`);
         }
         const detailIds = Object.keys(dataByLocale[locale].details);
-        if (detailIds.length !== expectedRouteIds.size) {
-            throw new Error(`Validation failed: ${locale} has ${detailIds.length}/${expectedRouteIds.size} route details`);
+        const missingDetailIds = [...expectedRouteIds].filter(routeId => !dataByLocale[locale].details[routeId]);
+        const missingWithoutV2Schedule = missingDetailIds.filter(routeId => !schedules[`${routeId}_v2`]);
+        if (missingWithoutV2Schedule.length > 0) {
+            throw new Error(
+                `Validation failed: ${locale} has ${detailIds.length}/${expectedRouteIds.size} route details; ` +
+                `missing fallback schedules for ${missingWithoutV2Schedule.join(', ')}`
+            );
         }
 
         const stopIds = new Set(dataByLocale[locale].stops.map(stop => stop.id));
