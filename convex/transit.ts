@@ -218,8 +218,13 @@ export const fetchMasterData = internalAction({
             const sRes = await fetchWithRetry(stopsUrl, { headers: HEADERS });
             if (sRes.ok) {
                 const stops = await sRes.json();
-                console.log(`Fetched ${stops.length} stops (${locale})`);
-                await ctx.runMutation(api.transit.saveStops, { sourceId, locale, stops });
+                console.log(`Fetched ${stops.length} stops (${locale}), pushing in batches...`);
+                const BATCH_SIZE = 500;
+                for (let i = 0; i < stops.length; i += BATCH_SIZE) {
+                    const batch = stops.slice(i, i + BATCH_SIZE);
+                    await ctx.runMutation(api.transit.saveStops, { sourceId, locale, stops: batch });
+                }
+                console.log(`Done saving stops (${locale})`);
             } else {
                 console.log(`Failed to fetch stops ${stopsUrl}: ${sRes.status}`);
             }
