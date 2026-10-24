@@ -1,0 +1,72 @@
+<!doctype html><meta charset="utf-8"><title>Pixel board integration checks</title>
+<link rel="stylesheet" href="/src/css/street-screen.css">
+<style>body{margin:0;background:#111;color:white;font:14px system-ui}#results{position:fixed;z-index:5001;bottom:0;background:#18221b;padding:12px;white-space:pre-wrap}#run{position:fixed;z-index:5002;bottom:20px;right:20px}</style>
+<div id="host"></div><div id="arrivals-list"></div><pre id="results">Ready</pre><button id="run" disabled>Run integration checks</button>
+<script type="module">
+import {StreetScreenController} from '/src/street-screen.js';
+const html=await (await fetch('/index.html')).text();
+const doc=new DOMParser().parseFromString(html,'text/html');
+document.getElementById('host').append(doc.getElementById('street-screen-overlay'));
+let stop={id:'810',code:'810',_source:'tbilisi'};
+const controller=new StreetScreenController({getCurrentStop:()=>stop});
+controller.lastWeatherAt=Date.now();controller.init();
+history.replaceState(null,'','/810/board');
+const output=document.getElementById('results');
+const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+function check(value,message){if(!value)throw new Error(message);output.textContent+='\nPASS '+message;}
+function arrivals(){
+ const list=document.getElementById('arrivals-list');list.replaceChildren();
+ for(let i=0;i<9;i++){
+  const row=document.createElement('div');row.className='arrival-item';row.dataset.routeId='route-'+i;row.dataset.direction='0';row.dataset.minutes=String(i+2);
+  for(const [className,text] of [['route-number',String(301+i)],['destination','Liberty Square'],['arrival-time-primary',String(i+2)]]){
+   const element=document.createElement('span');element.className=className;element.textContent=text;
+   if(className==='destination'){element.dataset.destinationEn=text;element.dataset.destinationKa='თავისუფლების მოედანი';}
+   row.append(element);
+  }list.append(row);
+ }
+}
+document.getElementById('run').addEventListener('click',async()=>{
+ try {
+  output.textContent='Running…';arrivals();await controller.open();await wait(100);
+  const canvas=()=>document.querySelector('canvas.street-screen-surface');
+  check(!!canvas(),'production canvas mounted');
+  check(canvas().getAttribute('aria-label').includes('301'),'arrivals DOM reaches canvas');
+  document.querySelector('.arrival-item').dataset.minutes='8';await wait(350);
+  check(canvas().getAttribute('aria-label').includes('8 minutes'),'MutationObserver propagates minute updates');
+  document.querySelector('[data-scheme="blue"]').click();await wait(50);
+  check(controller.pixelBoard.rasterizer.state.scheme==='blue','original palette drives renderer');
+  check(localStorage.getItem('streetScreenColorScheme')==='blue','palette preference saved');
+  document.getElementById('street-screen-fit-toggle').click();await wait(50);
+  check(controller.pixelBoard.rasterizer.state.fillHeight===(controller.fillHeightMode || controller.pixelBoard.height<72),'fit control drives layout');
+  const stage=document.querySelector('.street-screen-stage').getBoundingClientRect();
+  const board=canvas().getBoundingClientRect();
+  check(Math.abs(board.width-stage.width)<1,'board fills available window width');
+  check(canvas().width===Math.round(board.width*devicePixelRatio),'canvas renders at physical window resolution');
+  controller.close();check(!controller.pixelBoard.active,'closing stops animation');
+  await controller.open();await wait(50);check(controller.pixelBoard.active,'reopening restarts animation');
+  stop={id:'b1152',code:'1152',_source:'batumi'};history.replaceState(null,'','/b1152/board');await controller.syncModel();await wait(50);
+  check(canvas().getAttribute('aria-label').startsWith('Stop 1152.'),'changing stop replaces stop identity');
+  check(!controller.pixelBoard.rasterizer.state.source.includes('tbilisi'),'source context replaced');
+  stop={id:'k624',code:'624',_source:'kutaisi'};history.replaceState(null,'','/k624/board');
+  window.arrivalsLoading=true;document.getElementById('arrivals-list').replaceChildren();await wait(350);
+  check(canvas().getAttribute('aria-label').includes('Loading'),'new stop remains loading until arrivals resolve');
+  window.arrivalsLoading=false;await controller.syncModel();await wait(50);
+  check(canvas().getAttribute('aria-label').includes('No arrivals'),'empty state clears arrivals');
+  arrivals();await controller.syncModel();await wait(50);
+  const gl=canvas().getContext('webgl');
+  if(gl){
+   const extension=gl.getExtension('WEBGL_lose_context');
+   if(!extension)throw new Error('Context-loss test extension unavailable');
+   extension.loseContext();await wait(200);
+   check(controller.pixelBoard.display.constructor.name==='CanvasDisplay','context loss switches to bitmap Canvas2D');
+   check(!!canvas().getContext('2d'),'fallback owns a valid 2D canvas');
+   const image=canvas().getContext('2d').getImageData(0,0,canvas().width,canvas().height);
+   check(image.data.some((value,index)=>index%4!==3 && value>100),'fallback actually draws illuminated pixels');
+   document.querySelector('.arrival-item').dataset.minutes='9';await wait(350);
+   check(canvas().getAttribute('aria-label').includes('9 minutes'),'fallback continues arrival updates');
+  }
+  controller.close();output.textContent+='\nALL CHECKS PASSED';
+ }catch(error){output.textContent+='\nFAIL '+error.stack;console.error(error);}
+});
+document.getElementById('run').disabled=false;
+</script>

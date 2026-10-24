@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LED board studio</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0e1011;color:#e7e6df;font:14px system-ui,sans-serif}main{max-width:1280px;margin:auto;padding:36px 24px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:32px}h1{font-size:26px;font-weight:550;letter-spacing:-1px;margin:8px 0}.eyebrow{color:#a2a39b;font-size:11px;letter-spacing:2px;text-transform:uppercase}p{color:#a2a39b;line-height:1.6}button,select,input[type=text]{background:#242728;color:inherit;border:1px solid #454844;border-radius:7px;padding:9px 12px;font:inherit}button{cursor:pointer}button:hover{border-color:#f0bd64}.stage{background:#030404;border:1px solid #303431;border-radius:16px;min-height:200px;padding:24px 0;display:flex;align-items:center;justify-content:center;overflow:hidden;box-shadow:0 22px 70px #0005}canvas{display:block;max-width:none}.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-top:24px}.controls{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;margin-top:28px;padding-top:24px;border-top:1px solid #303431}label{display:grid;gap:12px;color:#bfc0b8;font-size:12px}label span{display:flex;justify-content:space-between}input[type=range]{width:100%;accent-color:#f0bd64}input[type=color]{width:100%;height:32px;background:none;border:0}output{color:#f0bd64;font-variant-numeric:tabular-nums}.note{font-size:12px;margin-top:24px}#status{font-size:12px;color:#93978e}#destination{flex:1;min-width:240px}.error{color:#ff987d}@media(max-width:650px){main{padding:20px 12px}.controls{grid-template-columns:1fr 1fr;gap:20px}header{align-items:start;gap:12px}h1{font-size:22px}.stage{border-radius:8px}}
+</style>
+<main>
+<header><div><div class="eyebrow">Transit / display experiments</div><h1>LED board studio</h1><p>Bitmap letters. Fixed diodes. A little afterglow.</p></div><div id="status" role="status">Loading bitmap font…</div></header>
+<div class="stage" id="stage"><canvas id="board" role="img" aria-label="Demonstration arrivals board. Sample data, not live departures."></canvas></div>
+<div class="toolbar"><button data-preset="clean">Clean LEDs</button><button data-preset="soft">Soft glow</button><button id="reset">Restore defaults</button><button id="pause">Pause</button><select id="language" aria-label="Board language"><option value="auto">Auto · ქართული / English</option><option value="ka">ქართული</option><option value="en">English</option></select><select id="fit" aria-label="Board fit"><option value="fit">Fit board</option><option value="fill">Fill height</option></select><select id="shape" aria-label="LED shape"><option value="0">Round LEDs</option><option value="1">Square LEDs</option></select></div>
+<div class="toolbar"><select id="scenario" aria-label="Sample arrivals"><option value="9">Overflow ticker · 9 arrivals</option><option value="7">7 arrivals · static rows</option><option value="6">6 arrivals</option><option value="0">No arrivals · clock</option></select><button id="update-minutes">Advance arrivals 1 minute</button></div>
+<div class="controls">
+<label><span>LED diameter <output id="diameterValue"></output></span><input id="diameter" type="range" min="0.35" max="0.95" step="0.01" value="0.90"></label>
+<label><span>Glow <output id="glowValue"></output></span><input id="glow" type="range" min="0" max="1.5" step="0.05" value="0.15"></label>
+<label><span>Fade-in half-life <output id="attackValue"></output></span><input id="attack" type="range" min="0" max="100" step="5" value="5"></label>
+<label><span>Fade-out half-life <output id="trailValue"></output></span><input id="trail" type="range" min="0" max="250" step="5" value="5"></label>
+<label><span>Scroll speed <output id="speedValue"></output></span><input id="speed" type="range" min="0" max="40" step="1" value="14"></label>
+<label><span>Unlit LEDs <output id="unlitValue"></output></span><input id="unlit" type="range" min="0" max="0.1" step="0.005" value="0.08"></label>
+<label>LED color<input id="color" type="color" value="#ff6633"></label>
+</div>
+<div class="toolbar"><input id="destination" type="text" aria-label="First destination" placeholder="Try a destination in Georgian or English" maxlength="160"><button id="apply">Apply destination</button></div>
+<p class="note">Sample arrivals · Original Matrix Sans Print + 5×7 Matrix, converted to bitmap glyphs · Custom WebGL display · Afterimage shader adapted from Three.js. Integer physical-pixel scaling; black margins are intentional.</p>
+<p class="note" id="fontWarning" role="status"></p>
+</main>
+<script type="module" src="./studio.js"></script>
+</html>

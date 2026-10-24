@@ -163,6 +163,8 @@ export function flyToPointInView(center, options = {}) {
             ...camera,
             zoom: Math.min(zoom, 17),
             ...orientation,
+            padding,
+            retainPadding: false,
             duration,
             essential
         });

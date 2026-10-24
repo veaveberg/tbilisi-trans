@@ -1,69 +1,69 @@
 {
   "manifestVersion": 1,
-  "generatedAt": "2026-09-24T19:16:01.828Z",
-  "baseDatasetVersion": "260924-2316",
-  "correctionsVersion": "260924-2316",
+  "generatedAt": "2026-10-24T09:19:20.767Z",
+  "baseDatasetVersion": "261024-1319",
+  "correctionsVersion": "261024-1319",
   "minAppVersion": "26.5.3",
   "files": {
     "tbilisi_stops_en.json": {
       "category": "base",
-      "sha256": "05f1a5214852dd066ae338ea2356262f28bcf31acff3c66297ae2731a72021e8",
-      "size": 324502,
+      "sha256": "335d8529c9d012fff80f0b9d051280461f7eaa9bee362f6a449569f7774481bf",
+      "size": 325110,
       "url": "tbilisi_stops_en.json",
       "source": "tbilisi",
       "locale": "en"
     },
     "tbilisi_stops_ka.json": {
       "category": "base",
-      "sha256": "5d2a0200561b797b9343d56f3102b0252d7577c3d2ae22986d8f8fe7c864544e",
-      "size": 418632,
+      "sha256": "f2cb5269ae49a78f5596941bbf1c09e88adc55b5f6d0d3cea117c2338502a636",
+      "size": 419375,
       "url": "tbilisi_stops_ka.json",
       "source": "tbilisi",
       "locale": "ka"
     },
     "tbilisi_routes_en.json": {
       "category": "base",
-      "sha256": "c7e8493d1e8436e5a5b84aa7384bd75ad9a1cb6d3d27fd7e51218619e14d0fcc",
-      "size": 151567,
+      "sha256": "5527d76c9d50d3bb904cb7641970faa3e32632f671d6e1d0115e8567cc319625",
+      "size": 152892,
       "url": "tbilisi_routes_en.json",
       "source": "tbilisi",
       "locale": "en"
     },
     "tbilisi_routes_ka.json": {
       "category": "base",
-      "sha256": "f449477eb458abf3da6e055ca68e23e8ddc3af35ea3439f27f66a0ea574ca601",
-      "size": 157657,
+      "sha256": "49f58eeb4ad4682ea1f4e03acb7fe0014bd07093e7aed95ced749a1e2ecd9e71",
+      "size": 158982,
       "url": "tbilisi_routes_ka.json",
       "source": "tbilisi",
       "locale": "ka"
     },
     "tbilisi_routes_details_en.json": {
       "category": "base",
-      "sha256": "e1f213008e8cd673305383900f726df6551c365fc37c6672b83a49952440d821",
-      "size": 1939692,
+      "sha256": "ae2beb591a9704100ece356b5dd0627807b14243c17c80ba8e5896e0e451991e",
+      "size": 1957104,
       "url": "tbilisi_routes_details_en.json",
       "source": "tbilisi",
       "locale": "en"
     },
     "tbilisi_routes_details_ka.json": {
       "category": "base",
-      "sha256": "280fe15521b7ea33141b88a4b0e36f58bbef3f86feab6422d83599c97aef1383",
-      "size": 2382732,
+      "sha256": "1c7c5323ccd8f861d761b4552e018d807fd89f69d851720d85a5090f45dc955b",
+      "size": 2403394,
       "url": "tbilisi_routes_details_ka.json",
       "source": "tbilisi",
       "locale": "ka"
     },
     "tbilisi_polylines.json": {
       "category": "base",
-      "sha256": "4b88279bdf411f966fdeaace509e124f9718bb433a8556b972a120c75aaad0e2",
-      "size": 427451,
+      "sha256": "c3e87b7fb909b3758322e26f894bb30bfcf78844443bf70ff39fab7cf3931468",
+      "size": 431314,
       "url": "tbilisi_polylines.json",
       "source": "tbilisi"
     },
     "tbilisi_schedules.json": {
       "category": "base",
-      "sha256": "2480d910c066b5a88d3b539c196a60de168e0f168c219ee361a3ee7555c84fcd",
-      "size": 13491830,
+      "sha256": "f742331223f6669f54e8f09a2a03936cc4b69f517fd309aa258572cfaa401678",
+      "size": 13690843,
       "url": "tbilisi_schedules.json",
       "source": "tbilisi"
     },
@@ -261,8 +261,8 @@
     },
     "stops_overrides.csv": {
       "category": "corrections",
-      "sha256": "d19adc6cbdf760e0a9a53805e038259f5917fa7e7acb51df411df8ba97117920",
-      "size": 467480,
+      "sha256": "215cd19b7f24e2e2344f7a67ab0403642b00e529e6093925f59b0c61a74f0234",
+      "size": 467558,
       "url": "stops_overrides.csv"
     },
     "fares.csv": {
@@ -273,8 +273,8 @@
     },
     "route_intervals.json": {
       "category": "base",
-      "sha256": "0a8dd555def5806d18f1a9d157d281fdb6f5025c64b41a7ed657ac3a988e3090",
-      "size": 183142,
+      "sha256": "3298dde6ea8164628899c13275a6fe568df4ea0c1913f190c72a8058ec417114",
+      "size": 184540,
       "url": "route_intervals.json"
     },
     "long_segments.geojson": {

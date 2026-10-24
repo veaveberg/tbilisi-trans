@@ -1954,16 +1954,6 @@
     "pattern": [
       {
         "start": 7,
-        "end": 13,
-        "interval": 23
-      },
-      {
-        "start": 13,
-        "end": 14,
-        "interval": 46
-      },
-      {
-        "start": 14,
         "end": 23,
         "interval": 23
       }
@@ -2059,16 +2049,6 @@
     "pattern": [
       {
         "start": 6,
-        "end": 11,
-        "interval": 15
-      },
-      {
-        "start": 11,
-        "end": 13,
-        "interval": 20
-      },
-      {
-        "start": 13,
         "end": 23,
         "interval": 15
       },
@@ -2279,13 +2259,8 @@
       },
       {
         "start": 8,
-        "end": 13,
-        "interval": 15
-      },
-      {
-        "start": 13,
         "end": 21,
-        "interval": 16
+        "interval": 15
       },
       {
         "start": 21,
@@ -3465,7 +3440,7 @@
       {
         "start": 10,
         "end": 17,
-        "interval": 10
+        "interval": 11
       },
       {
         "start": 17,
@@ -3790,7 +3765,7 @@
       {
         "start": 22,
         "end": 23,
-        "interval": 25
+        "interval": 30
       }
     ]
   },
@@ -3860,7 +3835,7 @@
     "mode": "BUS",
     "source": "tbilisi",
     "firstDeparture": 420,
-    "lastDeparture": 1366,
+    "lastDeparture": 1365,
     "pattern": [
       {
         "start": 7,
@@ -4709,13 +4684,13 @@
     "longName": "მ/ს დიდუბე - სადგურის მოედანი",
     "mode": "BUS",
     "source": "tbilisi",
-    "firstDeparture": 429,
+    "firstDeparture": 430,
     "lastDeparture": 1350,
     "pattern": [
       {
         "start": 7,
         "end": 8,
-        "interval": 18
+        "interval": 17
       },
       {
         "start": 8,
@@ -4725,7 +4700,7 @@
       {
         "start": 11,
         "end": 17,
-        "interval": 17
+        "interval": 16
       },
       {
         "start": 17,
@@ -5096,6 +5071,21 @@
         "start": 22,
         "end": 23,
         "interval": 30
+      }
+    ]
+  },
+  "1:minibusR25222": {
+    "shortName": "469",
+    "longName": "მ/ს დიდუბე - მუხადგვერდის სასაფლაო",
+    "mode": "BUS",
+    "source": "tbilisi",
+    "firstDeparture": 526,
+    "lastDeparture": 1216,
+    "pattern": [
+      {
+        "start": 8,
+        "end": 20,
+        "interval": 33
       }
     ]
   },
@@ -8104,31 +8094,31 @@
     "longName": "კრწანისის ქ. - სამგორის ქ.",
     "mode": "BUS",
     "source": "tbilisi",
-    "firstDeparture": 420,
+    "firstDeparture": 400,
     "lastDeparture": 1380,
     "pattern": [
       {
-        "start": 7,
-        "end": 8,
+        "start": 6,
+        "end": 10,
         "interval": 20
       },
       {
-        "start": 8,
-        "end": 10,
-        "interval": 15
-      },
-      {
         "start": 10,
-        "end": 17,
-        "interval": 22
+        "end": 11,
+        "interval": 27
       },
       {
-        "start": 17,
-        "end": 20,
-        "interval": 15
+        "start": 11,
+        "end": 15,
+        "interval": 20
       },
       {
-        "start": 20,
+        "start": 15,
+        "end": 16,
+        "interval": 27
+      },
+      {
+        "start": 16,
         "end": 21,
         "interval": 20
       },
@@ -8214,6 +8204,81 @@
       }
     ]
   },
+  "1:minibusR281277": {
+    "shortName": "561",
+    "longName": "კრწანისის ქ. - სამგორის ქ.",
+    "mode": "BUS",
+    "source": "tbilisi",
+    "firstDeparture": 400,
+    "lastDeparture": 1350,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 10,
+        "interval": 20
+      },
+      {
+        "start": 10,
+        "end": 11,
+        "interval": 30
+      },
+      {
+        "start": 11,
+        "end": 14,
+        "interval": 20
+      },
+      {
+        "start": 14,
+        "end": 15,
+        "interval": 27
+      },
+      {
+        "start": 15,
+        "end": 21,
+        "interval": 20
+      },
+      {
+        "start": 21,
+        "end": 23,
+        "interval": 30
+      }
+    ]
+  },
+  "1:minibusR281281": {
+    "shortName": "562",
+    "longName": "კრწანისის ქ. - მ/ს \"თავისუფლების მოედანი\"",
+    "mode": "BUS",
+    "source": "tbilisi",
+    "firstDeparture": 380,
+    "lastDeparture": 1350,
+    "pattern": [
+      {
+        "start": 6,
+        "end": 10,
+        "interval": 20
+      },
+      {
+        "start": 10,
+        "end": 15,
+        "interval": 22
+      },
+      {
+        "start": 15,
+        "end": 16,
+        "interval": 29
+      },
+      {
+        "start": 16,
+        "end": 22,
+        "interval": 20
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "interval": 30
+      }
+    ]
+  },
   "1:minibusR24447": {
     "shortName": "567",
     "longName": "სამგორის ქ. - ყვარლისა და უშაკოვის ქ. გადაკვეთა",
@@ -8294,13 +8359,13 @@
       },
       {
         "start": 7,
-        "end": 8,
-        "interval": 20
+        "end": 11,
+        "interval": 21
       },
       {
-        "start": 8,
+        "start": 11,
         "end": 22,
-        "interval": 17
+        "interval": 21
       },
       {
         "start": 22,
