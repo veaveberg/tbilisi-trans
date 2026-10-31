@@ -99,6 +99,8 @@ async function main() {
     const skipFetch = process.argv.includes('--skip-fetch');
     const source = getSourceArg();
 
+    // Capture the pre-update state, including on runs that skip full archives.
+    await run('node', ['scripts/data-history.js']);
     if (!skipArchive) archiveCurrentData();
 
     if (!skipFetch) {
@@ -113,6 +115,8 @@ async function main() {
 
     console.log('[Data Update] Writing public/data/manifest.json...');
     await run('node', ['scripts/write-data-manifest.js']);
+
+    await run('node', ['scripts/data-history.js']);
 
     console.log('[Data Update] Syncing ota files...');
     await run('node', ['scripts/sync-ota-files.js']);

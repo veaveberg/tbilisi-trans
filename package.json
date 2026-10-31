@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "preview:history": "python3 scripts/serve-history-preview.py",
     "prefetch": "npm run prefetch:tbilisi && npm run prefetch:rustavi && npm run prefetch:kutaisi && npm run prefetch:batumi",
     "prefetch:tbilisi": "node scripts/prefetch-tbilisi.js",
     "prefetch:rustavi": "node scripts/prefetch-rustavi.js",
@@ -43,7 +44,9 @@
     "android:open": "export JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' && npx cap open android",
     "android:run": "export JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' && npx cap run android",
     "android:build": "export JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' && cd android && ./gradlew assembleDebug",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "data:history": "node scripts/data-history.js",
+    "test:data-history": "node scripts/test-data-history.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.0.1",

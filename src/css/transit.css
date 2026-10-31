@@ -1,3 +1,4 @@
+@import './route-timetable.css';
 /* --- Transit Specific UI (Arrivals, Routes) --- */
 .arrivals-list {
     display: flex;
@@ -614,38 +615,6 @@ body.dark-mode .filter-toggle-row.active .filter-text {
     font-weight: 600;
     color: var(--text-secondary);
     opacity: 0.8;
-}
-
-.route-full-schedule {
-    padding: 12px 0 24px 0;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.schedule-hour-row {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-}
-
-.hour-label {
-    font-family: 'Roboto Mono', monospace;
-    font-weight: 700;
-    font-size: 1rem;
-    color: var(--text-secondary);
-    width: 32px;
-    flex-shrink: 0;
-}
-
-.minutes-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    font-family: 'Roboto Mono', monospace;
-    font-size: 1rem;
-    font-weight: 500;
-    color: var(--text-main);
 }
 
 /* Current hour highlight */

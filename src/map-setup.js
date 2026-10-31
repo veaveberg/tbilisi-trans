@@ -1,4 +1,5 @@
 import mapboxgl from 'mapbox-gl';
+import { getBasemapOptions } from './map-basemap.js';
 import { Capacitor } from '@capacitor/core';
 import * as api from './api.js';
 import { getCurrentMapLanguage, onLanguageChange } from './i18n.ts';
@@ -39,8 +40,6 @@ const storedTheme = localStorage.getItem('theme') || 'system';
 const sysDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 const isDark = storedTheme === 'dark' || (storedTheme === 'system' && sysDark);
 const initialLightPreset = isDark ? 'night' : 'day';
-const BASEMAP_FONT = 'Open Sans';
-const LOCAL_FONT_FAMILY = 'Roboto, Inter, Arial, "Helvetica Neue", Helvetica, sans-serif';
 // Whole-country bounds. fitBounds derives a device-appropriate zoom from these.
 export const GEORGIA_BOUNDS = Object.freeze([[40.0, 41.0], [46.8, 43.6]]);
 export const GEORGIA_CENTER = Object.freeze({ lng: 43.4, lat: 42.3 });
@@ -111,18 +110,11 @@ export function isMapZoomedOutBeyondGeorgia() {
 
 export const map = new mapboxgl.Map({
     container: 'map',
-    style: 'mapbox://styles/mapbox/standard', // Standard style
-    language: getMapboxLanguageValue(),
-    localFontFamily: LOCAL_FONT_FAMILY,
-    config: {
-        basemap: {
-            font: BASEMAP_FONT,
-            lightPreset: initialLightPreset,
-            show3dObjects: false, // Back to false by default (will toggle on tilt)
-            showPointOfInterestLabels: localStorage.getItem('showPoiLabels') !== 'false',
-            showTransitLabels: false
-        }
-    },
+    ...getBasemapOptions({
+        language: getMapboxLanguageValue(),
+        lightPreset: initialLightPreset,
+        showPointOfInterestLabels: localStorage.getItem('showPoiLabels') !== 'false'
+    }),
     center: initialMapPosition.center,
     zoom: initialMapPosition.zoom,
     trackResize: false

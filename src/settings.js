@@ -751,6 +751,16 @@ export function initSettings({ onUpdate }) {
     const menuBtn = document.getElementById('menu-btn');
     const menuPopup = document.getElementById('map-menu-popup');
     const simplifySwitch = document.getElementById('simplify-switch');
+    const serviceChangesLink = document.getElementById('service-changes-link');
+    const updateServiceChangesLink = () => {
+        if (!serviceChangesLink) return;
+        const city = localStorage.getItem('lastViewedCity') || 'tbilisi';
+        const url = new URL(`${getVisibleBasePath()}data-history/`, location.origin);
+        if (['tbilisi', 'rustavi', 'kutaisi', 'batumi'].includes(city)) url.searchParams.set('city', city);
+        serviceChangesLink.href = url.href;
+    };
+    updateServiceChangesLink();
+    serviceChangesLink?.addEventListener('click', updateServiceChangesLink);
     initPrivacyPolicySheetControls(menuPopup);
     initSupportSheetControls();
     initLanguageMenu();
@@ -771,6 +781,7 @@ export function initSettings({ onUpdate }) {
                 openNativeSettings();
                 return;
             }
+            updateServiceChangesLink();
             setMenuVisibility(menuPopup.classList.contains('hidden'));
         });
 

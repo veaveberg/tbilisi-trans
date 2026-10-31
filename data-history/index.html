@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Service changes</title>
+<script>
+try {
+    const theme = localStorage.getItem('theme') || 'system';
+    document.documentElement.classList.toggle('dark-mode', theme === 'dark' || theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+} catch { document.documentElement.classList.toggle('dark-mode', matchMedia('(prefers-color-scheme: dark)').matches); }
+</script>
+<link rel="stylesheet" href="history.css">
+</head>
+<body>
+<main>
+<header><a class="back" href="../" aria-label="Back to app"><span class="back-chevron" aria-hidden="true"></span>Back</a><h1>Service changes</h1></header>
+<nav aria-label="Filter by city" id="cities"></nav>
+<div class="tools"><label>Find a route or stop<input type="search" id="search" placeholder="Name, route number, or ID"></label><label>Data type<select id="kind"><option value="">All data</option><option value="stops">Stops</option><option value="routes">Routes</option></select></label></div>
+<div id="status" role="status">Loading history…</div><section id="timeline" aria-label="Update history"></section>
+<footer>Historical entries compare saved snapshots. Missing files are excluded from comparisons. Large values show a summary and fingerprint; identical fingerprints mean identical values.</footer>
+</main>
+<script type="module" src="history.js"></script>
+</body></html>

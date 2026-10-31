@@ -1,3 +1,4 @@
+import { ROUTE_LINE_LAYOUT, ROUTE_LINE_PAINT, ROUTE_STOP_PAINT } from './route-map-style.js';
 import './performance-recorder.js';
 import './css/base.css';
 import './css/map-ui.css';
@@ -5069,15 +5070,15 @@ async function updateRouteView(route, options = {}) {
             if (!map.getLayer('route')) {
                 console.log('[RoutePlot] Adding "route" map layer');
                 map.addLayer({
-                    id: 'route', type: 'line', source: 'route', layout: { 'line-join': 'round', 'line-cap': 'round' },
-                    paint: { 'line-color': getRouteDisplayColor(route), 'line-width': 12, 'line-opacity': 0.8, 'line-emissive-strength': 1 }
+                    id: 'route', type: 'line', source: 'route', layout: { ...ROUTE_LINE_LAYOUT },
+                    paint: { ...ROUTE_LINE_PAINT, 'line-color': getRouteDisplayColor(route) }
                 });
             }
             if (!map.getLayer('route-stops')) {
                 console.log('[RoutePlot] Adding "route-stops" map layer');
                 map.addLayer({
                     id: 'route-stops', type: 'circle', source: 'route-stops',
-                    paint: { 'circle-color': '#ffffff', 'circle-radius': 3, 'circle-stroke-width': 0, 'circle-opacity': 1, 'circle-emissive-strength': 1 }
+                    paint: { ...ROUTE_STOP_PAINT }
                 });
             }
 

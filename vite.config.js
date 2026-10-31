@@ -384,7 +384,9 @@ export default defineConfig({
                 cleanupOutdatedCaches: true,
                 cacheId: 'ttc-pwa-2026-02-05',
                 maximumFileSizeToCacheInBytes: 20 * 1024 * 1024, // 20MB (Fix size limit error)
-                globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'], // Cache everything
+                globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
+                globIgnores: ['**/data-history/**'],
+                navigateFallbackDenylist: [/\/data-history(?:\/|$)/],
                 runtimeCaching: [
                     {
                         // Real-time data: Network Only (do not cache)
@@ -458,7 +460,8 @@ export default defineConfig({
     ],
     base: process.env.VITE_BASE_URL || '/tbilisi-trans/', // Defaults to GH Pages, override for Capacitor
     build: {
-        outDir: process.env.VITE_OUT_DIR || 'dist'
+        outDir: process.env.VITE_OUT_DIR || 'dist',
+        rollupOptions: { input: { main: path.resolve(__dirname, 'index.html'), history: path.resolve(__dirname, 'data-history/index.html') } }
     },
     server: {
         watch: {
