@@ -65,6 +65,8 @@ def main():
         except BlockingIOError:
             print('A refresh is already running; skipping.', flush=True)
             return
+        # Prevent idle sleep during a run without changing the Mac's power policy.
+        subprocess.Popen(['/usr/bin/caffeinate', '-i', '-w', str(os.getpid())], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         run(['node', '--version'])
         run(['git', 'fetch', 'origin', 'main'])
         run(['git', 'merge', '--ff-only', 'origin/main'])
