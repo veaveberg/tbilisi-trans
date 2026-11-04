@@ -1,4 +1,4 @@
-import { forEachConcurrent, orderedRecords, routeConcurrency } from './prefetch-concurrency.js';
+import { forEachConcurrent, orderedRecords, routeConcurrency, preserveFailedRoutes } from './prefetch-concurrency.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -9,17 +9,26 @@ const __dirname = path.dirname(__filename);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 let requiredFetchFailures = 0;
+const failedRouteIds = new Set();
+function failedRequest(url) {
+    requiredFetchFailures++;
+    const id = /\/routes\/([^/?]+)/.exec(url)?.[1];
+    if (id) failedRouteIds.add(decodeURIComponent(id));
+}
 
-async function fetchWithRetry(url, options, retries = 3) {
+async function fetchWithRetry(url, options, retries = 5) {
     for (let i = 0; i < retries; i++) {
         try {
             const res = await fetch(url, options);
-            if (res.ok) return res;
-            if (i < retries - 1) await sleep(500 * (i + 1));
-            else { if (res.status !== 404) requiredFetchFailures++; return res; }
+            if (res.ok || res.status === 404) return res;
+            if (i < retries - 1) {
+                const retryAfter = Number(res.headers.get('retry-after'));
+                await sleep(Math.min(30000, Math.max(500 * 2 ** i, Number.isFinite(retryAfter) ? retryAfter * 1000 : 0)));
+            }
+            else { if (res.status !== 404) { failedRequest(url); console.warn(`[Fetch failed] HTTP ${res.status}: ${url}`); } return res; }
         } catch (e) {
             console.warn(`[Retry ${i + 1}/${retries}] Failed to fetch ${url}: ${e.message}`);
-            if (i === retries - 1) { requiredFetchFailures++; throw e; }
+            if (i === retries - 1) { failedRequest(url); throw e; }
             await sleep(500 * (i + 1));
         }
     }
@@ -187,7 +196,13 @@ async function processSource(source) {
     });
     process.stdout.write('\n');
 
-    if (process.env.TRANSIT_PREFETCH_STRICT === '1' && requiredFetchFailures) throw new Error(`Refresh had ${requiredFetchFailures} failed upstream requests; refusing to publish partial data`);
+    if (process.env.TRANSIT_PREFETCH_STRICT === '1' && requiredFetchFailures) {
+        if (!failedRouteIds.size) throw new Error('Upstream refresh failed without a cached route fallback');
+        const readPrevious = kind => JSON.parse(fs.readFileSync(path.join(OUTPUT_DIR, `${source.id}_${kind}.json`), 'utf8'));
+        const previous = { locales: Object.fromEntries(LOCALES.map(locale => [locale, { routes: readPrevious(`routes_${locale}`), details: readPrevious(`routes_details_${locale}`) }])), schedules: readPrevious('schedules'), polylines: readPrevious('polylines') };
+        preserveFailedRoutes(failedRouteIds, previous, { locales: dataByLocale, schedules, polylines });
+        console.warn(`[Preserved cached routes] ${[...failedRouteIds].join(', ')}; provider errors prevented refreshing these routes`);
+    }
     if (process.env.TRANSIT_PREFETCH_STRICT === '1' && LOCALES.some(locale => !dataByLocale[locale].routes.length || !dataByLocale[locale].stops.length)) throw new Error('Empty route or stop list; refusing to publish partial data');
 
     // 3. Save Files

@@ -20,3 +20,26 @@ export async function forEachConcurrent(items, worker, limit = routeConcurrency(
     if (failures.length) throw new AggregateError(failures, 'Route refresh failed');
 }
 export const orderedRecords = value => Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true })));
+
+// A provider can list a route while its details endpoint is broken. Preserve
+// the entire previous route rather than publishing a partial replacement.
+export function preserveFailedRoutes(failedIds, previous, current) {
+    for (const id of failedIds) {
+        for (const locale of Object.keys(current.locales)) {
+            const old = previous.locales[locale];
+            if (!old?.details?.[id] || !old.routes?.some(route => String(route.id) === id)) throw new Error(`No complete cached route ${id} [${locale}]`);
+        }
+    }
+    for (const id of failedIds) {
+        for (const locale of Object.keys(current.locales)) {
+            const old = previous.locales[locale], next = current.locales[locale];
+            next.details[id] = structuredClone(old.details[id]);
+            const index = next.routes.findIndex(route => String(route.id) === id);
+            if (index >= 0) next.routes[index] = structuredClone(old.routes.find(route => String(route.id) === id));
+        }
+        for (const key of ['schedules', 'polylines']) {
+            for (const recordId of Object.keys(current[key])) if (recordId === id || recordId.startsWith(`${id}_`)) delete current[key][recordId];
+            for (const [recordId, value] of Object.entries(previous[key])) if (recordId === id || recordId.startsWith(`${id}_`)) current[key][recordId] = structuredClone(value);
+        }
+    }
+}

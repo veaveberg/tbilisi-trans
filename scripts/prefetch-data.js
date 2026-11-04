@@ -10,13 +10,16 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 let requiredFetchFailures = 0;
 
-async function fetchWithRetry(url, options, retries = 3) {
+async function fetchWithRetry(url, options, retries = 5) {
     for (let i = 0; i < retries; i++) {
         try {
             const res = await fetch(url, options);
-            if (res.ok) return res;
-            if (i < retries - 1) await sleep(500 * (i + 1));
-            else { if (res.status !== 404) requiredFetchFailures++; return res; }
+            if (res.ok || res.status === 404) return res;
+            if (i < retries - 1) {
+                const retryAfter = Number(res.headers.get('retry-after'));
+                await sleep(Math.min(30000, Math.max(500 * 2 ** i, Number.isFinite(retryAfter) ? retryAfter * 1000 : 0)));
+            }
+            else { if (res.status !== 404) { requiredFetchFailures++; console.warn(`[Fetch failed] HTTP ${res.status}: ${url}`); } return res; }
         } catch (e) {
             console.warn(`[Retry ${i + 1}/${retries}] Failed to fetch ${url}: ${e.message}`);
             if (i === retries - 1) { requiredFetchFailures++; throw e; }
