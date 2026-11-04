@@ -107,7 +107,24 @@ async function main() {
         const prefetchScript = getPrefetchScript(source);
         const scope = source ? `${source} public/data` : 'public/data';
         console.log(`[Data Update] Regenerating ${scope} from upstream APIs...`);
-        await run('npm', ['run', prefetchScript]);
+        if (process.argv.includes('--keep-failed-cities')) {
+            const dataDir = path.join(ROOT_DIR, 'public/data');
+            let refreshed = 0;
+            for (const city of source ? [source] : ['tbilisi', 'rustavi', 'kutaisi', 'batumi']) {
+                const names = () => fs.readdirSync(dataDir).filter(name => name.startsWith(`${city}_`) && name.endsWith('.json'));
+                const previous = new Map(names().map(name => [name, fs.readFileSync(path.join(dataDir, name))]));
+                try {
+                    await run('npm', ['run', getPrefetchScript(city)]);
+                    refreshed++;
+                } catch (error) {
+                    if (!previous.size) throw error;
+                    for (const name of names()) if (!previous.has(name)) fs.unlinkSync(path.join(dataDir, name));
+                    for (const [name, bytes] of previous) fs.writeFileSync(path.join(dataDir, name), bytes);
+                    console.warn(`[City refresh preserved] ${city}: ${error.message}. Previous city snapshot restored.`);
+                }
+            }
+            if (!refreshed) throw new Error('Every city refresh failed; refusing to publish');
+        } else await run('npm', ['run', prefetchScript]);
     }
 
     console.log('[Data Update] Regenerating route interval summaries...');

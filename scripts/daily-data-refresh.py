@@ -88,7 +88,7 @@ def main():
         before = checkout / '.refresh-baseline'
         shutil.copytree(checkout / 'public/data', before)
         run(['npm', 'ci', '--no-audit', '--no-fund'], checkout)
-        run(['npm', 'run', 'data:update'], checkout)
+        run(['npm', 'run', 'data:update', '--', '--keep-failed-cities'], checkout)
         validate(before, checkout / 'public/data')
         run(['npm', 'run', 'test:data-history'], checkout)
         run(['npm', 'run', 'test:prefetch-concurrency'], checkout)
