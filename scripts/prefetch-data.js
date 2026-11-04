@@ -1,3 +1,4 @@
+import { forEachConcurrent, orderedRecords, routeConcurrency } from './prefetch-concurrency.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -7,16 +8,18 @@ const __dirname = path.dirname(__filename);
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+let requiredFetchFailures = 0;
+
 async function fetchWithRetry(url, options, retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
             const res = await fetch(url, options);
             if (res.ok) return res;
             if (i < retries - 1) await sleep(500 * (i + 1));
-            else return res;
+            else { if (res.status !== 404) requiredFetchFailures++; return res; }
         } catch (e) {
             console.warn(`[Retry ${i + 1}/${retries}] Failed to fetch ${url}: ${e.message}`);
-            if (i === retries - 1) throw e;
+            if (i === retries - 1) { requiredFetchFailures++; throw e; }
             await sleep(500 * (i + 1));
         }
     }
@@ -94,14 +97,15 @@ async function processSource(source) {
     const schedules = {};
     const polylines = {};
 
-    for (const [index, route] of routes.entries()) {
+    console.log(`Route concurrency: ${routeConcurrency()}`);
+    await forEachConcurrent(routes, async (route, index) => {
         if (index % 10 === 0) process.stdout.write(`\r[${source.id}] Processing ${index}/${routes.length}...`);
 
         try {
             // A. Fetch V3 Details
             const detailsUrl = `${v3Base}/routes/${route.id}`;
             const detailsRes = await fetchWithRetry(detailsUrl, { headers });
-            if (!detailsRes.ok) continue;
+            if (!detailsRes.ok) return;
             const details = await detailsRes.json();
             routesDetails[route.id] = details;
 
@@ -160,16 +164,18 @@ async function processSource(source) {
         } catch (e) {
             console.warn(`Error processing route ${route.id}: ${e.message}`);
         }
-    }
+    });
     process.stdout.write('\n');
+
+    if (process.env.TRANSIT_PREFETCH_STRICT === '1' && requiredFetchFailures) throw new Error(`Refresh had ${requiredFetchFailures} failed upstream requests; refusing to publish partial data`);
 
     // Save Aggregates
     fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_routes.json`), JSON.stringify(routes)); // Save Augmented Routes
     console.log(`Saved ${source.id}_routes.json (Augmented with stops)`);
 
-    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_routes_details.json`), JSON.stringify(routesDetails));
-    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_schedules.json`), JSON.stringify(schedules));
-    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_polylines.json`), JSON.stringify(polylines));
+    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_routes_details.json`), JSON.stringify(orderedRecords(routesDetails)));
+    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_schedules.json`), JSON.stringify(orderedRecords(schedules)));
+    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_polylines.json`), JSON.stringify(orderedRecords(polylines)));
     console.log(`Saved detailed data for ${source.id}`);
 }
 

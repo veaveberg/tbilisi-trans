@@ -46,6 +46,7 @@
     "android:build": "export JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' && cd android && ./gradlew assembleDebug",
     "preview": "vite preview",
     "data:history": "node scripts/data-history.js",
+    "test:prefetch-concurrency": "node scripts/test-prefetch-concurrency.mjs",
     "test:data-history": "node scripts/test-data-history.mjs"
   },
   "dependencies": {

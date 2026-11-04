@@ -25,3 +25,13 @@ Generated reports and route-map assets live in `public/data-history`. Keep them 
 To run the local preview, build with `VITE_BASE_URL=/ VITE_OUT_DIR=/tmp/ttc-history-map-preview npm run build`, then run `npm run preview:history`. The preview serves current JSON from `public` without rebuilding the app. Source changes still require a new build.
 
 Run `npm run test:data-history` to verify comparisons, identity matching, map features, and schedule differences.
+
+### Daily server refresh
+
+Route prefetching uses three workers by default. Set `TRANSIT_PREFETCH_CONCURRENCY` to an integer from 1 to 8 to change the limit. Requests within each route remain sequential. Aggregate record keys are sorted so completion order does not create artificial data changes. Run `npm run test:prefetch-concurrency` to check worker limits and error handling.
+
+On `veave-server.local`, `com.veave.transit-data-refresh` runs daily at 06:00 in the Mac’s Asia/Tbilisi timezone. Its template is `scripts/launchd/com.veave.transit-data-refresh.plist.in`. The installed updater lives on the internal disk at `~/.local/share/ttc-updater`, including its verified Node runtime, isolated Git checkouts, persistent data archives, and logs. Its dedicated SSH deploy key has write access to this repository. Private keys are never committed.
+
+`scripts/daily-data-refresh.py` takes an exclusive lock, fetches `origin/main`, creates an isolated checkout, refreshes all cities, and checks data completeness and history tests. Scheduled refreshes enable `TRANSIT_PREFETCH_STRICT=1` so exhausted upstream requests prevent publication. Unexpectedly empty or truncated datasets also fail validation. Successful changes are committed only from `public/data`, `public/data-history`, `ota/files`, and `ota/manifest.json`, then pushed to `main`. GitHub Pages deploys through the existing workflow. A rejected push preserves the checkout for inspection and never overwrites concurrent commits.
+
+Logs are in `~/.local/share/ttc-updater/logs/refresh.log`; `last-success.json` records the last completed run. Run `/usr/local/bin/python3.13 ~/.local/share/ttc-updater/repo/scripts/daily-data-refresh.py --check` on that Mac to verify runtime and GitHub access without refreshing data. To start a refresh immediately, run `launchctl kickstart gui/$(id -u)/com.veave.transit-data-refresh`. To disable the schedule, run `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.veave.transit-data-refresh.plist`.

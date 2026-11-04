@@ -1,3 +1,4 @@
+import { forEachConcurrent, orderedRecords, routeConcurrency } from './prefetch-concurrency.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -7,16 +8,18 @@ const __dirname = path.dirname(__filename);
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+let requiredFetchFailures = 0;
+
 async function fetchWithRetry(url, options, retries = 3) {
     for (let i = 0; i < retries; i++) {
         try {
             const res = await fetch(url, options);
             if (res.ok) return res;
             if (i < retries - 1) await sleep(500 * (i + 1));
-            else return res;
+            else { if (res.status !== 404) requiredFetchFailures++; return res; }
         } catch (e) {
             console.warn(`[Retry ${i + 1}/${retries}] Failed to fetch ${url}: ${e.message}`);
-            if (i === retries - 1) throw e;
+            if (i === retries - 1) { requiredFetchFailures++; throw e; }
             await sleep(500 * (i + 1));
         }
     }
@@ -91,7 +94,8 @@ async function processSource(source) {
     const schedules = {};
     const polylines = {};
 
-    for (const [index, route] of guideRoutes.entries()) {
+    console.log(`Route concurrency: ${routeConcurrency()}`);
+    await forEachConcurrent(guideRoutes, async (route, index) => {
         if (index % 5 === 0) process.stdout.write(`\r[${source.id}] Processing ${index}/${guideRoutes.length}...`);
 
         for (const locale of LOCALES) {
@@ -180,21 +184,24 @@ async function processSource(source) {
             }
         }
         await sleep(50);
-    }
+    });
     process.stdout.write('\n');
+
+    if (process.env.TRANSIT_PREFETCH_STRICT === '1' && requiredFetchFailures) throw new Error(`Refresh had ${requiredFetchFailures} failed upstream requests; refusing to publish partial data`);
+    if (process.env.TRANSIT_PREFETCH_STRICT === '1' && LOCALES.some(locale => !dataByLocale[locale].routes.length || !dataByLocale[locale].stops.length)) throw new Error('Empty route or stop list; refusing to publish partial data');
 
     // 3. Save Files
     for (const locale of LOCALES) {
         fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_stops_${locale}.json`), JSON.stringify(dataByLocale[locale].stops));
         fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_routes_${locale}.json`), JSON.stringify(dataByLocale[locale].routes));
-        fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_routes_details_${locale}.json`), JSON.stringify(dataByLocale[locale].details));
+        fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_routes_details_${locale}.json`), JSON.stringify(orderedRecords(dataByLocale[locale].details)));
         console.log(`Saved ${locale} files for ${source.id}`);
     }
 
     // Shared files
-    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_schedules.json`), JSON.stringify(schedules));
-    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_polylines.json`), JSON.stringify(polylines));
+    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_schedules.json`), JSON.stringify(orderedRecords(schedules)));
+    fs.writeFileSync(path.join(OUTPUT_DIR, `${source.id}_polylines.json`), JSON.stringify(orderedRecords(polylines)));
     console.log(`Saved shared schedules/polylines for ${source.id}`);
 }
 
-processSource(SOURCE).catch(console.error);
+processSource(SOURCE).catch(error => { console.error(error); process.exitCode = 1; });
