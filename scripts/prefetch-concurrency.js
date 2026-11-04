@@ -27,13 +27,14 @@ export function preserveFailedRoutes(failedIds, previous, current) {
     for (const id of failedIds) {
         for (const locale of Object.keys(current.locales)) {
             const old = previous.locales[locale];
-            if (!old?.details?.[id] || !old.routes?.some(route => String(route.id) === id)) throw new Error(`No complete cached route ${id} [${locale}]`);
+            if (!old?.routes?.some(route => String(route.id) === id)) throw new Error(`No cached route ${id} [${locale}]`);
         }
     }
     for (const id of failedIds) {
         for (const locale of Object.keys(current.locales)) {
             const old = previous.locales[locale], next = current.locales[locale];
-            next.details[id] = structuredClone(old.details[id]);
+            if (Object.hasOwn(old.details, id)) next.details[id] = structuredClone(old.details[id]);
+            else delete next.details[id]; // Preserve a provider's already-unavailable details.
             const index = next.routes.findIndex(route => String(route.id) === id);
             if (index >= 0) next.routes[index] = structuredClone(old.routes.find(route => String(route.id) === id));
         }
