@@ -32,3 +32,10 @@ const incompleteAttempt = structuredClone(current);
 preserveFailedRoutes(new Set(['r']), previouslyUnavailable, incompleteAttempt);
 assert.equal(incompleteAttempt.locales.en.details.r, undefined, 'Previously unavailable details must stay unavailable, without publishing partial new details');
 console.log('Previously known provider omissions are preserved without inventing route details.');
+
+const v2Attempt = structuredClone(current);
+v2Attempt.schedules.r_v2 = [{ stops: [{ id: 's', arrivalTimes: '9:00' }] }];
+preserveFailedRoutes(new Set(['r']), previous, v2Attempt);
+assert.equal(v2Attempt.schedules.r_1, undefined);
+assert.equal(v2Attempt.schedules.r_v2[0].stops[0].arrivalTimes, '9:00');
+console.log('Successful V2 schedules replace cached schedules even when V3 route details are unavailable.');

@@ -31,6 +31,7 @@ export function preserveFailedRoutes(failedIds, previous, current) {
         }
     }
     for (const id of failedIds) {
+        const freshV2 = current.schedules[`${id}_v2`];
         for (const locale of Object.keys(current.locales)) {
             const old = previous.locales[locale], next = current.locales[locale];
             if (Object.hasOwn(old.details, id)) next.details[id] = structuredClone(old.details[id]);
@@ -41,6 +42,10 @@ export function preserveFailedRoutes(failedIds, previous, current) {
         for (const key of ['schedules', 'polylines']) {
             for (const recordId of Object.keys(current[key])) if (recordId === id || recordId.startsWith(`${id}_`)) delete current[key][recordId];
             for (const [recordId, value] of Object.entries(previous[key])) if (recordId === id || recordId.startsWith(`${id}_`)) current[key][recordId] = structuredClone(value);
+            if (key === 'schedules' && freshV2 !== undefined) {
+                for (const recordId of Object.keys(current[key])) if (recordId === id || recordId.startsWith(`${id}_`)) delete current[key][recordId];
+                current[key][`${id}_v2`] = freshV2;
+            }
         }
     }
 }
