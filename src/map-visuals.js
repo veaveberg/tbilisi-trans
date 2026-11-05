@@ -275,27 +275,29 @@ export function setIsImagesLoaded(val) { areImagesLoaded = val; }
 export async function loadImages() {
     if (areImagesLoaded) return Promise.resolve();
 
+    await document.fonts.load('700 20px "Live Bus Open Sans"');
+
     // Render at 3x resolution for crispness on Retina/High-DPI screens
     const ICON_SCALE = 3;
 
+    // The supplied marker points left. Rotate its geometry so heading 0 points north.
+    const liveBusPath = 'M102.296 155C89.9592 155 78.3179 152.021 68.0522 146.743C53.9719 138.614 37.4784 126.612 22.6226 115.02C-0.583275 96.9111 -0.993336 62.6165 22.1207 44.3908C37.1096 32.5718 53.8189 20.5754 68.0522 13.2578C78.318 7.98002 89.959 5 102.296 5C143.718 5 177.296 38.5787 177.296 80C177.296 121.421 143.718 155 102.296 155Z';
+    const liveBusSvg = (content) => `<svg width="${32 * ICON_SCALE}" height="${32 * ICON_SCALE}" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><g transform="translate(100 100) rotate(90) translate(-91.5 -80)">${content}</g></svg>`;
     const images = [
         {
-            // Layer 1: Tinted circle background - provides the stroke effect
             id: 'bus-circle-bg',
             sdf: true,
-            svg: `<svg width="${30 * ICON_SCALE}" height="${30 * ICON_SCALE}" viewBox="0 0 30 30" xmlns="http://www.w3.org/2000/svg"><circle cx="15" cy="15" r="13" fill="black"/></svg>`
+            svg: liveBusSvg(`<path d="${liveBusPath}" fill="black" stroke="black" stroke-width="10"/>`)
         },
         {
-            // Layer 2: Colored solid circle - SDF for dynamic route coloring
             id: 'bus-circle',
             sdf: true,
-            svg: `<svg width="${26 * ICON_SCALE}" height="${26 * ICON_SCALE}" viewBox="0 0 26 26" xmlns="http://www.w3.org/2000/svg"><circle cx="13" cy="13" r="13" fill="black"/></svg>`
+            svg: liveBusSvg(`<path d="${liveBusPath}" fill="black"/>`)
         },
         {
-            // Layer 3: Tinted arrow foreground
             id: 'bus-arrow-fg',
             sdf: true,
-            svg: `<svg width="${26 * ICON_SCALE}" height="${26 * ICON_SCALE}" viewBox="0 0 26 26" xmlns="http://www.w3.org/2000/svg"><path transform="translate(0 -1.4)" d="M12.56 8.09L8.17 15.46C7.86 15.98 8.11 16.67 8.68 16.67H17.75C18.32 16.67 18.59 16.02 18.25 15.46L13.89 8.09C13.58 7.55 12.86 7.58 12.56 8.09Z" fill="black"/></svg>`
+            svg: liveBusSvg(`<defs><mask id="inset" maskUnits="userSpaceOnUse" x="0" y="0" width="183" height="160"><path d="${liveBusPath}" fill="white" stroke="black" stroke-width="70"/></mask></defs><path d="${liveBusPath}" fill="black" mask="url(#inset)"/>`)
         },
         {
             id: 'stop-icon',
@@ -657,8 +659,7 @@ export function updateMapTheme() {
             theme.stopStroke
         ]);
         map.setPaintProperty('stops-layer-circle', 'circle-stroke-width', 1.5);
-        map.setPaintProperty('stops-layer-circle', 'circle-stroke-opacity', 1);
-        map.setPaintProperty('stops-layer-circle', 'circle-opacity', 1);
+        // Opacity belongs to map focus/filter state and must survive theme updates.
     }
     if (map.getLayer('stops-layer-circle-hover')) {
         map.setPaintProperty('stops-layer-circle-hover', 'circle-color', isDark ? '#FFFFFF' : '#898989');
@@ -734,7 +735,6 @@ export function updateMapTheme() {
     ];
     if (map.getLayer('stops-layer')) {
         map.setLayoutProperty('stops-layer', 'icon-image', iconImage);
-        map.setPaintProperty('stops-layer', 'icon-opacity', 1);
     }
     if (map.getLayer('stops-layer-hover')) {
         const hoverSuffix = isDark ? 'hover-dark' : 'hover-light';
@@ -1341,19 +1341,21 @@ export function addStopsToMap(stops, options = {}) {
 }
 
 function ensureLiveBusLayers() {
+    const needsLayerOrdering = ['live-buses-label', 'live-buses-bg', 'live-buses-circle', 'live-buses-arrow']
+        .some(id => !map.getLayer(id));
     if (!map.getSource('live-buses')) {
         map.addSource('live-buses', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     }
 
     if (!map.getLayer('live-buses-bg')) {
-        // Layer 1: White circle background for stroke effect
+        // Marker outline.
         map.addLayer({
             id: 'live-buses-bg',
             type: 'symbol',
             source: 'live-buses',
             layout: {
                 'icon-image': 'bus-circle-bg',
-                'icon-size': 1.07,
+                'icon-size': 1.3,
                 'icon-allow-overlap': true,
                 'icon-ignore-placement': true,
                 'icon-rotate': ['coalesce', ['get', 'heading'], 0],
@@ -1366,14 +1368,14 @@ function ensureLiveBusLayers() {
     }
 
     if (!map.getLayer('live-buses-circle')) {
-        // Layer 2: Colored solid circle
+        // Route-colored marker body.
         map.addLayer({
             id: 'live-buses-circle',
             type: 'symbol',
             source: 'live-buses',
             layout: {
                 'icon-image': 'bus-circle',
-                'icon-size': 1.0,
+                'icon-size': 1.3,
                 'icon-allow-overlap': true,
                 'icon-ignore-placement': true,
                 'icon-rotate': ['coalesce', ['get', 'heading'], 0],
@@ -1386,14 +1388,14 @@ function ensureLiveBusLayers() {
     }
 
     if (!map.getLayer('live-buses-arrow')) {
-        // Layer 3: White arrow on top
+        // Inset center from the supplied marker shape.
         map.addLayer({
             id: 'live-buses-arrow',
             type: 'symbol',
             source: 'live-buses',
             layout: {
                 'icon-image': 'bus-arrow-fg',
-                'icon-size': 1.0,
+                'icon-size': 1.3,
                 'icon-allow-overlap': true,
                 'icon-ignore-placement': true,
                 'icon-rotate': ['coalesce', ['get', 'heading'], 0],
@@ -1413,18 +1415,8 @@ function ensureLiveBusLayers() {
             filter: ['has', 'routeLabel'],
             layout: {
                 'symbol-placement': 'point',
-                'text-field': ['get', 'routeLabel'],
-                'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
-                'text-size': 15,
-                'text-justify': 'center',
-                'text-anchor': 'center',
-                'text-allow-overlap': true,
-                'text-ignore-placement': true,
-                'text-padding': 2,
-                'text-offset': ['coalesce', ['get', 'chipOffset'], ['literal', [0, 1.9]]],
-                'icon-image': 'route-plaque',
-                'icon-text-fit': 'both',
-                'icon-text-fit-padding': [5, 10, 5, 10],
+                'icon-image': ['concat', 'live-plaque:', ['get', 'routeLabel'], ':', ['get', 'color'], ':', ['get', 'chipBgColor']],
+                'icon-offset': ['get', 'plaqueOffset'],
                 'icon-allow-overlap': true,
                 'icon-ignore-placement': true,
                 'icon-padding': 2,
@@ -1432,21 +1424,19 @@ function ensureLiveBusLayers() {
                 'icon-rotation-alignment': 'viewport'
             },
             paint: {
-                'text-color': ['get', 'color'],
-                'text-halo-color': 'rgba(0,0,0,0)',
-                'icon-color': ['get', 'chipBgColor'],
-                'icon-opacity': 0.96,
-                'text-emissive-strength': 1,
+                'icon-opacity': 1,
                 'icon-emissive-strength': 1
             }
         });
     }
 
-    // Keep live buses above stop markers
-    if (map.getLayer('live-buses-label')) map.moveLayer('live-buses-label');
-    if (map.getLayer('live-buses-bg')) map.moveLayer('live-buses-bg');
-    if (map.getLayer('live-buses-circle')) map.moveLayer('live-buses-circle');
-    if (map.getLayer('live-buses-arrow')) map.moveLayer('live-buses-arrow');
+    // Establish stacking when layers are created, without mutating the style each frame.
+    if (needsLayerOrdering) {
+        map.moveLayer('live-buses-label');
+        map.moveLayer('live-buses-bg');
+        map.moveLayer('live-buses-circle');
+        map.moveLayer('live-buses-arrow');
+    }
 
     if (!map.__liveBusHandlersAttached) {
         map.__liveBusHandlersAttached = true;
@@ -1469,7 +1459,6 @@ let liveBusCurrentFeatures = new Map(); // vehicleId -> feature (current animate
 const liveBusLineCache = new Map(); // lineKey -> { coords, cumDist, total }
 const LIVE_BUS_UPDATE_INTERVAL_MS = 5000;
 const LIVE_BUS_ANIMATION_MS = 1200;
-const LIVE_BUS_ANIMATION_FRAME_INTERVAL_MS = 250;
 let liveBusFollowId = null;
 let liveBusRenderedFeatureCount = 0;
 const sourceDataSignatures = new Map();
@@ -1532,8 +1521,7 @@ function mixHexColors(hexA, hexB, weightA = 0.12) {
 }
 
 function getLiveBusChipBgColor(routeColor) {
-    const isDark = document.body.classList.contains('dark-mode');
-    return mixHexColors(routeColor, isDark ? '#1e293b' : '#ffffff', isDark ? 0.15 : 0.12);
+    return mixHexColors(routeColor, '#071f2b', 0.22);
 }
 
 export function decorateLiveBusFeatures(features = [], options = {}) {
@@ -1577,7 +1565,7 @@ export function decorateLiveBusFeatures(features = [], options = {}) {
             if ((dx * dx) + (dy * dy) < 44 * 44) nearby += 1;
         });
         const choiceIndex = nearby === 0 ? 0 : entry.index % offsetChoices.length;
-        entry.feature.properties.chipOffset = offsetChoices[choiceIndex];
+        entry.feature.properties.chipOffset = offsetChoices[choiceIndex].map(value => value * 19 / 20);
     });
 
     return features;
@@ -1674,9 +1662,48 @@ function pointAlongLine(meta, fraction) {
     ];
 }
 
+// Draw the full label once so native kerning, ink bounds, and corner radii
+// survive Mapbox placement without glyph spacing or nine-slice stretching.
+function ensureLiveBusPlaqueImage(feature) {
+    const { routeLabel, color, chipBgColor } = feature.properties || {};
+    if (!routeLabel || !color || !chipBgColor) return;
+    feature.properties.plaqueOffset = (feature.properties.chipOffset || [0, 1.8]).map(value => value * 20);
+    const id = `live-plaque:${routeLabel}:${color}:${chipBgColor}`;
+    if (map.hasImage(id)) return;
+    const scale = 3;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const font = '700 20px "Live Bus Open Sans"';
+    ctx.font = font;
+    ctx.fontKerning = 'normal';
+    const metrics = ctx.measureText(String(routeLabel));
+    const left = metrics.actualBoundingBoxLeft;
+    const right = metrics.actualBoundingBoxRight;
+    const ascent = metrics.actualBoundingBoxAscent;
+    const descent = metrics.actualBoundingBoxDescent;
+    const width = Math.ceil(left + right + 14);
+    const height = Math.ceil(ascent + descent + 12);
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    ctx.scale(scale, scale);
+    ctx.font = font;
+    ctx.fontKerning = 'normal';
+    ctx.fillStyle = color;
+    ctx.strokeStyle = chipBgColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(0.5, 0.5, width - 1, height - 1, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = chipBgColor;
+    ctx.fillText(String(routeLabel), (width - left - right) / 2 + left, (height - ascent - descent) / 2 + ascent);
+    map.addImage(id, ctx.getImageData(0, 0, canvas.width, canvas.height), { pixelRatio: scale });
+}
+
 function setLiveBusData(features = []) {
     if (features.length === 0 && liveBusRenderedFeatureCount === 0) return;
 
+    features.forEach(ensureLiveBusPlaqueImage);
     ensureLiveBusLayers();
     if (map.getSource('live-buses')) {
         map.getSource('live-buses').setData({ type: 'FeatureCollection', features });
@@ -1756,20 +1783,11 @@ export function renderLiveBuses(features = []) {
         if (liveBusAnimationId) cancelAnimationFrame(liveBusAnimationId);
         const startTime = performance.now();
         const totalMs = Math.min(LIVE_BUS_ANIMATION_MS, LIVE_BUS_UPDATE_INTERVAL_MS);
-        let lastAnimationDataUpdate = -Infinity;
 
         const animate = (now) => {
             const elapsed = now - startTime;
             const t = Math.max(0, Math.min(1, elapsed / totalMs));
             const k = easeInOutCubic(t);
-            const shouldUpdateMapData = t >= 1 || (now - lastAnimationDataUpdate) >= LIVE_BUS_ANIMATION_FRAME_INTERVAL_MS;
-
-            if (!shouldUpdateMapData) {
-                liveBusAnimationId = requestAnimationFrame(animate);
-                return;
-            }
-
-            lastAnimationDataUpdate = now;
             const blended = [];
 
             nextById.forEach((next, id) => {
@@ -1910,7 +1928,6 @@ function applyLiveBusOpacity() {
         map.setPaintProperty('live-buses-arrow', 'icon-opacity', opacityExpr);
     }
     if (map.getLayer('live-buses-label')) {
-        map.setPaintProperty('live-buses-label', 'text-opacity', opacityExpr);
         map.setPaintProperty('live-buses-label', 'icon-opacity', opacityExpr);
     }
 }

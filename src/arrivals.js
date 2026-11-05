@@ -842,9 +842,13 @@ function getCurrentTbilisiMinutes() {
 }
 
 export function shouldShowLateDepotWarning(etaMinutes, lastScheduledMinutes, firstScheduledMinutes) {
+    // Missing schedule data is not a midnight service boundary.
+    if (lastScheduledMinutes == null || String(lastScheduledMinutes).trim() === '') return false;
     const eta = Number(etaMinutes);
     const lastScheduled = Number(lastScheduledMinutes);
-    const firstScheduled = Number(firstScheduledMinutes);
+    const firstScheduled = firstScheduledMinutes == null || String(firstScheduledMinutes).trim() === ''
+        ? NaN
+        : Number(firstScheduledMinutes);
 
     if (!Number.isFinite(eta) || !Number.isFinite(lastScheduled)) return false;
     if (eta < 0 || eta === 999) return false;

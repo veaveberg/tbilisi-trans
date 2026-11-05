@@ -191,3 +191,10 @@ html.native-splash #splash-overlay {
 #splash-overlay.splash-done {
     opacity: 0;
 }
+
+@font-face {
+    font-family: 'Live Bus Open Sans';
+    src: url('/fonts/OpenSans.ttf') format('truetype');
+    font-weight: 100 900;
+    font-style: normal;
+}
