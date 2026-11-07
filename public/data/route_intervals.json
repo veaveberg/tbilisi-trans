@@ -4509,6 +4509,21 @@
       }
     ]
   },
+  "1:minibusR25222": {
+    "shortName": "469",
+    "longName": "მ/ს დიდუბე - მუხადგვერდის სასაფლაო",
+    "mode": "BUS",
+    "source": "tbilisi",
+    "firstDeparture": 526,
+    "lastDeparture": 1216,
+    "pattern": [
+      {
+        "start": 8,
+        "end": 20,
+        "interval": 33
+      }
+    ]
+  },
   "1:minibusR25236": {
     "shortName": "526",
     "longName": "ზურგოვანა - მ/ს \"დიდუბე\"",
@@ -8469,6 +8484,21 @@
       }
     ]
   },
+  "1:R12237": {
+    "shortName": "10",
+    "longName": "Rustavi Cemetery",
+    "mode": "BUS",
+    "source": "rustavi",
+    "firstDeparture": 540,
+    "lastDeparture": 960,
+    "pattern": [
+      {
+        "start": 9,
+        "end": 16,
+        "interval": 60
+      }
+    ]
+  },
   "1:R15903": {
     "shortName": "22",
     "longName": "რუსთავი-თბილისი(დიდუბე)",
@@ -8511,6 +8541,41 @@
         "start": 8,
         "end": 1,
         "interval": 18
+      }
+    ]
+  },
+  "1:R24956": {
+    "shortName": "10ა",
+    "longName": "Rustavi Cemetery",
+    "mode": "BUS",
+    "source": "rustavi",
+    "firstDeparture": 559,
+    "lastDeparture": 959,
+    "pattern": [
+      {
+        "start": 9,
+        "end": 11,
+        "interval": 100
+      },
+      {
+        "start": 11,
+        "end": 12,
+        "gap": true
+      },
+      {
+        "start": 12,
+        "end": 13,
+        "interval": 100
+      },
+      {
+        "start": 13,
+        "end": 14,
+        "gap": true
+      },
+      {
+        "start": 14,
+        "end": 15,
+        "interval": 100
       }
     ]
   },
