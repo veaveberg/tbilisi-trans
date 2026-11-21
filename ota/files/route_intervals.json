@@ -8635,12 +8635,12 @@
     "mode": "BUS",
     "source": "rustavi",
     "firstDeparture": 401,
-    "lastDeparture": 1377,
+    "lastDeparture": 1370,
     "pattern": [
       {
         "start": 6,
         "end": 23,
-        "interval": 16
+        "interval": 19
       }
     ]
   },
@@ -8679,13 +8679,13 @@
     "longName": "Megobroba-Todria-Aghmashenebeli-Shartava-Gagarini-Balanchivadze",
     "mode": "BUS",
     "source": "rustavi",
-    "firstDeparture": 382,
-    "lastDeparture": 1368,
+    "firstDeparture": 384,
+    "lastDeparture": 1324,
     "pattern": [
       {
         "start": 6,
-        "end": 23,
-        "interval": 17
+        "end": 22,
+        "interval": 20
       }
     ]
   },
@@ -8754,13 +8754,13 @@
     "longName": "რუსთავი - თბილისი(ისანი)",
     "mode": "BUS",
     "source": "rustavi",
-    "firstDeparture": 467,
-    "lastDeparture": 1379,
+    "firstDeparture": 465,
+    "lastDeparture": 1376,
     "pattern": [
       {
         "start": 7,
         "end": 23,
-        "interval": 8
+        "interval": 13
       }
     ]
   },
@@ -8779,18 +8779,33 @@
       }
     ]
   },
+  "1:R12237": {
+    "shortName": "10",
+    "longName": "Rustavi Cemetery",
+    "mode": "BUS",
+    "source": "rustavi",
+    "firstDeparture": 540,
+    "lastDeparture": 960,
+    "pattern": [
+      {
+        "start": 9,
+        "end": 16,
+        "interval": 60
+      }
+    ]
+  },
   "1:R15903": {
     "shortName": "22",
     "longName": "რუსთავი-თბილისი(დიდუბე)",
     "mode": "BUS",
     "source": "rustavi",
-    "firstDeparture": 511,
-    "lastDeparture": 1323,
+    "firstDeparture": 510,
+    "lastDeparture": 1320,
     "pattern": [
       {
         "start": 8,
         "end": 22,
-        "interval": 14
+        "interval": 18
       }
     ]
   },
@@ -8799,13 +8814,13 @@
     "longName": "რუსთავი-თბილისი(უნივერსიტეტის მაღლივი კორპუსი)",
     "mode": "BUS",
     "source": "rustavi",
-    "firstDeparture": 506,
-    "lastDeparture": 1289,
+    "firstDeparture": 514,
+    "lastDeparture": 1255,
     "pattern": [
       {
         "start": 8,
-        "end": 22,
-        "interval": 9
+        "end": 21,
+        "interval": 19
       }
     ]
   },
@@ -8821,6 +8836,41 @@
         "start": 8,
         "end": 1,
         "interval": 18
+      }
+    ]
+  },
+  "1:R24956": {
+    "shortName": "10ა",
+    "longName": "Rustavi Cemetery",
+    "mode": "BUS",
+    "source": "rustavi",
+    "firstDeparture": 559,
+    "lastDeparture": 959,
+    "pattern": [
+      {
+        "start": 9,
+        "end": 11,
+        "interval": 100
+      },
+      {
+        "start": 11,
+        "end": 12,
+        "gap": true
+      },
+      {
+        "start": 12,
+        "end": 13,
+        "interval": 100
+      },
+      {
+        "start": 13,
+        "end": 14,
+        "gap": true
+      },
+      {
+        "start": 14,
+        "end": 15,
+        "interval": 100
       }
     ]
   },
