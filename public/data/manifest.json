@@ -1,8 +1,8 @@
 {
   "manifestVersion": 1,
-  "generatedAt": "2026-11-22T02:05:23.099Z",
-  "baseDatasetVersion": "261122-0605",
-  "correctionsVersion": "261122-0605",
+  "generatedAt": "2026-11-22T21:11:26.239Z",
+  "baseDatasetVersion": "261123-0111",
+  "correctionsVersion": "261123-0111",
   "minAppVersion": "26.5.3",
   "files": {
     "tbilisi_stops_en.json": {
@@ -39,7 +39,7 @@
     },
     "tbilisi_routes_details_en.json": {
       "category": "base",
-      "sha256": "21deebe69170eb1225997e07cd8389916a8719a38f9babd41382e00a775531db",
+      "sha256": "41935375c6732f7996be7c710a159edb0e787dd1e3fe47f2e3c8fec501834c79",
       "size": 1957105,
       "url": "tbilisi_routes_details_en.json",
       "source": "tbilisi",
@@ -47,7 +47,7 @@
     },
     "tbilisi_routes_details_ka.json": {
       "category": "base",
-      "sha256": "74d68e16a138560508f3d36e102e8c929b421a41b03e82f1e8d3b836ffac33f0",
+      "sha256": "38b51203769c2792cd45214b38870507737f35992bd35e435ccf3495761d44f2",
       "size": 2403330,
       "url": "tbilisi_routes_details_ka.json",
       "source": "tbilisi",
@@ -62,7 +62,7 @@
     },
     "tbilisi_schedules.json": {
       "category": "base",
-      "sha256": "086c733c2b56e10328ca3e444c5f32d012ecb397c6b2aa9bb48bfa672db02e31",
+      "sha256": "8d8f8df9b48a5961ea9414e572f3a770d946872cb1df34b8a0d09236bb356c4c",
       "size": 18447953,
       "url": "tbilisi_schedules.json",
       "source": "tbilisi"
@@ -101,7 +101,7 @@
     },
     "rustavi_routes_details_en.json": {
       "category": "base",
-      "sha256": "3905ce8b789924db78de5134f5267cce10441f2866f14637d03418134f86bbad",
+      "sha256": "e23632a6d0c6e6c98be4eda2c5334a08d0fc9d3cbe240607708a01853ed9e31d",
       "size": 142382,
       "url": "rustavi_routes_details_en.json",
       "source": "rustavi",
@@ -109,7 +109,7 @@
     },
     "rustavi_routes_details_ka.json": {
       "category": "base",
-      "sha256": "b6c3a50ad734cb7379965ca5dead5b5b41c6e1aae922989d990f2bfe720544a7",
+      "sha256": "5b9bb059ddf0c4f6e4859bad1efa24c3daddb163c703da972ae3182a419c7d15",
       "size": 167738,
       "url": "rustavi_routes_details_ka.json",
       "source": "rustavi",
@@ -124,8 +124,8 @@
     },
     "rustavi_schedules.json": {
       "category": "base",
-      "sha256": "b23af29a03aa32703edfbd4216618a900746252060907dd4496db81a834b9584",
-      "size": 699855,
+      "sha256": "b97ce67b1de74f661ab1259166062cb71fb0edcf370d6b29358fc0c119c04c5a",
+      "size": 696024,
       "url": "rustavi_schedules.json",
       "source": "rustavi"
     },
@@ -273,8 +273,8 @@
     },
     "route_intervals.json": {
       "category": "base",
-      "sha256": "dc912f24c6f9427b60248878b395d52474cb320681839c47bdac1d9612040fe3",
-      "size": 189467,
+      "sha256": "0b9812d350bd803bfdf22c365690427140cce91b7c024f1e05da0cc9b459879c",
+      "size": 188591,
       "url": "route_intervals.json"
     },
     "long_segments.geojson": {
