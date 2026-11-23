@@ -1,8 +1,8 @@
 {
   "manifestVersion": 1,
-  "generatedAt": "2026-11-22T21:11:26.239Z",
-  "baseDatasetVersion": "261123-0111",
-  "correctionsVersion": "261123-0111",
+  "generatedAt": "2026-11-23T02:05:42.534Z",
+  "baseDatasetVersion": "261123-0605",
+  "correctionsVersion": "261123-0605",
   "minAppVersion": "26.5.3",
   "files": {
     "tbilisi_stops_en.json": {
@@ -39,7 +39,7 @@
     },
     "tbilisi_routes_details_en.json": {
       "category": "base",
-      "sha256": "41935375c6732f7996be7c710a159edb0e787dd1e3fe47f2e3c8fec501834c79",
+      "sha256": "8a2bee593bb6cf77f5b55e351a5d9102c44d2a5f46979c4e9f16721d26c6eb81",
       "size": 1957105,
       "url": "tbilisi_routes_details_en.json",
       "source": "tbilisi",
@@ -47,7 +47,7 @@
     },
     "tbilisi_routes_details_ka.json": {
       "category": "base",
-      "sha256": "38b51203769c2792cd45214b38870507737f35992bd35e435ccf3495761d44f2",
+      "sha256": "e1013cef1a9287dc93c4aa641ed76311202dbf57ac5095e1495633a39f06cf57",
       "size": 2403330,
       "url": "tbilisi_routes_details_ka.json",
       "source": "tbilisi",
@@ -101,7 +101,7 @@
     },
     "rustavi_routes_details_en.json": {
       "category": "base",
-      "sha256": "e23632a6d0c6e6c98be4eda2c5334a08d0fc9d3cbe240607708a01853ed9e31d",
+      "sha256": "0105bb3c734f6b3afcca27a3a9c74699fd71f2a0d5f84b0db0ead1cf4789c9a8",
       "size": 142382,
       "url": "rustavi_routes_details_en.json",
       "source": "rustavi",
@@ -109,7 +109,7 @@
     },
     "rustavi_routes_details_ka.json": {
       "category": "base",
-      "sha256": "5b9bb059ddf0c4f6e4859bad1efa24c3daddb163c703da972ae3182a419c7d15",
+      "sha256": "c7e4e4d95c769a0477cbefd53deb711ce246126a5429650c1289435db89c38da",
       "size": 167738,
       "url": "rustavi_routes_details_ka.json",
       "source": "rustavi",
@@ -248,7 +248,7 @@
     },
     "batumi_schedules.json": {
       "category": "base",
-      "sha256": "33447e24c22eb1c35ec9386175bdcc1f9bce64a734af9a66ffae139955c8d512",
+      "sha256": "d7285ec01ef8728efe77adbae39ed70c7d4e9272794ded1e239395294a2f6b19",
       "size": 688160,
       "url": "batumi_schedules.json",
       "source": "batumi"
